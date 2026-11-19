@@ -22,12 +22,13 @@ from __future__ import annotations
 import math
 import numbers
 import time
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence
 
 import numpy as np
 
 from ..stats.correlate import correlation_pairs, iman_conover
 from ..stats.gsa import build_design, cholesky
+from ..stats.pdf import _to_number
 from ..stats.sample import ValueDrawer, distributed_slots, stream_for, uniforms, value_at_probability
 from .. import jsmath
 from .builder import build_system, tuple_by_list
@@ -160,8 +161,7 @@ def design_for(project: Project, system: Any, *, seed: int = 1, iterations: Opti
         return wanted is None or slot_name(e) in wanted
 
     if tornado:
-        low = float(tornado.get('low', 0.05))
-        high = float(tornado.get('high', 0.95))
+        low, high = _tornado_end(tornado, 'low', 0.05), _tornado_end(tornado, 'high', 0.95)
         swung = [k for k in range(len(plan)) if varies(plan[k])]
         n = 2 * len(swung) + 1
 
@@ -203,6 +203,16 @@ def design_for(project: Project, system: Any, *, seed: int = 1, iterations: Opti
                   {'seed': seed, 'latin': latin, 'sampled': len(plan), 'correlated': len(corr['columns']),
                    'correlationAdjusted': corr['adjusted'], 'correlationProblems': problems,
                    'groups': _groups_of(plan, names)})
+
+
+def _tornado_end(tornado: Any, key: str, default: float) -> float:
+    """One of a tornado's probabilities, read as the application reads it
+    (``Number(tornado.low ?? 0.05)``): an end that is not there, or None, is the
+    default; any other is a number as JavaScript's ``Number()`` makes one -- text
+    read as a number where it is one, NaN where it is not. A tornado that is not
+    a dictionary (``True``) has no ends of its own."""
+    v = tornado.get(key) if isinstance(tornado, Mapping) else None
+    return default if v is None else _to_number(v)
 
 
 def _gsa_design_for(project: Project, plan: List[Dict[str, Any]], names: List[str], best: List[float],
@@ -480,9 +490,12 @@ def _frame(project: Project, system: Any, design: Design, keep: Any, large: bool
         fewer = ('fewer inputs' if design.stats.get('tornado')
                  else 'a smaller design' if design.stats.get('gsa') else 'fewer realisations')
         extra = ' even held as float32' if precision == 'float32' else ''
-        raise MemoryError(f'{iterations} {what} of {len(wanted)} series over {times} times is {size["text"]}{extra}; '
-                          f'pass large=True to go ahead on a machine with the memory for it, or choose fewer '
-                          f'endpoints, or {fewer}.')
+        # ``large`` is offered where it would go ahead: not where it was given, nor past ``asked``.
+        how = (f'; pass large=True to go ahead on a machine with the memory for it, or choose fewer endpoints, '
+               f'or {fewer}.' if not large and size['bytes'] <= asked
+               else f', more than a run may hold with large=True or without; choose fewer endpoints, or {fewer}.')
+        raise MemoryError(f'{iterations} {what} of {len(wanted)} series over {times} times is '
+                          f'{size["text"]}{extra}{how}')
     return {'kept': [outputs[k] for k in wanted], 'inputs': inputs, 'grid': grid, 'times': times,
             'precision': precision}
 

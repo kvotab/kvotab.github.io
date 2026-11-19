@@ -490,7 +490,8 @@ const UTF8 = Any[]
 for hex in ["", "41", "c380", "eda080", "eda080edb080", "edb080eda080", "c080", "c0", "c1bf", "c2", "e080", "e08080", "e0a080",
             "f0808080", "f0908080", "f4908080", "f5808080", "f7bfbfbf", "f8", "fe", "ff", "80", "bf", "ff41", "e282", "e28241",
             "f09f9880", "f09f98", "f09f", "41eda08042", "edbfbf", "eda0", "eda080eda080", "eda080edb0", "efbfbd", "00", "6100",
-            "c3a9c3", "e2828c", "f48fbfbf", "e0a0", "dfbf", "df", "edb080", "ed9fbf", "ee8080", "c0af", "e0828f", "f08282ac"]
+            "c3a9c3", "e2828c", "f48fbfbf", "e0a0", "dfbf", "df", "edb080", "ed9fbf", "ee8080", "c0af", "e0828f", "f08282ac",
+            "41c08042", "eda080c080", "c080eda080", "f0808080f09f9880"]
     push!(UTF8, hex)
 end
 let s = Ref(UInt64(99)), interesting = UInt8[0x00, 0x41, 0x7f, 0x80, 0x8f, 0x90, 0x9f, 0xa0, 0xbf, 0xc0, 0xc1, 0xc2, 0xdf, 0xe0,

@@ -197,8 +197,8 @@ std::uint32_t lookup3(std::string_view data, std::size_t start, std::size_t len)
 
 /// Text as `TextEncoder` writes it, as the Julia package has it (`_h5_utf8`): UTF-8 as it is;
 /// a surrogate pair (each half written as Julia's `Char` writes one) the character it makes,
-/// a lone surrogate -- or bytes that are not UTF-8 at all -- U+FFFD. An overlong form is
-/// refused (a `JuliaError` of kind `InvalidCharError`), as the Julia package refuses it.
+/// a lone surrogate -- or bytes that are not UTF-8 at all, an overlong form among them --
+/// U+FFFD, one for each piece Julia cuts them into.
 std::string h5_utf8(const std::string& s);
 
 /// A string's characters as Julia iterates them, each as the bytes it is made of: UTF-8

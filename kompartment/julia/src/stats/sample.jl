@@ -118,8 +118,9 @@ end
 """`values[index]` as JavaScript reads it: NaN unless a whole index in range; a number as a double."""
 function _sm_element(values, index::Float64)
     (isnan(index) || isinf(index) || index != floor(index)) && return NaN
+    # Out of range before it is made an `Int`, which an index far below zero has none of.
+    (index < 0 || index >= length(values)) && return NaN
     i = Int(index)
-    (i < 0 || i >= length(values)) && return NaN
     v = values[firstindex(values)+i]
     # A Boolean is no number to set into a run, as a word or a gap is not
     # (JavaScript's `Number.isFinite`, which the run asks): NaN, held over.

@@ -1094,6 +1094,12 @@ class GsaParity(unittest.TestCase):
             ('ff', {'low': 0.9, 'high': 0.1}), ('ff', {'low': 0, 'high': 0.5}), ('ff', {'high': 1}),
             ('dgsm', {'samples': 1}), ('dgsm', {'step': 0.5}), ('dgsm', {'step': 0}), ('shapley', {'perms': 0}),
             ('shapley', {'nVar': 1}), ('shapley', {'nOuter': 0}), ('shapley', {'nInner': 1}),
+            # Past what a double counts one by one: a setting, or the runs it makes.
+            ('efast', {'harmonics': 5e7}), ('efast', {'harmonics': 1.5e9}), ('efast', {'samples': 1e16}),
+            ('morris', {'trajectories': 1e16}), ('morris', {'trajectories': 1e8, 'points': 1e8}),
+            ('morris', {'design': 'trajectories', 'candidates': -1e16}), ('sobol', {'resamples': 9e15}),
+            ('sobol', {'samples': 5e7, 'blocks': 5e7}), ('radial', {'samples': 2.25e15}),
+            ('radial', {'samples': 2249999999999999}), ('shapley', {'perms': 1e16}),
         ]
         for method, given in refusals:
             for K in (3, 12):
@@ -1698,6 +1704,30 @@ class KnownAnswers(unittest.TestCase):
         one = G.build_design('sobol', ['a', 'b'], {'samples': 50}, **ctx)
         two = G.build_design('sobol', ['a', 'b', 'c'], {'samples': 50}, **ctx)
         self.assertTrue(np.array_equal(one['u'][0][:100], two['u'][0][:100]))
+
+    def test_a_design_past_what_a_double_counts_is_refused(self):
+        """A setting, or a number of runs, at 9e15 or past it is refused in every engine's words,
+        and eFAST's count always comes back."""
+        too_many = 'These settings ask for more than can be counted exactly, let alone run; give smaller numbers.'
+        self.assertEqual((G.efast_samples(1000, 47434164), G.efast_samples(8999999999999990, 4)),
+                         (8999999657515586, 8999999999999990))
+        # Past it, the start as it is, unsearched -- a double, as the application has it.
+        for (n, M), want in (((1000, 47434165), 9000000036988901.0), ((1e16, 4), 1e16), ((1000, 1500000000), 9e18)):
+            got = G.efast_samples(n, M)
+            self.assertTrue(isinstance(got, float) and got == want, (n, M, got))
+        with self.assertRaises(ValueError):
+            G.efast_samples(1000, 0)
+        self.assertEqual(G.gsa_runs('efast', 3, {'harmonics': 5e7}), 3e16)
+        for method, options in (('efast', {'harmonics': 5e7}), ('efast', {'samples': 1e16}),
+                                ('morris', {'design': 'trajectories', 'levels': 1e16}), ('rbdfast', {'samples': 1e16}),
+                                ('dgsm', {'samples': 2e15, 'crossed': True}), ('shapley', {'nVar': 1e21})):
+            self.assertEqual(G.gsa_refusal(method, 3, options), too_many, method)
+            with self.assertRaises(ValueError) as caught:
+                G.build_design(method, ['a', 'b', 'c'], options, seed=5)
+            self.assertEqual(str(caught.exception), too_many)
+        self.assertIsNone(G.gsa_refusal('radial', 3, {'samples': 2249999999999999}))
+        self.assertEqual(G.gsa_refusal('efast', 3, {'harmonics': 0}),
+                         'This needs at least a few samples and one harmonic.')
 
     def test_designs_with_the_package_streams(self):
         """build_design without streams uses kompartment.stats.sample's, which must be the application's."""

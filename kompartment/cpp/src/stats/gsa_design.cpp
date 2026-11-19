@@ -44,10 +44,8 @@ long long wrap_add(long long a, long long b) {
     return static_cast<long long>(static_cast<unsigned long long>(a) + static_cast<unsigned long long>(b));
 }
 JNum operator*(JNum a, JNum b) { return a.is_int && b.is_int ? jn(wrap_mul(a.i, b.i)) : jn(dbl(a) * dbl(b)); }
-JNum operator+(JNum a, JNum b) { return a.is_int && b.is_int ? jn(wrap_add(a.i, b.i)) : jn(dbl(a) + dbl(b)); }
 /// Julia's `/`: always a Float64.
 double operator/(JNum a, JNum b) { return dbl(a) / dbl(b); }
-Json to_json(JNum a) { return a.is_int ? Json(a.i) : Json(a.f); }
 
 /// An Int64 against a Float64, exactly, as Julia compares them: -1, 0, 1, or 2 where the double
 /// is NaN.
@@ -86,9 +84,12 @@ bool ge(JNum a, JNum b) {
 /// `Number.isInteger`.
 bool is_integer(JNum v) { return v.is_int || (std::isfinite(v.f) && v.f == std::floor(v.f)); }
 
+/// Why a design past `GSA_MOST` is refused.
+constexpr const char* GD_TOO_MANY = "These settings ask for more than can be counted exactly, let alone run; give smaller numbers.";
+
 /// A whole number as an Int where it is one, as Python's arithmetic keeps it.
 Json gd_whole(double v) {
-    if (std::isfinite(v) && v == std::floor(v) && std::fabs(v) < 9.0e15) return Json(static_cast<long long>(v));
+    if (std::isfinite(v) && v == std::floor(v) && std::fabs(v) < GSA_MOST) return Json(static_cast<long long>(v));
     return Json(v);
 }
 
@@ -179,15 +180,12 @@ const std::vector<Setting>* find_method(const Json& method) {
     return nullptr;
 }
 
-/// A setting a builder takes as an `Int`: Julia's `MethodError` (a positional argument) or
-/// `TypeError` (a keyword) where it is a double.
-long long int_arg(const Json& o, const char* key, const char* error, const char* fn) {
+/// A count a builder takes. `gsa_refusal` has turned away every setting that is not a whole
+/// number below `GSA_MOST`, so each is an Int by the time a builder reads it.
+long long count_arg(const Json& o, const char* key) {
     const Json& v = o.get(key);
-    if (v.is_int()) return v.as_int();
-    if (std::string(error) == "TypeError")
-        throw JuliaError("TypeError", std::string("TypeError: in keyword argument ") + key + ", expected Int64, got a value of type " +
-                                          (v.is_float() ? "Float64" : "something else") + " (" + fn + ")");
-    throw JuliaError("MethodError", std::string("MethodError: no method matching ") + fn + " with " + key + " " + pd_js_str(v));
+    if (!v.is_int()) throw std::logic_error(std::string("a design's ") + key + " is not a whole number past its refusal");
+    return v.as_int();
 }
 
 /// The Fisher-Yates pick `floor(next() * (i + 1))`.
@@ -488,25 +486,33 @@ Json gsa_options(const Json& method, long long K, const Json* given) {
 
 Json gsa_runs(const Json& method, long long K, const Json* options) {
     Json o = gsa_options(method, K, options);
-    auto num = [&](const char* key) { return jn(o.get(key)); };
-    JNum k = jn(K);
-    if (method == "morris") return to_json(num("trajectories") * (o.get("design") == "trajectories" ? jn(K + 1) : num("points")));
-    if (method == "radial") return to_json(num("samples") * jn(K + 1));
-    if (method == "sobol") return to_json((num("blocks") * jn(o.get("second").as_bool() ? 2 * K + 2 : K + 2)) * num("samples"));
-    if (method == "efast") return to_json(k * jn(efast_samples(o.get("samples"), o.get("harmonics"))));
-    if (method == "rbdfast") return o.get("samples");
-    if (method == "ff") {
+    // In doubles, in the application's order.
+    auto f = [&](const char* key) { return dbl(jn(o.get(key))); };
+    const double k = static_cast<double>(K);
+    double runs;
+    if (method == "morris") {
+        runs = f("trajectories") * (o.get("design") == "trajectories" ? k + 1 : f("points"));
+    } else if (method == "radial") {
+        runs = f("samples") * (k + 1);
+    } else if (method == "sobol") {
+        runs = f("blocks") * (o.get("second").as_bool() ? 2 * k + 2 : k + 2) * f("samples");
+    } else if (method == "efast") {
+        runs = k * dbl(jn(efast_samples(o.get("samples"), o.get("harmonics"))));
+    } else if (method == "rbdfast") {
+        runs = f("samples");
+    } else if (method == "ff") {
         long long k2 = 2;
         while (k2 < K) k2 *= 2;
-        return Json(2 * k2);
+        runs = static_cast<double>(2 * k2);
+    } else if (method == "dgsm") {
+        runs = f("samples") * (1 + k + (o.get("crossed").as_bool() ? (k * (k - 1)) / 2 : 0.0));
+    } else if (method == "shapley") {
+        const double orders = gt(jn(o.get("perms")), jn(0LL)) ? f("perms") : gd_factorial(K);
+        runs = f("nVar") + orders * (k - 1) * f("nOuter") * f("nInner");
+    } else {
+        return Json(0);
     }
-    if (method == "dgsm") return to_json(num("samples") * jn(1 + K + (o.get("crossed").as_bool() ? (K * (K - 1)) / 2 : 0)));
-    if (method == "shapley") {
-        JNum orders = gt(num("perms"), jn(0LL)) ? num("perms") : jn(gd_factorial(K));
-        JNum total = num("nVar") + ((orders * jn(K - 1)) * num("nOuter")) * num("nInner");
-        return gd_whole(dbl(total));
-    }
-    return Json(0);
+    return gd_whole(runs);
 }
 
 std::optional<std::string> gsa_refusal(const Json& method, long long K, const Json* options) {
@@ -545,6 +551,11 @@ std::optional<std::string> gsa_refusal(const Json& method, long long K, const Js
         if (!(ge(num("nVar"), jn(2LL)) && positive(num("nOuter")) && ge(num("nInner"), jn(2LL))))
             return std::string("Shapley needs at least two variance samples, one outer and two inner samples.");
     }
+    // Past what a double counts one by one, a setting, or the runs it makes, would hang eFAST's
+    // search for its points, or ask for more than any machine could lay out.
+    for (const Setting& s : *find_method(method))
+        if (s.kind == SetKind::Int && !(std::fabs(dbl(num(s.key.c_str()))) < GSA_MOST)) return std::string(GD_TOO_MANY);
+    if (!(dbl(jn(gsa_runs(method, K, &o))) < GSA_MOST)) return std::string(GD_TOO_MANY);
     return std::nullopt;
 }
 
@@ -736,16 +747,20 @@ GsaDesign sobol_design(int K, long long n, bool second, long long blocks,
 
 // --- eFAST and RBD-FAST --------------------------------------------------------------------------------
 
-long long efast_samples(const Json& n, const Json& M_) {
+Json efast_samples(const Json& n, const Json& M_) {
     if (!M_.is_int()) throw JuliaError("MethodError", "MethodError: no method matching efast_samples with harmonics " + pd_js_str(M_));
     long long M = M_.as_int();
-    double N = jl_max(gsa_round(dbl(jn(n))), static_cast<double>(wrap_add(wrap_mul(wrap_mul(4, M), M), 1)));
+    // `4.0 * M * M + 1`, in doubles as the application works it out.
+    const double m = static_cast<double>(M);
+    double N = jl_max(gsa_round(dbl(jn(n))), 4.0 * m * m + 1);
     if (!(std::isfinite(N) && M >= 1)) throw ArgumentError("eFAST needs a number of points and at least one harmonic.");
+    // A start that cannot be counted one by one is given back unsearched; its design is refused.
+    if (!(N < GSA_MOST)) return Json(N);
     long long Ni = jl_to_int(N);
-    long long twoM = wrap_mul(2, M);
+    long long twoM = 2 * M;
     while (true) {
         long long w = fld(Ni - 1, twoM);
-        if (fld(w, twoM) >= 1 && wrap_mul(M, w) <= fld(Ni, 2) - 1) return Ni;
+        if (fld(w, twoM) >= 1 && M * w <= fld(Ni, 2) - 1) return Json(Ni);
         Ni += 1;
     }
 }
@@ -942,70 +957,57 @@ GsaDesign build_design(const Json& method, const std::vector<std::string>& keys,
     const std::vector<std::string>& names = keys;
     // The seed is read where Julia reads it: at the first stream drawn.
     auto stream = [&](const std::string& name) { return stream_for(seed, name); };
-    auto col = [&](const std::string& name, const Json& n) {
+    auto col = [&](const std::string& name, long long n) {
         Mulberry32 g = stream(name);
-        if (!n.is_int()) throw JuliaError("MethodError", "MethodError: no method matching uniforms(::Float64, ...)");
-        return uniforms(n.as_int(), g, true);
+        return uniforms(n, g, true);
     };
     const std::string& m = method.as_string();
     GsaDesign d;
     if (m == "morris") {
         Mulberry32 nxt = stream("#gsa#morris");
         if (o.get("design") == "trajectories") {
-            long long t = int_arg(o, "trajectories", "TypeError", "morris_trajectory_design");
-            long long l = int_arg(o, "levels", "TypeError", "morris_trajectory_design");
-            long long c = int_arg(o, "candidates", "TypeError", "morris_trajectory_design");
-            d = morris_trajectory_design(K, t, l, c, nxt);
+            d = morris_trajectory_design(K, count_arg(o, "trajectories"), count_arg(o, "levels"), count_arg(o, "candidates"), nxt);
         } else {
-            long long t = int_arg(o, "trajectories", "TypeError", "morris_design");
-            long long p = int_arg(o, "points", "TypeError", "morris_design");
-            long long l = int_arg(o, "levels", "TypeError", "morris_design");
-            d = morris_design(K, t, p, l, nxt);
+            d = morris_design(K, count_arg(o, "trajectories"), count_arg(o, "points"), count_arg(o, "levels"), nxt);
         }
     } else if (m == "radial") {
+        const long long n = count_arg(o, "samples");
         std::vector<std::vector<double>> base, step;
-        for (const auto& k : names) base.push_back(col(k + "#radial#base", o.get("samples")));
-        for (const auto& k : names) step.push_back(col(k + "#radial#step", o.get("samples")));
+        for (const auto& k : names) base.push_back(col(k + "#radial#base", n));
+        for (const auto& k : names) step.push_back(col(k + "#radial#step", n));
         d = radial_design(K, base, step);
     } else if (m == "sobol") {
-        long long n = int_arg(o, "samples", "MethodError", "sobol_design");
-        long long blocks = int_arg(o, "blocks", "TypeError", "sobol_design");
-        const Json& samples = o.get("samples");
-        d = sobol_design(K, n, o.get("second").as_bool(), blocks, [&](int k, const std::string& which, long long b) {
-            return col(names[static_cast<std::size_t>(k)] + "#sobol#" + which + "#" + std::to_string(b), samples);
+        const long long n = count_arg(o, "samples");
+        d = sobol_design(K, n, o.get("second").as_bool(), count_arg(o, "blocks"), [&](int k, const std::string& which, long long b) {
+            return col(names[static_cast<std::size_t>(k)] + "#sobol#" + which + "#" + std::to_string(b), n);
         });
     } else if (m == "efast") {
-        long long N = efast_samples(o.get("samples"), o.get("harmonics"));
+        const long long N = efast_samples(o.get("samples"), o.get("harmonics")).as_int();
         std::vector<double> phases;
         for (const auto& k : names) {
             Mulberry32 g = stream(k + "#efast");
             phases.push_back(2 * g.next());
         }
-        d = efast_design(K, N, o.get("harmonics").as_int(), phases);
+        d = efast_design(K, N, count_arg(o, "harmonics"), phases);
     } else if (m == "rbdfast") {
+        const long long n = count_arg(o, "samples");
         std::vector<std::vector<long long>> perms;
         for (const auto& k : names) {
             Mulberry32 g = stream(k + "#rbdfast");
-            long long n = int_arg(o, "samples", "MethodError", "gsa_random_permutation");
             perms.push_back(gsa_random_permutation(n, g));
         }
-        d = rbd_fast_design(K, o.get("samples").as_int(), perms);
+        d = rbd_fast_design(K, n, perms);
     } else if (m == "ff") {
         d = ff_design(K, o.get("low").as_double(), o.get("high").as_double());
     } else if (m == "dgsm") {
+        const long long n = count_arg(o, "samples");
         std::vector<std::vector<double>> base;
-        for (const auto& k : names) base.push_back(col(k + "#dgsm", o.get("samples")));
+        for (const auto& k : names) base.push_back(col(k + "#dgsm", n));
         d = dgsm_design(K, base, o.get("step").as_double(), o.get("crossed").as_bool());
     } else {   // shapley: gsa_refusal has turned away any other name
-        JNum perms = jn(o.get("perms"));
-        Json perms_arg = gt(perms, jn(0LL)) ? o.get("perms") : Json(-1);
+        const long long perms = count_arg(o, "perms");
         Mulberry32 nxt = stream("#gsa#shapley");
-        Json args = Json::object({{"perms", perms_arg}, {"nVar", o.get("nVar")}, {"nOuter", o.get("nOuter")}, {"nInner", o.get("nInner")}});
-        long long p = int_arg(args, "perms", "TypeError", "shapley_design");
-        long long nv = int_arg(args, "nVar", "TypeError", "shapley_design");
-        long long no = int_arg(args, "nOuter", "TypeError", "shapley_design");
-        long long ni = int_arg(args, "nInner", "TypeError", "shapley_design");
-        d = shapley_design(K, p, nv, no, ni, corr, nxt);
+        d = shapley_design(K, perms > 0 ? perms : -1, count_arg(o, "nVar"), count_arg(o, "nOuter"), count_arg(o, "nInner"), corr, nxt);
     }
     d.fields.set("options", o);
     // What the intervals are drawn from, so that reading the table again gives the same one.

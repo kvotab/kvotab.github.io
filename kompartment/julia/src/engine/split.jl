@@ -503,8 +503,13 @@ function _with_commas(n::Integer)
     return (n < 0 ? "-" : "") * String(take!(io))
 end
 
-_known_value(known, key) = known === nothing ? nothing :
-                           (v = get(known, key, nothing); v isa Real && !(v isa Bool) ? Float64(v) : nothing)
+"""
+A measurement as what auto learns holds it: a number, or `nothing` -- missing, or
+written into the file by hand as anything else.
+"""
+_split_number(v) = v isa Real && !(v isa Bool) ? Float64(v) : nothing
+
+_known_value(known, key) = known === nothing ? nothing : _split_number(get(known, key, nothing))
 
 """
     plan_split(sys, project; mode="auto", workers=1, nest=true, build_ms=0, known=nothing,
@@ -1147,8 +1152,16 @@ function split_recall(key::AbstractString)
     end
 end
 
-_split_close(a, b) = (a === nothing || b === nothing) ? a === b :
-                     abs(Float64(a) - Float64(b)) <= 0.25 * max(abs(Float64(a)), abs(Float64(b)))
+"""
+Whether two measurements are within a quarter of each other. One that is not a number --
+missing, or written into the file by hand as something else -- is unknown, as
+`_known_value` reads it, and close only to another unknown.
+"""
+function _split_close(a, b)
+    x, y = _split_number(a), _split_number(b)
+    (x === nothing || y === nothing) && return x === y
+    return abs(x - y) <= 0.25 * max(abs(x), abs(y))
+end
 
 """
 Keeps what a run measured, here and in the file -- written whole under a name
@@ -1183,7 +1196,9 @@ function split_remember!(key::AbstractString, entry::AbstractDict)
             end
             kept[String(key)] = now_
             if length(kept) > SPLIT_MEMORY_KEEP
-                when = k -> (v = get(kept[k], "when", 0.0); v isa Real ? Float64(v) : 0.0)
+                # (An entry, or its time, written by hand as something else counts as the oldest.)
+                when = k -> (e = kept[k];
+                             something(e isa AbstractDict ? _split_number(get(e, "when", nothing)) : nothing, 0.0))
                 newest = sort!(collect(keys(kept)); by=k -> -when(k))[1:SPLIT_MEMORY_KEEP]
                 kept = OrderedDict{String,Any}(k => kept[k] for k in newest)
             end

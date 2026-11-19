@@ -20,8 +20,8 @@ namespace {
 // bytes it is made of at the top of 32 bits. UTF-8 decodes as it should; bytes that are not
 // UTF-8 come out in pieces -- a lead byte with the continuation bytes that follow it, up to
 // the length it announces, or a byte alone -- and such a piece is "malformed". Julia's
-// `_h5_utf8` writes these as U+FFFD, and refuses an overlong form, which is not malformed but
-// has no code point (`codepoint` throws).
+// `_h5_utf8` writes these as U+FFFD, and an overlong form too, which is not malformed but has
+// no code point (`codepoint` would throw).
 
 /// One character from `i`, and where the next one starts (`iterate` and `iterate_continued`).
 std::uint32_t next_char(std::string_view s, std::size_t& i) {
@@ -845,10 +845,6 @@ std::vector<std::string> julia_chars(std::string_view s) {
 }
 
 std::string h5_utf8(const std::string& s) {
-    // A fault of the Julia package's `_h5_utf8`, kept so that the two refuse the same text: an
-    // overlong form (C0 80, E0 80 80, F0 80 80 80...) is not "malformed" to Julia, so it asks
-    // for its code point, and `codepoint` throws `InvalidCharError` -- where the docstring (and
-    // `TextEncoder`) would write U+FFFD, as for every other byte that is not UTF-8.
     if (valid_utf8(s)) return s;
     std::string out;
     out.reserve(s.size() + 8);
@@ -856,7 +852,9 @@ std::string h5_utf8(const std::string& s) {
     std::size_t i = 0;
     while (i < s.size()) {
         const std::uint32_t c = next_char(s, i);
-        const std::uint32_t u = char_malformed(c) ? 0xffffffffu : char_codepoint(c);
+        // An overlong form (C0 80, E0 80 80, ...) is not malformed to Julia, but it has no code
+        // point: U+FFFD, as any other piece that is not UTF-8.
+        const std::uint32_t u = char_malformed(c) || char_overlong(c) ? 0xffffffffu : char_codepoint(c);
         if (pending != 0) {
             if (u >= 0xdc00 && u <= 0xdfff) {
                 put_utf8(out, 0x10000 + ((pending - 0xd800) << 10) + (u - 0xdc00));

@@ -96,11 +96,9 @@ std::vector<std::uint16_t> utf16_units(std::string_view s) {
 /// double. (A Boolean, a word or a gap is no number to set into a run: NaN, held over.)
 double sm_element(const Json& values, double index) {
     if (std::isnan(index) || std::isinf(index) || index != std::floor(index)) return NaN;
-    // Julia's `Int(index)`: an index below -2^63 is its InexactError, where JavaScript reads
-    // no value there -- reproduced as it stands.
-    long long i = jl_to_int(index);
-    if (i < 0 || i >= static_cast<long long>(values.size())) return NaN;
-    const Json& v = values[static_cast<std::size_t>(i)];
+    // Out of range before it is made a whole number, which an index far below zero has none of.
+    if (index < 0 || index >= static_cast<double>(values.size())) return NaN;
+    const Json& v = values[static_cast<std::size_t>(index)];
     return v.is_number() ? v.as_double() : NaN;
 }
 

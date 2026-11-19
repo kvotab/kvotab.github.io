@@ -54,8 +54,10 @@ export function openGsaSetup({
 		build: (body) => {
 			const info = GSA_METHODS[method];
 			const o = settings[method];
-			const runs = gsaRuns(method, inputs, o);
+			// Refused first: a design that cannot be made may have no count either (eFAST's,
+			// without a harmonic).
 			const refused = gsaRefusal(method, inputs, o);
+			const runs = refused ? 0 : gsaRuns(method, inputs, o);
 			const on = Math.max(1, Math.min(chosenCores ?? workers, runs));
 			const total = lastSolveMs ? (lastSolveMs * runs) / on : null;
 

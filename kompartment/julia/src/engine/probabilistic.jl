@@ -147,12 +147,18 @@ is_gsa(d::SampleDesign) = haskey(d.stats, "gsa")
 """Whether the points are designed -- a tornado's or a sensitivity design's -- rather than a sample."""
 is_designed(d::SampleDesign) = is_tornado(d) || is_gsa(d)
 
-"""A tornado's two probabilities, from `true`, a dictionary or a named tuple."""
+"""
+A tornado's two probabilities, from `true`, a dictionary or a named tuple, read as the
+application reads them (`Number(tornado.low ?? 0.05)`): an end that is not there, or null,
+is the default; any other is a number as JavaScript's `Number()` makes one -- text read
+as a number where it is one, NaN where it is not.
+"""
 function _pb_tornado_ends(tornado)
     tornado === true && return (0.05, 0.95)
-    get_(k, default) = tornado isa AbstractDict ? get(tornado, String(k), get(tornado, k, default)) :
-                       hasproperty(tornado, k) ? getproperty(tornado, k) : default
-    return (Float64(get_(:low, 0.05)), Float64(get_(:high, 0.95)))
+    get_(k) = tornado isa AbstractDict ? get(tornado, String(k), get(tornado, k, nothing)) :
+              hasproperty(tornado, k) ? getproperty(tornado, k) : nothing
+    end_(k, default) = (v = get_(k); v === nothing ? default : _pd_to_number(v))
+    return (end_(:low, 0.05), end_(:high, 0.95))
 end
 
 _pb_truthy_opt(x) = !(x === nothing || x === false || (x isa AbstractDict && isempty(x)) ||
@@ -787,9 +793,13 @@ function _pb_run(project::Project, sys::System, design::SampleDesign, keep, rang
         what = is_designed(design) ? "runs" : "realisations"
         fewer = is_tornado(design) ? "fewer inputs" : is_gsa(design) ? "a smaller design" : "fewer realisations"
         extra = precision == "float32" ? " even held as float32" : ""
-        throw(ErrorException("$iterations $what of $(length(wanted)) series over $times times is $(size_.text)$extra; " *
-                             "pass large=true to go ahead on a machine with the memory for it, or choose fewer " *
-                             "endpoints, or $fewer."))
+        # `large` is offered where it would go ahead: not where it was given, nor past `asked`.
+        how = !large && size_.bytes <= asked ?
+              "; pass large=true to go ahead on a machine with the memory for it, or choose fewer endpoints, " *
+              "or $fewer." :
+              ", more than a run may hold with large=true or without; choose fewer endpoints, or $fewer."
+        throw(ErrorException("$iterations $what of $(length(wanted)) series over $times times is " *
+                             "$(size_.text)$extra$how"))
     end
     kept = outs[wanted]
     T = precision == "float32" ? Float32 : Float64
@@ -922,8 +932,10 @@ end
 
 One realisation of a probabilistic run (`number` from 1), as an ordinary run:
 `(results, number, iterations, values)`, `values` each input's
-`(name, value, held)`. A fresh system, so an input whose draw is not a number
-keeps the model's own value.
+`(name, value, held)`. The inputs are set as the whole run sets them
+(`_pb_effective`), on a system built for it: an input whose draw is not a number
+holds the last value drawn for it before this realisation that was one -- the
+model's own value where none was.
 """
 function run_realisation(m, number::Integer; seed=1, iterations=nothing, latin::Bool=true, varied=nothing,
                          tornado=nothing, gsa=nothing)

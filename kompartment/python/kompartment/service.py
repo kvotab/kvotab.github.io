@@ -396,12 +396,14 @@ def _answer_sample(op: str, prob: Any, raw: Any, query: Dict[str, Any]) -> None:
         raise ValueError(f"'{op}' is not something this engine is asked of a probabilistic run")
     prob = with_inputs(prob)
     n = int(prob.iterations)
+    # The realisations held: all of them, or fewer for a part of a run.
+    held = int(np.asarray(prob.ran).size)
     count = len(prob.values)
 
     def rows(k: int) -> np.ndarray:
         # Realisations down, the times (one for a varied parameter) across, in
         # the precision they are held in until what was asked is taken out.
-        return np.asarray(prob.values[k]).reshape(n, -1)
+        return np.asarray(prob.values[k]).reshape(held, -1)
 
     parts = []
     if op == 'bands':
@@ -425,7 +427,8 @@ def _answer_sample(op: str, prob: Any, raw: Any, query: Dict[str, Any]) -> None:
             elif op == 'column':
                 parts.append(m[:, min(m.shape[1] - 1, max(0, int(query.get('at') or 0)))])
             else:
-                parts.append(m[min(n - 1, max(0, int(query.get('index') or 0)))])
+                # Brought into the realisations held: a part of a run holds fewer than the design has.
+                parts.append(m[min(held - 1, max(0, int(query.get('index') or 0)))])
     data = (np.concatenate([np.asarray(p, dtype='<f8').reshape(-1) for p in parts]) if parts
             else np.zeros(0, dtype='<f8'))
     with open(query['out'], 'wb') as f:

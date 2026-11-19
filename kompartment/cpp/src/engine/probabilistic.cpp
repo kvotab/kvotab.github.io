@@ -179,29 +179,20 @@ namespace {
 double pb_pymax(double a, double b) { return b > a ? b : a; }
 double pb_pymin(double a, double b) { return b < a ? b : a; }
 
-/// `Float64(x)` of what a tornado's ends give: a number or a Boolean, or Julia's `MethodError`.
-double float64_of(const Json& v) {
-    if (v.is_number()) return v.as_double();
-    if (v.is_bool()) return v.as_bool() ? 1.0 : 0.0;
-    throw JuliaError("MethodError", "MethodError: no method matching Float64(" + pd_js_str(v) + ")");
-}
-
-/// A tornado's two probabilities, from `true` or a dictionary.
+/// A tornado's two probabilities, from `true` or a dictionary, read as the application reads
+/// them (`Number(tornado.low ?? 0.05)`): an end that is not there, or null, is the default;
+/// any other is a number as JavaScript's `Number()` makes one -- text read as a number where
+/// it is one, NaN where it is not.
 std::pair<double, double> tornado_ends(const Json& tornado) {
     if (tornado.is_bool() && tornado.as_bool()) return {0.05, 0.95};
     auto get = [&](const char* key, double fallback) {
         if (!tornado.is_object()) return fallback;
         const Json* v = tornado.obj().find(key);
-        return v == nullptr ? fallback : float64_of(*v);
+        return v == nullptr || v->is_null() ? fallback : pd_to_number(v);
     };
     double low = get("low", 0.05);
     double high = get("high", 0.95);
     return {low, high};
-}
-
-/// Whether an option asks for something: not null, not `false`, not an empty dictionary.
-bool truthy_opt(const Json& x) {
-    return !(x.is_null() || (x.is_bool() && !x.as_bool()) || (x.is_object() && x.empty()));
 }
 
 /// Input `k`'s value in every realisation, from its uniforms (`value_at_probability`, the
@@ -314,6 +305,10 @@ SampleDesign pb_gsa_design(const Project& project, SampleDesign d, const Json& g
 
 bool can_be_endpoint(const Json& kind) { return !(kind == "parameter" || kind == "lookup"); }
 
+bool pb_truthy_opt(const Json& x) {
+    return !(x.is_null() || (x.is_bool() && !x.as_bool()) || (x.is_object() && x.empty()));
+}
+
 std::string pb_py_str(const Json& v) {
     switch (v.type()) {
         case Json::Type::String: return v.as_string();
@@ -413,8 +408,8 @@ Json SampleDesign::plan_json() const {
 }
 
 SampleDesign design_for(const Project& project, const System& sys, const DesignOptions& options) {
-    Json tornado = truthy_opt(options.tornado) ? options.tornado : Json();
-    Json gsa = truthy_opt(options.gsa) ? options.gsa : Json();
+    Json tornado = pb_truthy_opt(options.tornado) ? options.tornado : Json();
+    Json gsa = pb_truthy_opt(options.gsa) ? options.gsa : Json();
     bool has_tornado = !tornado.is_null(), has_gsa = !gsa.is_null();
     SampleDesign d;
     d.seed = options.seed;

@@ -333,7 +333,12 @@ std::string run_case(const std::string& fn, const Json& args, const Grids& grids
                                       }));
         });
     }
-    if (fn == "efast_samples") return said([&] { return std::to_string(efast_samples(args[0], args[1])); });
+    if (fn == "efast_samples")
+        return said([&] {
+            // Julia's `string()`: a whole number, or past the counts a double, as Julia shows one.
+            const Json N = efast_samples(args[0], args[1]);
+            return N.is_int() ? std::to_string(N.as_int()) : julia_float(N.as_double());
+        });
     if (fn == "efast_frequencies") return said([&] { return nums(efast_frequencies(args[0].as_int(), args[1].as_int(), args[2].as_int())); });
     if (fn == "efast_design") {
         return said([&] {

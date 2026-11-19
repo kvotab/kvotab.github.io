@@ -324,6 +324,7 @@ case("every kind", J("tornado" => J("low" => 0.2, "high" => 0.7), "varied" => An
 case("every kind", J("iterations" => 8, "seed" => 1, "most_bytes" => 100, "large" => true, "asked_bytes" => 1000000000))
 case("every kind", J("iterations" => 8, "seed" => 1, "most_bytes" => 100))
 case("every kind", J("iterations" => 8, "seed" => 1, "most_bytes" => 1000000000, "large" => true, "asked_bytes" => 50))
+case("every kind", J("iterations" => 8, "seed" => 1, "most_bytes" => 100, "asked_bytes" => 50))
 case("every kind", J("iterations" => 4, "seed" => 1, "keep" => Any["nothing here"]))
 case("every kind", J("iterations" => 4, "seed" => 1, "keep" => Any[]))
 case("every kind", J("iterations" => 30, "seed" => 9))

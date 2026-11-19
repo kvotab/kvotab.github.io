@@ -467,18 +467,19 @@ def plan_split(system: Any, project: Any, *, mode: Any = 'auto', workers: int = 
     if m == 'on':
         plan['why'] = f'asked for: {size}, on {len(bins)} cores'
         return plan
-    # Auto. A split this model has had, measured, decides.
-    if known is not None and known.get('gain') is not None:
-        gain = float(known['gain'])
+    # Auto. A split this model has had, measured, decides. (What earlier runs measured is
+    # a number or nothing: an entry written by hand as anything else is not known.)
+    gain = _known_value(known, 'gain')
+    if gain is not None:
         if gain < AUTO_GAIN:
             return no(f'split, it was measured at {_to_fixed(gain, 1)}×, which is not enough to be worth it')
         plan['predicted'] = gain
         plan['why'] = f'{size}; measured at {_to_fixed(gain, 1)}× the last time, on {len(bins)} cores'
         return plan
-    if known is not None and known.get('solve_ms') is not None and math.isfinite(known['solve_ms']):
-        S = float(known['solve_ms'])
+    S = _known_value(known, 'solve_ms')
+    if S is not None and math.isfinite(S):
         B = max(0.0, float(build_ms))
-        fixed = known.get('build_fixed')
+        fixed = _known_value(known, 'build_fixed')
         if fixed is None:
             predicted = S / (load * (B + S) + START_MS)
         else:
@@ -1072,10 +1073,27 @@ def recall(key: str) -> Optional[Dict[str, Any]]:
     return dict(entry) if entry is not None else None
 
 
+def _measured(v: Any) -> Optional[float]:
+    """A measurement as what auto learns holds it: a number, or None -- missing,
+    or written into the file by hand as anything else."""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    return float(v)
+
+
+def _known_value(known: Optional[Dict[str, Any]], key: str) -> Optional[float]:
+    """What earlier runs measured of ``key``: a number, or None where it was not, or is not one."""
+    return None if not isinstance(known, dict) else _measured(known.get(key))
+
+
 def _close(a: Any, b: Any) -> bool:
-    if a is None or b is None:
-        return a is b
-    return abs(float(a) - float(b)) <= 0.25 * max(abs(float(a)), abs(float(b)))
+    """Whether two measurements are within a quarter of each other. One that is
+    not a number is unknown (see :func:`_measured`), and close only to another
+    unknown."""
+    x, y = _measured(a), _measured(b)
+    if x is None or y is None:
+        return x is y
+    return abs(x - y) <= 0.25 * max(abs(x), abs(y))
 
 
 def remember(key: str, entry: Dict[str, Any]) -> None:
@@ -1104,7 +1122,11 @@ def remember(key: str, entry: Dict[str, Any]) -> None:
                 pass
         kept[key] = _MEMORY[key]
         if len(kept) > MEMORY_KEEP:
-            newest = sorted(kept, key=lambda k: -float((kept[k] or {}).get('when') or 0.0))[:MEMORY_KEEP]
+            # (An entry, or its time, written by hand as something else counts as the oldest.)
+            def when(k: str) -> float:
+                entry = kept[k]
+                return (_measured(entry.get('when')) if isinstance(entry, dict) else None) or 0.0
+            newest = sorted(kept, key=lambda k: -when(k))[:MEMORY_KEEP]
             kept = {k: kept[k] for k in newest}
         tmp = path.with_name(f'{path.name}.{os.getpid()}.part')
         tmp.write_text(json.dumps(kept), 'utf-8')
@@ -1190,7 +1212,8 @@ def run_whole_or_split(project: Any, *, on_progress: Optional[Callable[[float, f
                                'total_ms': (time.perf_counter() - t0) * 1000})
             plan['jobs'] = split['jobs']
             plan['wall_ms'] = split['wall_ms']
-            whole_ms = known['solve_ms'] if known and known.get('solve_ms') is not None else split['whole_ms']
+            remembered = _known_value(known, 'solve_ms')
+            whole_ms = remembered if remembered is not None else split['whole_ms']
             plan['gain'] = whole_ms / split['expected_ms'] if split['expected_ms'] > 0 else None
             if _ran_as(results, compiling):
                 remember(key, {'solve_ms': whole_ms, 'gain': plan['gain'],

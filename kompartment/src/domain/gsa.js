@@ -475,9 +475,16 @@ function totalEffect(estimator, fA, a, n, sumA) {
  * per curve, K curves.
  * ---------------------------------------------------------------------- */
 
-/** The smallest number of points at or above `n` that eFAST can use with `M` harmonics. */
+/**
+ * The smallest number of points at or above `n` that eFAST can use with `M` harmonics.
+ * There is none without a harmonic or a number of points, and a start at `GSA_MOST` or
+ * past it is given back as it is, unsearched: a double cannot count on from there one by
+ * one (the search would never end), and `gsaRefusal` refuses the design.
+ */
 export function efastSamples(n, M = 4) {
 	let N = Math.max(Math.round(n), 4 * M * M + 1);
+	if (!(Number.isFinite(N) && M >= 1)) throw new Error('eFAST needs a number of points and at least one harmonic.');
+	if (!(N < GSA_MOST)) return N;
 	for (;;) {
 		const w = Math.floor((N - 1) / (2 * M));
 		if (Math.floor(w / (2 * M)) >= 1 && M * w <= Math.floor(N / 2) - 1) return N;
@@ -1536,6 +1543,13 @@ export function gsaOptions(method, K, given = {}) {
 
 const factorial = (n) => (n <= 1 ? 1 : n * factorial(n - 1));
 
+/**
+ * What a design's counts must stay below: past it a double no longer counts one by one
+ * (`Number.MAX_SAFE_INTEGER` is 2^53 - 1), and a setting or a number of runs is refused.
+ */
+export const GSA_MOST = 9e15;
+const TOO_MANY = 'These settings ask for more than can be counted exactly, let alone run; give smaller numbers.';
+
 /** How many runs a design of `method` over `K` inputs is, before any is made. */
 export function gsaRuns(method, K, options = {}) {
 	const o = gsaOptions(method, K, options);
@@ -1596,6 +1610,12 @@ export function gsaRefusal(method, K, options = {}) {
 			break;
 		default:
 	}
+	// Past what a double counts one by one, a setting, or the runs it makes, would hang
+	// eFAST's search for its points, or ask for more than any machine could lay out.
+	for (const [key, , , kind] of GSA_METHODS[method].options) {
+		if (kind === 'int' && !(Math.abs(o[key]) < GSA_MOST)) return TOO_MANY;
+	}
+	if (!(gsaRuns(method, K, o) < GSA_MOST)) return TOO_MANY;
 	return null;
 }
 

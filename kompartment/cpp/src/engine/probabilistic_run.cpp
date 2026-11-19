@@ -349,11 +349,12 @@ ProbabilisticResults run_design(const std::shared_ptr<const Project>& project, c
         std::string what = design.is_designed() ? "runs" : "realisations";
         std::string fewer = design.is_tornado() ? "fewer inputs" : design.is_gsa() ? "a smaller design" : "fewer realisations";
         std::string extra = precision == "float32" ? " even held as float32" : "";
+        // `large` is offered where it would go ahead: not where it was given, nor past `asked_bytes`.
+        std::string how = !o.large && size.bytes <= o.asked_bytes
+                              ? "; pass large=true to go ahead on a machine with the memory for it, or choose fewer endpoints, or " + fewer + "."
+                              : ", more than a run may hold with large=true or without; choose fewer endpoints, or " + fewer + ".";
         throw JuliaError("ErrorException", std::to_string(iterations) + " " + what + " of " + std::to_string(series) + " series over " +
-                                               std::to_string(times) + " times is " + size.text + extra +
-                                               "; pass large=true to go ahead on a machine with the memory for it, or choose fewer "
-                                               "endpoints, or " +
-                                               fewer + ".");
+                                               std::to_string(times) + " times is " + size.text + extra + how);
     }
     for (std::size_t k : wanted) r.outputs.push_back(outs->outputs[k]);
     r.ran.assign(static_cast<std::size_t>(to - frm), 1);

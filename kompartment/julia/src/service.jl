@@ -160,8 +160,9 @@ function _service_job(job::AbstractDict, say, stopped, kept=nothing, kept_lock=R
             gsa = _service_option(options, "gsa", nothing)
             # A sample the page asked the engine to keep is this machine's to hold, and
             # may come to what the page drew from its memory rather than a tab's limits.
+            # A sample is what `design_for` runs when neither a tornado nor a design is asked for.
             keeping = _service_option(options, "keep", false) === true && kept !== nothing &&
-                      tornado in (nothing, false) && gsa in (nothing, false)
+                      !_pb_truthy_opt(tornado) && !_pb_truthy_opt(gsa)
             most = _service_option(options, "most", nothing)
             asked = _service_option(options, "asked", nothing)
             prob = run_probabilistic(m, Int(_service_option(options, "iterations", 100));
@@ -346,7 +347,8 @@ function _service_sample_answer(op, prob::ProbabilisticResults, q::AbstractDict)
             elseif op == "column"
                 push!(parts, Float64.(M[:, clamp(Int(something(get(q, "at", nothing), 0)), 0, size(M, 2) - 1)+1]))
             else
-                push!(parts, Float64.(M[clamp(Int(something(get(q, "index", nothing), 0)), 0, n - 1)+1, :]))
+                # Brought into the realisations held: a part of a run holds fewer than the design has.
+                push!(parts, Float64.(M[clamp(Int(something(get(q, "index", nothing), 0)), 0, size(M, 1) - 1)+1, :]))
             end
         end
     end

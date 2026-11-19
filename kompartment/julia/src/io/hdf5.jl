@@ -401,15 +401,18 @@ lookup3(data::AbstractString, args...) = lookup3(Vector{UInt8}(codeunits(data)),
 
 """
 `TextEncoder`: UTF-8, with a lone surrogate (or a byte that is not UTF-8 at
-all) written as U+FFFD rather than refused, and a surrogate pair written as
-the character it makes. A valid string is returned as it is.
+all, an overlong form among them) written as U+FFFD rather than refused, and a
+surrogate pair written as the character it makes. A valid string is returned as
+it is.
 """
 function _h5_utf8(s::String)
     isvalid(String, s) && return s
     io = IOBuffer()
     pending = UInt32(0)                 # a high surrogate waiting for its low half
     for c in s
-        u = Base.ismalformed(c) ? typemax(UInt32) : UInt32(codepoint(c))
+        # An overlong form (C0 80, E0 80 80, ...) is not malformed to Julia, but it has no
+        # code point (`codepoint` throws): U+FFFD, as any other piece that is not UTF-8.
+        u = Base.ismalformed(c) || Base.isoverlong(c) ? typemax(UInt32) : UInt32(codepoint(c))
         if pending != 0
             if 0xdc00 <= u <= 0xdfff
                 print(io, Char(0x10000 + ((pending - 0xd800) << 10) + (u - 0xdc00)))

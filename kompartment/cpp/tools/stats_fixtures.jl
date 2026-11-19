@@ -253,6 +253,8 @@ end
 case("vap", J("kind" => "pg", "values" => Any[1, 2], "inorder" => false), F(-1e300), 0)
 case("vap", J("kind" => "pg", "values" => Any[1, 2], "inorder" => false), F(-1e18), 0)
 case("vap", J("kind" => "pg", "values" => Any[1, 2], "inorder" => false), F(-5e18), 0)
+case("vap", J("kind" => "pg", "values" => Any[1, 2, 3], "inorder" => false), F(-4e18), 0)
+case("vap", J("kind" => "pg", "values" => Any[1, 2], "inorder" => false), F(-0.0), 0)
 
 # Correlations: pairs and groups, every problem, the settings in every form a file holds.
 NAMES5 = Any["Kd[I-129]", "Kd[Cs-135]", "Kd[Tc-99]", "k", "Q@500", "Kd", "Kd[I-129]x"]
@@ -321,7 +323,10 @@ GIVEN = Any[UNDEFINED, nothing, K.JDict(), "text", 7,
               "low" => 0.3, "high" => 0.3, "step" => 1e-6, "perms" => 5, "nVar" => 1.5, "nOuter" => 0.5, "nInner" => 1),
             J("samples" => "1e400"),
             J("trajectories" => 1e16, "points" => 9e15, "samples" => 8.999999999999999e15, "harmonics" => 2, "nVar" => -1e16),
-            J("samples" => Any[12], "harmonics" => Any["2"], "perms" => Any[], "points" => -0.5, "levels" => 2.5)]
+            J("samples" => Any[12], "harmonics" => Any["2"], "perms" => Any[], "points" => -0.5, "levels" => 2.5),
+            # Past what a double counts one by one: a setting, or the runs the settings make.
+            J("harmonics" => 5e7, "trajectories" => 1e8, "points" => 1e8, "samples" => 2.25e15, "perms" => 1e16, "resamples" => 9e15),
+            J("harmonics" => 1.5e9, "design" => "trajectories", "candidates" => -1e16, "samples" => 2249999999999999, "blocks" => 4)]
 for m in METHODS, Kn in (0, 1, 2, 3, 5, 9), g in GIVEN
     case("gsa", m, Kn, g)
 end
@@ -350,6 +355,8 @@ DESIGNS = Any[
     ("dgsm", J("samples" => 3, "step" => 0.6)),
     ("shapley", J("nVar" => 6, "nOuter" => 2, "nInner" => 2)), ("shapley", J("perms" => 3, "nVar" => 5, "nOuter" => 1, "nInner" => 2)),
     ("shapley", J("nVar" => 1e16)), ("shapley", J("perms" => 2, "nInner" => 1)),
+    ("efast", J("samples" => 20, "harmonics" => 5e7)), ("efast", J("harmonics" => 1.5e9)),
+    ("morris", J("trajectories" => 1e8, "points" => 1e8)), ("morris", J("design" => "trajectories", "trajectories" => 2, "candidates" => -1e16)),
     ("nope", nothing), (nothing, nothing),
 ]
 for (m, o) in DESIGNS, Kn in (1, 2, 3, 5), seed in (1, "7")
@@ -391,7 +398,8 @@ for (Kn, n, second, blocks) in ((2, 3, false, 1), (2, 2, true, 2), (1, 4, true, 
     case("sobol_design", Kn, n, second, blocks, 8)
 end
 for (n, M) in ((1000, 4), (65, 4), (1001, 4), (8, 1), (0, 1), (100, 2), (5, 0), (5, -1), (1e16, 4), (100, 2.5), ("x", 2),
-               (1e300, 4), (2.5, 1), (66, 4), (1e3, 1000))
+               (1e300, 4), (2.5, 1), (66, 4), (1e3, 1000), (1000, 47434164), (1000, 47434165), (1000, 50000000),
+               (1000, 1500000000), (1000, 3037000500), (8999999999999990, 4), (9e15, 4), (8.999999999999998e15, 1))
     case("efast_samples", n, M)
 end
 for (Kn, N, M) in ((1, 66, 4), (2, 66, 4), (3, 66, 4), (5, 66, 4), (5, 40, 4), (8, 30, 4), (0, 66, 4), (4, 9, 4), (3, 1000, 1))

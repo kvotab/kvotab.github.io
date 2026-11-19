@@ -198,6 +198,51 @@ class Probabilistic(unittest.TestCase):
                 same = run_probabilistic(raw, iterations=12, seed=3, keep=['Dose'], workers=workers,
                                          most_bytes=held)
                 self.assertTrue(np.array_equal(same.values[0], whole.values[0]))
+        # Refused, large=True offered where it would go ahead -- and not where it was given, nor
+        # where the run is past what it may come to as well; in the Julia and C++ engines' words.
+        from kompartment.engine.probabilistic import estimate
+
+        def refusal(**kw) -> str:
+            with self.assertRaises(MemoryError) as caught:
+                run_probabilistic(raw, iterations=12, seed=3, keep=['Dose'], most_bytes=held // 4, **kw)
+            return str(caught.exception)
+        head = (f"12 realisations of {len(whole.labels)} series over {whole.t.size} times is "
+                f"{estimate(len(whole.labels), whole.t.size, 12, 'float32')['text']} even held as float32")
+        self.assertEqual(refusal(asked_bytes=held), head + '; pass large=True to go ahead on a machine with the memory '
+                         'for it, or choose fewer endpoints, or fewer realisations.')
+        for kw in ({'large': True, 'asked_bytes': held // 4}, {'asked_bytes': held // 4}):
+            self.assertEqual(refusal(**kw), head + ', more than a run may hold with large=True or without; '
+                             'choose fewer endpoints, or fewer realisations.', kw)
+
+    def test_a_tornados_ends_are_read_as_numbers_are_read(self) -> None:
+        # ``Number(tornado.low ?? 0.05)``, as the application reads them: text as the number it
+        # says, None as no end given; ``True`` has no ends of its own.
+        from kompartment.engine.builder import build_system
+        from kompartment.engine.probabilistic import design_for
+        from kompartment.engine.project import Project
+        project = Project(example('biosphere'))
+        system = build_system(project)
+        for tornado, want in ((True, (0.05, 0.95)), ({'low': None, 'high': None}, (0.05, 0.95)),
+                              ({'low': '0.2', 'high': ' 0.8 '}, (0.2, 0.8)), ({'low': 'x'}, (math.nan, 0.95)),
+                              ({'low': '', 'high': '0x1'}, (0.0, 1.0)), ({'low': True, 'high': [0.9]}, (1.0, 0.9)),
+                              ({'low': 0.1, 'high': 0.7}, (0.1, 0.7))):
+            t = design_for(project, system, tornado=tornado).stats['tornado']
+            got = (t['low'], t['high'])
+            self.assertTrue(all((math.isnan(a) and math.isnan(b)) or a == b for a, b in zip(got, want)), (tornado, got))
+
+    def test_a_realisation_is_asked_for_among_those_held(self) -> None:
+        # A part of a run holds fewer realisations than its design has: one asked for by
+        # number is brought into those held, as the Julia and C++ engines bring it.
+        from kompartment.engine.probabilistic import run_probabilistic
+        from kompartment.service import _answer_sample
+        raw = example('biosphere')
+        part = run_probabilistic(raw, iterations=30, seed=3, keep=['Dose'], range_=(10, 20))
+        with tempfile.TemporaryDirectory() as d:
+            out = str(Path(d) / 'answer')
+            for index, row in ((0, 0), (4, 4), (25, 9), (-3, 0)):
+                _answer_sample('realisation', part, raw, {'series': [0], 'index': index, 'out': out})
+                got = np.frombuffer(Path(out).read_bytes(), dtype='<f8')
+                self.assertTrue(np.array_equal(got, np.asarray(part.values[0][row], dtype=float)), index)
 
     def test_only_the_first_realisation_fails_the_run(self) -> None:
         # An absurd rate breaks one realisation. The first fails the run; any other is

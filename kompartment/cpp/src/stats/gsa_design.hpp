@@ -21,8 +21,9 @@
 // Shapley order, an RBD-FAST permutation) count from 0, as Julia's do there.
 //
 // The settings are what the Julia package reads them as: a whole number where a
-// count is wanted (an `Int`), unless it is 9e15 or more, which stays a double -- and
-// a design asked for with one of those fails as Julia's does (`JuliaError`).
+// count is wanted (an `Int`), unless it is 9e15 or more (`GSA_MOST`), which stays a
+// double -- and a design asked for with one of those, or with as many runs, is refused
+// (`gsa_refusal`), in every engine's words.
 
 #pragma once
 
@@ -36,6 +37,11 @@
 #include "util/json.hpp"
 
 namespace kompartment {
+
+/// What a design's counts must stay below (`GSA_MOST`): past it a double no longer counts one by
+/// one (JavaScript's `Number.MAX_SAFE_INTEGER` is 2^53 - 1), and a setting or a number of runs
+/// is refused.
+inline constexpr double GSA_MOST = 9.0e15;
 
 /// A method's design (`build_design` and the builders).
 struct GsaDesign {
@@ -61,10 +67,12 @@ std::vector<std::string> gsa_method_names();
 Json gsa_options(const Json& method, long long K, const Json* given = nullptr);
 
 /// How many runs a design of `method` over `K` inputs is, before any is made (0 for a method
-/// there is not): a whole number, or a double where Julia's arithmetic makes one.
+/// there is not): counted as the application counts them, in doubles and in its order, a whole
+/// number where that is one below `GSA_MOST`, else the double.
 Json gsa_runs(const Json& method, long long K, const Json* options = nullptr);
 
-/// Why a design cannot be made as asked, in a sentence, or none.
+/// Why a design cannot be made as asked, in a sentence, or none. A count setting, or a number of
+/// runs, at `GSA_MOST` or past it is refused.
 std::optional<std::string> gsa_refusal(const Json& method, long long K, const Json* options = nullptr);
 
 /// A method's design, drawn from a run's seed, with its settings (`"options"`) and `"seed"`
@@ -115,8 +123,10 @@ GsaDesign radial_design(int K, const std::vector<std::vector<double>>& base, con
 GsaDesign sobol_design(int K, long long n, bool second, long long blocks,
                        const std::function<std::vector<double>(int, const std::string&, long long)>& draw);
 /// The smallest number of points at or above `n` that eFAST can use with `M` harmonics (`n` a
-/// whole number or a double, as the settings hold it; `M` must be a whole number).
-long long efast_samples(const Json& n, const Json& M);
+/// whole number or a double, as the settings hold it; `M` must be a whole number): a whole
+/// number, or -- for a start at `GSA_MOST` or past it, which cannot be counted one by one and
+/// whose design is refused -- that start as it is, a double, unsearched.
+Json efast_samples(const Json& n, const Json& M);
 /// omega_1 and the complementary frequencies, as GlobalSensitivity.jl chooses them.
 std::vector<double> efast_frequencies(long long K, long long N, long long M);
 /// The eFAST design: N points along one curve per input; `phases` one per curve, in [0, 2).

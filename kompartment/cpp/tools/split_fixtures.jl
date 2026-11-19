@@ -574,6 +574,13 @@ function assemble_text(c)
     end)
 end
 
+#: Two measurements as what auto learns holds them, close or not: numbers, nothing, and what a
+#: file written by hand may hold instead (unknown, as nothing is).
+const CLOSE = P("""[[null, null], [null, 1.0], [100.0, 125.0], [100.0, 134.0], [0, 0.0], [-1.0, -1.25], [-1.0, -1.3],
+                    [true, 1], [1, true], [true, false], ["x", 1.0], ["x", null], ["12", 12], [[1], true], [{}, 2.0],
+                    [{"a": 1}, [2]], [1e300, 1e300], [5e-324, 0.0]]""")
+close_text(pairs) = join(("split_close $k = $(K._split_close(p[1], p[2]))" for (k, p) in enumerate(pairs)), "\n")
+
 #: Models cut to one job's materials: what the cut model holds, and what it builds.
 const PARTS = J("lists" => P("""{"name": "lists", "nuclides": ["Cs-137", "Sr-90", 5, "I-129"],
        "index_lists": [{"name": "Contaminants", "for_contaminants": true,
@@ -638,11 +645,14 @@ partitions = record!(J("patterns" => Any[J("n" => n, "colptr" => colptr, "rowval
 assembled = Any[record!(K.JDict(k => v for (k, v) in c), "assemble $(c["name"])", assemble_text(c)) for c in ASSEMBLE]
 parts_fx = K.parse_json(K.json_text(PARTS; indent=0))
 parts = record!(parts_fx, "parts", parts_text(parts_fx))
+close_fx = K.parse_json(K.json_text(J("pairs" => CLOSE); indent=0))
+closes = record!(close_fx, "close", close_text(close_fx["pairs"]))
 
 isempty(DUMPS) || write(joinpath(DUMPS, "split.julia.txt"), join(texts, "\n\n"))
 path = joinpath(@__DIR__, "..", "tests", "fixtures", "split.json")
 write(path, K.json_text(K.JDict("models" => models_json, "options" => OPTIONS, "constants" => CONSTANTS, "cases" => cases, "runs" => runs,
                                 "formulas" => formulas, "partitions" => partitions, "assemble" => assembled, "parts" => parts,
+                                "close" => closes,
                                 "at" => Dates.format(AT, dateformat"yyyy-mm-ddTHH:MM:SS.sss") * "Z", "build" => BUILD,
                                 "build_ms" => BUILD_MS, "solve_ms" => SOLVE_MS); indent=0))
 println(path, ": ", length(cases), " models, ", length(cases) * length(OPTIONS) * length(CONSTANTS), " plans, ", length(runs), " runs")

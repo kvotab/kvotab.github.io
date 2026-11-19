@@ -72,7 +72,7 @@ using .H5Test
 using .H5Test: H5Group, H5Dataset, H5Attrs, H5F64, H5F32, H5I32, H5STR, HDF5Error, h5group, h5dataset, h5put, write_hdf5,
                lookup3, result_tree, results_tree, write_results_hdf5, probabilistic_tree, scenarios_tree,
                write_scenarios_hdf5, js_string, js_to_number, csv_cell, csv_row, csv_header, to_csv, FakeProject,
-               FakeResults, FakeProb, OrderedDict, JDict, parse_json
+               FakeResults, FakeProb, OrderedDict, JDict, parse_json, _h5_utf8
 using Test
 using Dates
 using Printf
@@ -251,6 +251,21 @@ end
     data = Vector{UInt8}(codeunits("Four score and seven years ago, and then some"))
     @test lookup3(data, 1, 30) == 0x17770551
     @test lookup3(data[1:10], 1, 12) == lookup3(vcat(data[1:10], UInt8[0, 0]))   # past the end reads as zeros
+end
+
+@testset "text that is not UTF-8" begin
+    fffd = "�"
+    s(hex) = String(hex2bytes(hex))
+    # A piece that is not UTF-8 -- an overlong form among them, which `codepoint` has no
+    # answer for -- is one U+FFFD; a pair of surrogates the character they make.
+    for hex in ("c080", "e08080", "f0808080", "c1bf", "e0828f", "f08282ac", "c0", "e080", "f4908080", "eda080")
+        @test _h5_utf8(s(hex)) == fffd
+    end
+    @test _h5_utf8(s("41c08042")) == "A" * fffd * "B"
+    @test _h5_utf8(s("eda080c080")) == fffd^2                 # a high surrogate, then an overlong form
+    @test _h5_utf8(s("eda0bdedb880")) == "😀"
+    @test _h5_utf8("plain é") == "plain é"
+    @test write_hdf5(h5group(H5Attrs("x" => s("c080")))) == write_hdf5(h5group(H5Attrs("x" => fffd)))
 end
 
 @testset "h5put" begin

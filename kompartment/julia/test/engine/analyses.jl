@@ -55,6 +55,32 @@ end
           "All 9! orders of 9 inputs is too many; give a number of random orders."
     @test K.gsa_refusal("shapley", 9) === nothing      # a hundred random orders, past four inputs
     @test K.gsa_refusal("dgsm", 3) === nothing
+    # Past what a double counts one by one: a setting at 9e15 or past it, or the runs it makes,
+    # refused before anything is laid out, as the application refuses it (eFAST's search for
+    # its points went on for ever, and a builder took the setting for no whole number).
+    too_many = "These settings ask for more than can be counted exactly, let alone run; give smaller numbers."
+    for (method, options) in (("efast", Dict("harmonics" => 5e7)), ("efast", Dict("harmonics" => 1.5e9)),
+                              ("efast", Dict("samples" => 1e16)), ("morris", Dict("trajectories" => 1e16)),
+                              ("morris", Dict("trajectories" => 1e8, "points" => 1e8)),
+                              ("morris", Dict("design" => "trajectories", "levels" => 1e16)),
+                              ("morris", Dict("design" => "trajectories", "candidates" => -1e16)),
+                              ("sobol", Dict("resamples" => 9e15)), ("sobol", Dict("samples" => 5e7, "blocks" => 5e7)),
+                              ("radial", Dict("samples" => 2.25e15)), ("rbdfast", Dict("samples" => 1e16)),
+                              ("dgsm", Dict("samples" => 2e15, "crossed" => true)), ("shapley", Dict("perms" => 1e16)),
+                              ("shapley", Dict("nVar" => 1e21)))
+        @test K.gsa_refusal(method, 3, options) == too_many
+        @test_throws ArgumentError(too_many) K.build_design(method, ["a", "b", "c"], options)
+    end
+    # Just below, a count is a count; what was refused before is refused as before.
+    @test K.gsa_refusal("radial", 3, Dict("samples" => 2249999999999999)) === nothing
+    @test K.gsa_runs("radial", 3, Dict("samples" => 2249999999999999)) === 8999999999999996
+    @test K.gsa_refusal("efast", 3, Dict("harmonics" => 0)) == "This needs at least a few samples and one harmonic."
+    @test startswith(K.gsa_refusal("morris", 3, Dict("trajectories" => 1e16, "points" => 1)), "Morris needs")
+    # eFAST's points: counted where a double counts them, the start given back as it is past that.
+    @test (K.efast_samples(1000, 47434164), K.efast_samples(8999999999999990, 4)) === (8999999657515586, 8999999999999990)
+    @test (K.efast_samples(1000, 47434165), K.efast_samples(1e16, 4), K.efast_samples(1000, 1500000000)) === (9.000000036988901e15, 1e16, 9e18)
+    @test_throws ArgumentError K.efast_samples(1000, 0)
+    @test K.gsa_runs("efast", 3, Dict("harmonics" => 5e7)) === 3e16
     # Every method's layout: as many runs as it says, every probability inside (0, 1).
     keys_ = ["a", "b", "c"]
     for (method, options) in (("morris", Dict()), ("morris", Dict("design" => "trajectories", "candidates" => 12)),

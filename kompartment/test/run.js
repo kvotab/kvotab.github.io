@@ -4394,6 +4394,47 @@ test('each designed method finds what a function with a known answer has', async
 	assert(one.u[0].slice(0, 100).every((v, i) => v === two.u[0][i]), 'adding an input moved another’s draws');
 });
 
+test('a design past what a double counts is refused, and eFAST’s count always comes back', async () => {
+	// The Julia, C++ and Python engines refuse the same settings in the same words.
+	const g = await import('../src/domain/gsa.js');
+	const { streamFor, uniforms } = await import('../src/domain/sample.js');
+	const ctx = { seed: 5, streamFor, uniforms };
+	const tooMany = 'These settings ask for more than can be counted exactly, let alone run; give smaller numbers.';
+	const said = (f) => { try { return f(); } catch (e) { return `error: ${e.message}`; } };
+	// eFAST's points: no harmonic is no count (the search went on for ever), and a start a
+	// double cannot count on from one by one comes back as it is, unsearched (so did that).
+	for (const M of [0, -1, NaN]) {
+		assert(said(() => g.efastSamples(1000, M)) === 'error: eFAST needs a number of points and at least one harmonic.',
+			`harmonics ${M}: ${said(() => g.efastSamples(1000, M))}`);
+	}
+	assert(g.efastSamples(1e16, 4) === 1e16 && g.efastSamples(1000, 5e7) === 1e16 && g.efastSamples(1000, 1.5e9) === 9e18,
+		`${g.efastSamples(1e16, 4)} ${g.efastSamples(1000, 5e7)} ${g.efastSamples(1000, 1.5e9)}`);
+	// Below that, the search as before: 4M² + 1, raised to a length the harmonics fit under.
+	assert(g.efastSamples(1000, 47434164) === 8999999657515586 && g.efastSamples(1000, 47434165) === 9000000036988901
+		&& g.efastSamples(8999999999999990, 4) === 8999999999999990,
+		`${g.efastSamples(1000, 47434164)} ${g.efastSamples(1000, 47434165)} ${g.efastSamples(8999999999999990, 4)}`);
+	assert(g.gsaRuns('efast', 3, { harmonics: 5e7 }) === 3e16, `${g.gsaRuns('efast', 3, { harmonics: 5e7 })}`);
+	// Refused, before anything is laid out: a setting at 9e15 or past it (either way), or the
+	// runs it makes.
+	for (const [method, options] of [
+		['efast', { harmonics: 5e7 }], ['efast', { harmonics: 1.5e9 }], ['efast', { samples: 1e16 }],
+		['morris', { trajectories: 1e16 }], ['morris', { trajectories: 1e8, points: 1e8 }],
+		['morris', { design: 'trajectories', levels: 1e16 }], ['morris', { design: 'trajectories', candidates: -1e16 }],
+		['sobol', { resamples: 9e15 }], ['sobol', { samples: 5e7, blocks: 5e7 }], ['radial', { samples: 2.25e15 }],
+		['rbdfast', { samples: 1e16 }], ['dgsm', { samples: 2e15, crossed: true }], ['shapley', { perms: 1e16 }],
+		['shapley', { nVar: 1e21 }],
+	]) {
+		const why = g.gsaRefusal(method, 3, options);
+		assert(why === tooMany, `${method} ${JSON.stringify(options)}: ${why}`);
+		assert(said(() => g.buildDesign(method, ['a', 'b', 'c'], options, ctx)) === `error: ${tooMany}`, `${method} was built`);
+	}
+	// Just below, a count is a count; and what was refused before is refused as before.
+	assert(g.gsaRefusal('radial', 3, { samples: 2249999999999999 }) === null
+		&& g.gsaRuns('radial', 3, { samples: 2249999999999999 }) === 8999999999999996, 'a design just below was refused');
+	assert(g.gsaRefusal('efast', 3, { harmonics: 0 }) === 'This needs at least a few samples and one harmonic.'
+		&& g.gsaRefusal('morris', 3, { trajectories: 1e16, points: 1 })?.startsWith('Morris needs'), 'an old refusal changed');
+});
+
 test('a sensitivity design runs through the model, the pool and the worker', async () => {
 	const { runProbabilistic, designFor } = await import('../src/sim/probabilistic.js');
 	const { slices, stitch } = await import('../src/worker/prob-pool.js');
@@ -9832,6 +9873,26 @@ test('one realisation can be run again in full, and a tornado is a design of the
 	// for a later edit as though they were.
 	const rep = /function replayRealisation\(settings, index\) \{([\s\S]*?)\n\}/.exec(app)?.[1] ?? '';
 	assert(/state\.runKey = null;/.test(rep), 'a replay offers its states for reuse');
+});
+
+test('a tornado’s ends are read as numbers are read: text as the number it says, null as no end given', async () => {
+	// `Number(tornado.low ?? 0.05)`, which the Julia, C++ and Python engines read the same way.
+	const { designFor } = await import('../src/sim/probabilistic.js');
+	const { readFileSync } = await import('node:fs');
+	const p = new Project(JSON.parse(readFileSync(new URL('../examples/biosphere.json', import.meta.url), 'utf8')));
+	const sys = buildSystem(p);
+	const ends = (tornado) => {
+		const t = designFor(p, sys, { tornado }).stats.tornado;
+		return [t.low, t.high];
+	};
+	for (const [tornado, want] of [
+		[true, [0.05, 0.95]], [{ low: null, high: null }, [0.05, 0.95]], [{ low: '0.2', high: ' 0.8 ' }, [0.2, 0.8]],
+		[{ low: 'x' }, [NaN, 0.95]], [{ low: '', high: '0x1' }, [0, 1]], [{ low: true, high: [0.9] }, [1, 0.9]],
+		[{ low: 0.1, high: 0.7 }, [0.1, 0.7]],
+	]) {
+		const got = ends(tornado);
+		assert(got.every((v, i) => Object.is(v, want[i])), `${JSON.stringify(tornado)}: ${got}`);
+	}
 });
 
 

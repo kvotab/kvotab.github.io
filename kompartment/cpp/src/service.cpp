@@ -125,11 +125,6 @@ bool empty_option(const Json& v) {
     return (v.is_array() || v.is_object() || v.is_string()) && v.size() == 0;
 }
 
-/// `v in (nothing, false)`, as Julia's `==` compares: null, false, or a number equal to 0.
-bool none_or_false(const Json& v) {
-    return v.is_null() || (v.is_bool() && !v.as_bool()) || (v.is_number() && v.as_double() == 0);
-}
-
 /// `v === false ? nothing : v`.
 Json unless_false(const Json& v) { return v.is_bool() && !v.as_bool() ? Json() : v; }
 
@@ -398,8 +393,9 @@ struct Service {
                 const Json tornado = option(options, "tornado");
                 const Json gsa = option(options, "gsa");
                 // A sample the page asked the engine to keep is this machine's to hold, and may
-                // come to what the page drew from its memory rather than a tab's limits.
-                const bool keeping = option(options, "keep") == Json(true) && none_or_false(tornado) && none_or_false(gsa);
+                // come to what the page drew from its memory rather than a tab's limits. A sample
+                // is what `design_for` runs when neither a tornado nor a design is asked for.
+                const bool keeping = option(options, "keep") == Json(true) && !pb_truthy_opt(tornado) && !pb_truthy_opt(gsa);
                 const Json most = option(options, "most");
                 const Json asked = option(options, "asked");
                 ProbabilisticOptions po;
@@ -593,12 +589,12 @@ std::string sample_answer_bytes(const Json& op, const ProbabilisticResults& prob
             long long j = std::clamp(int_of(at.is_null() ? Json(0) : at), 0LL, static_cast<long long>(M.cols) - 1);
             for (long long i = 0; i < M.rows; i++) data.push_back(M(i, static_cast<std::size_t>(j)));
         } else {
+            // Brought into the realisations held: a part of a run holds fewer than the design has.
             const Json& index = q.get("index");
-            long long i = std::clamp(int_of(index.is_null() ? Json(0) : index), 0LL, n - 1);
-            // (Brought into the design's realisations: a part of a run holds fewer.)
-            if (i >= M.rows)
-                throw JuliaError("BoundsError", "BoundsError: attempt to access " + std::to_string(M.rows) + "x" + std::to_string(M.cols) +
-                                                    " Matrix{Float64} at index [" + std::to_string(i + 1) + ", :]");
+            const long long wanted = int_of(index.is_null() ? Json(0) : index);
+            if (M.rows == 0)
+                throw JuliaError("BoundsError", "BoundsError: attempt to access 0x" + std::to_string(M.cols) + " Matrix{Float64} at index [0, :]");
+            const long long i = std::clamp(wanted, 0LL, M.rows - 1);
             for (std::size_t j = 0; j < M.cols; j++) data.push_back(M(i, j));
         }
     }

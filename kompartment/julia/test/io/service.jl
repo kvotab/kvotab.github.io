@@ -212,15 +212,27 @@ end
                                     "method" => "lm", "maxEvals" => 40); model=decay, out="c1.json"),
         job("s1", "local-sensitivity", Dict("parameters" => ["leachRate[I-129]"]); out="s1.json"),
         job("e1", "calibrate", Dict("targets" => [], "variables" => []); model=decay, out="e1.json"),
+        # Kept as a sample where `design_for` runs one: a tornado of 0 is one (it is asked for),
+        # and of {} none, nor a design of {}.
+        job("k0", "probabilistic", Dict("seed" => 3, "tornado" => 0, "keep" => true, "blocks" => ["Dose"])),
+        job("k1", "probabilistic", Dict("seed" => 3, "iterations" => 5, "tornado" => Dict(), "gsa" => Dict(), "keep" => true,
+                                        "blocks" => ["Dose"])),
     ]
     out = IOBuffer()
     K.serve_stdio(; input=IOBuffer(join(lines, "\n") * "\n"), output=out)
     events = [K.parse_json(l) for l in split(String(take!(out)), '\n') if !isempty(l)]
     ends = Dict(e["id"] => e for e in events if get(e, "event", "") in ("done", "error"))
-    @test all(ends[id]["event"] == "done" for id in ("t1", "r1", "g1", "c1", "s1"))
+    @test all(ends[id]["event"] == "done" for id in ("t1", "r1", "g1", "c1", "s1", "k0", "k1"))
     # A tornado's swung inputs counted from 0, as the page counts them.
     meta = K.parse_json(String(copy(K._ds_unzip(read(joinpath(dir, "t1.zip")))["results/sample/meta.json"])))
     @test meta["iterations"] == 31 && meta["stats"]["tornado"]["swung"] == collect(0:14)
+    # A tornado goes back whole, kept or not; a sample asked to be kept stays on the engine.
+    for (id, iterations, kept_here) in (("k0", 31, false), ("k1", 5, true))
+        entries = K._ds_unzip(read(joinpath(dir, "$id.zip")))
+        m = K.parse_json(String(copy(entries["results/sample/meta.json"])))
+        @test m["iterations"] == iterations && haskey(m["stats"], "tornado") == !kept_here
+        @test get(m, "onEngine", false) === kept_here && any(k -> occursin("series.", k), keys(entries)) == !kept_here
+    end
     # A realisation replayed, counted from 0 as well.
     replayed = K.parse_json(String(copy(K._ds_unzip(read(joinpath(dir, "r1.zip")))["results/meta.json"])))["replayed"]
     @test (replayed["index"], replayed["iterations"], length(replayed["values"])) == (5, 20, 15)

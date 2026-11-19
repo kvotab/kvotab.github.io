@@ -657,6 +657,43 @@ end
             end
         end
     end
+
+    @testset "a measurement written into the file as anything but a number is not known" begin
+        # Close: within a quarter; one that is not a number is unknown, and close only to another.
+        @test K._split_close(nothing, nothing) && !K._split_close(nothing, 1.0)
+        @test K._split_close(100.0, 125.0) && !K._split_close(100.0, 134.0) && K._split_close(0, 0.0)
+        @test K._split_close("x", nothing) && K._split_close(true, Any[1]) && !K._split_close("x", 1.0) && !K._split_close(true, 1)
+        mktempdir() do dir
+            saved = (get(ENV, "KOMPARTMENT_CACHE", nothing), get(ENV, "KOMPARTMENT_SPLIT_MEMORY", nothing))
+            ENV["KOMPARTMENT_CACHE"] = dir
+            delete!(ENV, "KOMPARTMENT_SPLIT_MEMORY")
+            try
+                raw = example("biosphere")
+                key = K.split_memory_key(K.layout_signature(K.build_system(with_split(raw, "auto"))))
+                path = joinpath(dir, "split-memory-julia.json")
+                bad = K.JDict("solve_ms" => "fast", "gain" => "x", "build_fixed" => Any[1], "bins" => true, "when" => "then")
+                fresh() = (empty!(K._SPLIT_MEMORY); K._SPLIT_MEMORY_READ[] = false)
+                # Planned as a model never timed, solved whole, and what it measured written over it.
+                write(path, K.json_text(K.JDict(key => bad); indent=0))
+                fresh()
+                r = K.run_project(with_split(raw, "auto"); threads=4)
+                @test r.stats["split"]["why"] == "16 states, too few to be worth dividing before a run has been timed"
+                @test K.parse_json(read(path, String))[key]["solve_ms"] isa Real
+                # Split as asked, the entry written over with what the split measured.
+                write(path, K.json_text(K.JDict(key => bad); indent=0))
+                fresh()
+                s = K.run_project(with_split(raw, "on"); threads=4)
+                @test s.stats["split"]["used"] && startswith(s.stats["split"]["why"], "asked for")
+                @test K.parse_json(read(path, String))[key]["gain"] isa Real
+            finally
+                for (name, v) in zip(("KOMPARTMENT_CACHE", "KOMPARTMENT_SPLIT_MEMORY"), saved)
+                    v === nothing ? delete!(ENV, name) : (ENV[name] = v)
+                end
+                empty!(K._SPLIT_MEMORY)
+                K._SPLIT_MEMORY_READ[] = false
+            end
+        end
+    end
 end
 
 @testset "timing: independent chains, whole against split" begin

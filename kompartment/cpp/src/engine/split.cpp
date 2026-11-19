@@ -340,15 +340,6 @@ Json added(const Json& was, const Json& v) {
 
 const char* const SUMMED[] = {"nsteps", "nfailed", "nfevals", "npds", "ndecomps", "restarts", "breaks", "events", "jumps", "nbelowtol", "negative"};
 
-/// Julia's `Float64(v)` of what a split's memory holds: a number or a Boolean; anything else
-/// is its `MethodError` (see `split_close`).
-double memory_float(const Json& v) {
-    if (v.is_number()) return v.as_double();
-    if (v.is_bool()) return v.as_bool() ? 1.0 : 0.0;
-    const char* type = v.is_string() ? "String" : v.is_array() ? "Vector{Any}" : "OrderedCollections.OrderedDict{String, Any}";
-    throw JuliaError("MethodError", std::string("MethodError: no method matching Float64(::") + type + ")");
-}
-
 // --- what auto learns --------------------------------------------------------------------------------------
 
 struct SplitMemory {
@@ -1226,11 +1217,11 @@ Json split_recall(const std::string& key) {
 }
 
 bool split_close(const Json& a, const Json& b) {
-    if (a.is_null() || b.is_null()) return a.is_null() && b.is_null();
-    // Julia's `Float64(a)`: a measurement written as anything but a number or a Boolean throws
-    // its MethodError here -- out of `split_remember!`, failing the run (a fault of the Julia
-    // package's, reached only by a memory file written by hand; kept as it stands).
-    const double x = memory_float(a), y = memory_float(b);
+    // A measurement that is not a number -- missing, or written into the file by hand as
+    // something else -- is unknown, as `known_value` reads it, and close only to another unknown.
+    const bool known_a = a.is_number(), known_b = b.is_number();
+    if (!known_a || !known_b) return !known_a && !known_b;
+    const double x = a.as_double(), y = b.as_double();
     return std::fabs(x - y) <= 0.25 * jl_max(std::fabs(x), std::fabs(y));
 }
 

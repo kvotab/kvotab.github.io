@@ -65,6 +65,10 @@ inline constexpr long long PROB_MOST_BYTES_ASKED = 4LL * 1073741824;
 /// Anything but an input: not a parameter, not a lookup table.
 bool can_be_endpoint(const Json& kind);
 
+/// Whether a design's option asks for something (`_pb_truthy_opt`): not null, not `false`, not
+/// an empty dictionary -- how `design_for` tells a tornado or a sensitivity design asked for.
+bool pb_truthy_opt(const Json& x);
+
 /// Python's `str(v)`, for a name or a group a model file gives (`_pb_py_str`): text as it is,
 /// `True`/`False`, `None`, a float as Python's `repr`; a list or a dictionary as Julia's
 /// `string()` writes it.

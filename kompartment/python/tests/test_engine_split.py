@@ -817,6 +817,34 @@ class SplitRuns(unittest.TestCase):
                 if HAVE_NUMBA:
                     self.assertIn('before a run has been timed', python.stats['split']['why'])
 
+    def test_a_measurement_written_by_hand_as_anything_but_a_number_is_not_known(self) -> None:
+        # Close: within a quarter; one that is not a number is unknown, and close only to another.
+        self.assertTrue(S._close(None, None) and not S._close(None, 1.0))
+        self.assertTrue(S._close(100.0, 125.0) and not S._close(100.0, 134.0) and S._close(0, 0.0))
+        self.assertTrue(S._close('x', None) and S._close(True, [1]))
+        self.assertTrue(not S._close('x', 1.0) and not S._close(True, 1))
+        bad = {'solve_ms': 'fast', 'gain': 'x', 'build_fixed': [1], 'when': 'then'}
+        project = Project(example('biosphere'))
+        untimed = '16 states, too few to be worth dividing before a run has been timed'
+        self.assertEqual(S.plan_split(build_system(project), project, workers=4, known=bad)['why'], untimed)
+        # A file whose entry for the model holds such things: planned as a model never timed,
+        # solved, and what it measured written over the entry.
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, 'split-memory.json')
+            with mock.patch.object(S, 'memory_path', return_value=Path(path)), \
+                    mock.patch.object(S, '_MEMORY_READ', [False]), mock.patch.object(S, '_MEMORY', {}):
+                run(Project(example('biosphere')))
+                with open(path, encoding='utf-8') as f:
+                    (key,) = json.load(f)
+                with open(path, 'w', encoding='utf-8') as f:
+                    json.dump({key: bad}, f)
+                S._MEMORY.clear()
+                S._MEMORY_READ[0] = False
+                again = run(Project(example('biosphere')))
+                self.assertEqual(again.stats['split']['why'], untimed)
+                with open(path, encoding='utf-8') as f:
+                    self.assertIsInstance(json.load(f)[key]['solve_ms'], float)
+
     @unittest.skipUnless(HAVE_NUMBA, 'needs numba')
     def test_a_run_that_went_to_python_is_not_kept_as_compiled(self) -> None:
         """A run asked to compile whose model -- or one of whose parts -- went

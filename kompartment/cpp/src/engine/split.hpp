@@ -364,8 +364,9 @@ void split_remember(const std::string& key, const Json& entry);
 /// again (the tests' `empty!(_SPLIT_MEMORY); _SPLIT_MEMORY_READ[] = false`).
 void split_memory_forget();
 
-/// Whether two measurements are within a quarter of each other (`_split_close`): two nulls
-/// are; a null and a number are not.
+/// Whether two measurements are within a quarter of each other (`_split_close`). One that is not
+/// a number -- null, or written into the file by hand as anything else -- is unknown: two
+/// unknowns are close, an unknown and a number are not.
 bool split_close(const Json& a, const Json& b);
 
 // --- the run ---------------------------------------------------------------------------------------------

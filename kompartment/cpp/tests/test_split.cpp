@@ -7,12 +7,13 @@
 // threads and on bins fixed by hand -- every state and every series to the bit, the counts
 // summed, the account and the run log; a split that fails and is solved whole; the formulas
 // on numbers made up for them; patterns partitioned; parts assembled and refused; models cut
-// to one job's materials and built.
+// to one job's materials and built; measurements close or not.
 //
 // Besides, here: every split run again on 1, 2, 3 and 8 threads for the same bins, the same
 // bits; progress said and a run stopped; a split whose progress throws, solved whole, to the
 // bit of a whole run; a run side by side, one thread, a system given; what auto learns, in
-// this process and in its file; this engine's constants.
+// this process and in its file, and a file written by hand with what is not a number in it;
+// this engine's constants.
 //
 // KOMPARTMENT_SPLIT_ONLY=text runs only the cases whose name holds it (for a sanitizer build).
 // KOMPARTMENT_SPLIT_TIMING=1 times a made-up model of independent chains, whole and split.
@@ -44,6 +45,7 @@
 #include "engine/runner.hpp"
 #include "engine/split.hpp"
 #include "engine/transport.hpp"
+#include "io/dataset.hpp"
 #include "model/names.hpp"
 #include "util/errors.hpp"
 #include "util/json.hpp"
@@ -429,6 +431,14 @@ std::string formulas_text(const std::vector<SplitConstants>& cs) {
     return joined(lines, "\n");
 }
 
+/// Two measurements, close or not (`split_close`), for each pair the Julia tool made up.
+std::string close_text(const Json& pairs) {
+    std::vector<std::string> lines;
+    for (std::size_t k = 0; k < pairs.size(); k++)
+        lines.push_back("split_close " + std::to_string(k + 1) + " = " + (split_close(pairs[k][0], pairs[k][1]) ? "true" : "false"));
+    return joined(lines, "\n");
+}
+
 std::string partitions_text(const Json& patterns) {
     std::vector<std::string> lines;
     for (const Json& p : patterns.arr()) {
@@ -737,6 +747,7 @@ int main() {
     for (const Json& c : fx.get("assemble").arr())
         if (wanted("assemble")) record("assemble " + c.get("name").as_string(), c, guarded([&] { return assemble_text(c); }));
     if (wanted("parts")) record("parts", fx.get("parts"), guarded([&] { return parts_text(fx.get("parts"), fx.get("models").get("pinned")); }));
+    if (wanted("close")) record("close", fx.get("close"), guarded([&] { return close_text(fx.get("close").get("pairs")); }));
     if (dumps && *dumps) std::ofstream(std::string(dumps) + "/split.cpp.txt", std::ios::binary) << all;
 
     const Json biosphere = model_of("biosphere");
@@ -913,11 +924,44 @@ int main() {
         split_memory_forget();
         std::error_code ec;
         fs::remove_all(dir, ec);
-        // Close, as the Julia package measures it.
+        // Close, as the Julia package measures it: what is not a number is unknown, as nothing is.
         CHECK(split_close(Json(), Json()));
         CHECK(!split_close(Json(), Json(1.0)));
-        CHECK(split_close(Json(100.0), Json(125.0)) && !split_close(Json(100.0), Json(134.0)) && split_close(Json(true), Json(1)));
-        CHECK(said([] { return std::to_string(split_close(Json("x"), Json(1.0))); }) == "error:MethodError");
+        CHECK(split_close(Json(100.0), Json(125.0)) && !split_close(Json(100.0), Json(134.0)) && !split_close(Json(true), Json(1)));
+        CHECK(!split_close(Json("x"), Json(1.0)) && split_close(Json("x"), Json()) && split_close(Json(true), Json::array({Json(1)})));
+    }
+
+    // A memory file whose entry for a model holds what is not a number, written by hand: the
+    // run is planned as one never timed, solved, and what it measured written over the entry --
+    // and a split as asked is not lost to it.
+    if (wanted("memory")) {
+        const fs::path dir = fs::temp_directory_path() / ("kompartment-split-bad-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+        fs::create_directories(dir);
+        set_env("KOMPARTMENT_CACHE", dir.string());
+        unset_env("KOMPARTMENT_SPLIT_MEMORY");
+        const fs::path path = dir / "split-memory-cpp.json";
+        const std::string key = split_memory_key(layout_signature(System(project_of(biosphere, "auto"))));
+        const Json bad = Json::object({{"solve_ms", Json("fast")}, {"gain", Json("x")}, {"build_fixed", Json::array({Json(1)})},
+                                       {"bins", Json(true)}, {"when", Json("then")}});
+        auto start_from_bad = [&] {
+            std::ofstream(path, std::ios::binary) << json_text(Json::object({{key, bad}}), 0);
+            split_memory_forget();
+        };
+        RunOptions o;
+        o.threads = 4;
+        start_from_bad();
+        Results whole = run_project(project_of(biosphere, "auto"), nullptr, o);
+        CHECK_EQ(whole.stats.get("split").get("why").as_string(), std::string("16 states, too few to be worth dividing before a run has been timed"));
+        CHECK(parse_json(check::read_file(path.string())).get(key).get("solve_ms").is_number());
+        start_from_bad();
+        Results parted = run_project(project_of(biosphere, "on"), nullptr, o);
+        CHECK_MSG(parted.stats.get("split").get("used") == Json(true), "split as asked: " + parted.stats.get("split").get("why").as_string());
+        CHECK(parse_json(check::read_file(path.string())).get(key).get("gain").is_number());
+        set_env("KOMPARTMENT_SPLIT_MEMORY", "0");
+        unset_env("KOMPARTMENT_CACHE");
+        split_memory_forget();
+        std::error_code ec;
+        fs::remove_all(dir, ec);
     }
 
     // This engine's constants and its formulas.

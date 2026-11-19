@@ -267,6 +267,14 @@ end
     @test part.range == 11:20
     @test all(isequal(part.values[w], whole.values[w][11:20, :]) for w in eachindex(part.values))
     @test isequal(part.samples, whole.samples[:, 11:20])
+    # One of them asked for by number, as the engine is asked: brought into the realisations held.
+    mktempdir() do dir
+        out = joinpath(dir, "answer")
+        for (index, row) in ((0, 1), (4, 5), (25, 10), (-3, 1))
+            K._service_sample_answer("realisation", part, Dict{String,Any}("series" => Any[0], "index" => index, "out" => out))
+            @test reinterpret(Float64, read(out)) == part.values[1][row, :]
+        end
+    end
     # The progress line, on a stream that is not a terminal: a line per tenth, and the last word.
     io = IOBuffer()
     K.run_probabilistic(m, 20; seed=3, keep=["Dose"], progress=io, threads=1)
@@ -286,6 +294,36 @@ end
                                 asked_bytes=bytes)
     @test asked.precision == "float32"
     @test K.run_probabilistic(m, 30; seed=3, keep=["Dose"], threads=2, most_bytes=bytes).precision == "double"
+    # Refused, `large=true` offered where it would go ahead -- and not where it was given, nor
+    # where the run is past what it may come to as well.
+    refusal(; kw...) = try
+        K.run_probabilistic(m, 30; seed=3, keep=["Dose"], threads=1, kw...)
+        ""
+    catch e
+        e isa ErrorException ? e.msg : rethrow()
+    end
+    head = "30 realisations of 4 series over $(length(whole.t)) times is $(K.estimate(4, length(whole.t), 30, "float32").text) " *
+           "even held as float32"
+    @test refusal(most_bytes=bytes ÷ 4, asked_bytes=bytes) ==
+          head * "; pass large=true to go ahead on a machine with the memory for it, or choose fewer endpoints, or fewer realisations."
+    for kw in ((large=true, most_bytes=bytes ÷ 4, asked_bytes=bytes ÷ 4), (most_bytes=bytes ÷ 4, asked_bytes=bytes ÷ 4))
+        @test refusal(; kw...) == head * ", more than a run may hold with large=true or without; choose fewer endpoints, or fewer realisations."
+    end
+    # A tornado's ends read as the application reads them: text as the number it says, null as
+    # no end given, anything else as JavaScript's `Number()` makes it.
+    proj = K.project(m)
+    sys = K.build_system(proj)
+    ends(t) = (s = K.design_for(proj, sys; tornado=t).stats["tornado"]; (s["low"], s["high"]))
+    for (t, want) in ((true, (0.05, 0.95)), (Dict("low" => nothing, "high" => nothing), (0.05, 0.95)),
+                      (Dict("low" => "0.2", "high" => " 0.8 "), (0.2, 0.8)), (Dict("low" => "x"), (NaN, 0.95)),
+                      (Dict("low" => "", "high" => "0x1"), (0.0, 1.0)), (Dict("low" => true, "high" => Any[0.9]), (1.0, 0.9)),
+                      ((low=0.1, high=nothing), (0.1, 0.95)), ((low="0.25", high=0.7), (0.25, 0.7)))
+        @test isequal(ends(t), want)
+    end
+    # A list read out of order, at a probability far below zero: no value there, as in JavaScript.
+    unordered = Dict{String,Any}("kind" => "pg", "values" => Any[1, 2], "inorder" => false)
+    @test all(isnan, (K.value_at_probability(unordered, u, 0) for u in (-5e18, -1e300, -Inf)))
+    @test K.value_at_probability(unordered, -0.0, 0) == 1.0 && K.value_at_probability(unordered, 0.75, 0) == 2.0
     # Nothing to draw: refused in the application's words.
     @test_throws ArgumentError K.run_probabilistic(K.load(joinpath(PROB_EXAMPLES, "decay-chain.json")), 5)
     @test_throws ArgumentError K.run_probabilistic(m, 5; gsa=Dict("method" => "nope"))

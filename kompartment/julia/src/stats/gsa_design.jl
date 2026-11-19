@@ -40,8 +40,18 @@ function _gd_round(x::Float64)
     return x - f >= 0.5 ? f + 1 : f
 end
 
+"""
+What a design's counts must stay below: past it a double no longer counts one by one
+(JavaScript's `Number.MAX_SAFE_INTEGER` is 2^53 - 1), and a setting or a number of runs
+is refused (`gsa_refusal`).
+"""
+const GSA_MOST = 9.0e15
+
+"""Why a design past `GSA_MOST` is refused."""
+const _GD_TOO_MANY = "These settings ask for more than can be counted exactly, let alone run; give smaller numbers."
+
 """A whole number as an `Int` where it is one, as Python's arithmetic keeps it."""
-_gd_whole(v::Float64) = isfinite(v) && v == floor(v) && abs(v) < 9.0e15 ? Int(v) : v
+_gd_whole(v::Float64) = isfinite(v) && v == floor(v) && abs(v) < GSA_MOST ? Int(v) : v
 
 """`Number.isInteger`."""
 _gd_is_integer(v) = v isa Integer && !(v isa Bool) || (v isa AbstractFloat && isfinite(v) && v == floor(v))
@@ -174,33 +184,38 @@ end
     gsa_runs(method, K, options=nothing) -> Number
 
 How many runs a design of `method` over `K` inputs is, before any is made (0
-for a method there is not).
+for a method there is not): counted as the application counts them, in doubles
+and in its order, an `Int` where that is a whole number below `GSA_MOST`.
 """
 function gsa_runs(method, K::Integer, options=nothing)
     o = gsa_options(method, K, options)
-    if method == "morris"
-        return o["trajectories"] * (o["design"] == "trajectories" ? K + 1 : o["points"])
+    f(key) = Float64(o[key])
+    k = Float64(K)
+    runs = if method == "morris"
+        f("trajectories") * (o["design"] == "trajectories" ? k + 1 : f("points"))
     elseif method == "radial"
-        return o["samples"] * (K + 1)
+        f("samples") * (k + 1)
     elseif method == "sobol"
-        return o["blocks"] * (o["second"] ? 2K + 2 : K + 2) * o["samples"]
+        f("blocks") * (o["second"] ? 2k + 2 : k + 2) * f("samples")
     elseif method == "efast"
-        return K * efast_samples(o["samples"], o["harmonics"])
+        k * Float64(efast_samples(o["samples"], o["harmonics"]))
     elseif method == "rbdfast"
-        return o["samples"]
+        f("samples")
     elseif method == "ff"
         k2 = 2
         while k2 < K
             k2 *= 2
         end
-        return 2k2
+        Float64(2k2)
     elseif method == "dgsm"
-        return o["samples"] * (1 + K + (o["crossed"] ? (K * (K - 1)) ÷ 2 : 0))
+        f("samples") * (1 + k + (o["crossed"] ? (k * (k - 1)) / 2 : 0.0))
     elseif method == "shapley"
-        orders = o["perms"] > 0 ? o["perms"] : _gd_factorial(K)
-        return _gd_whole(Float64(o["nVar"] + orders * (K - 1) * o["nOuter"] * o["nInner"]))
+        orders = o["perms"] > 0 ? f("perms") : _gd_factorial(K)
+        f("nVar") + orders * (k - 1) * f("nOuter") * f("nInner")
+    else
+        return 0
     end
-    return 0
+    return _gd_whole(runs)
 end
 
 """
@@ -243,6 +258,12 @@ function gsa_refusal(method, K::Integer, options=nothing)
         (o["nVar"] >= 2 && positive(o["nOuter"]) && o["nInner"] >= 2) ||
             return "Shapley needs at least two variance samples, one outer and two inner samples."
     end
+    # Past what a double counts one by one, a setting, or the runs it makes, would hang
+    # eFAST's search for its points, or ask for more than any machine could lay out.
+    for (key, _, kind, _) in GSA_METHODS[method]
+        (kind === :int && !(abs(o[key]) < GSA_MOST)) && return _GD_TOO_MANY
+    end
+    gsa_runs(method, K, o) < GSA_MOST || return _GD_TOO_MANY
     return nothing
 end
 
@@ -460,10 +481,15 @@ end
 
 # --- eFAST and RBD-FAST ----------------------------------------------------------------------
 
-"""The smallest number of points at or above `n` that eFAST can use with `M` harmonics."""
+"""
+The smallest number of points at or above `n` that eFAST can use with `M` harmonics. A
+start at `GSA_MOST` or past it is given back as it is, a `Float64`, unsearched: it cannot
+be counted one by one, and `gsa_refusal` refuses the design.
+"""
 function efast_samples(n, M::Integer)
-    N = max(_gd_round(Float64(n)), Float64(4 * M * M + 1))
+    N = max(_gd_round(Float64(n)), 4.0 * M * M + 1)
     (isfinite(N) && M >= 1) || throw(ArgumentError("eFAST needs a number of points and at least one harmonic."))
+    N < GSA_MOST || return N
     N = Int(N)
     while true
         w = fld(N - 1, 2M)

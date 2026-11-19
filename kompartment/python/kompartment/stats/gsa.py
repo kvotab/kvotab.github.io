@@ -567,15 +567,19 @@ def sobol_indices(y: Sequence[float], spec: Mapping[str, Any]) -> Dict[str, Any]
 # ---------------------------------------------------------------------------
 
 
-def efast_samples(n: float, M: int = 4) -> int:
+def efast_samples(n: float, M: int = 4) -> Any:
     """The smallest number of points at or above ``n`` that eFAST can use with ``M`` harmonics.
 
-    (For a number that is not finite, or no harmonics, the application's loop
-    never ends; this raises instead.)
+    For a number that is not finite, or no harmonics, this raises, as the
+    application does. A start at :data:`GSA_MOST` or past it is given back as
+    it is, a float, unsearched: it cannot be counted one by one, and
+    :func:`gsa_refusal` refuses the design.
     """
-    N = _js_max(_js_round(n), 4 * M * M + 1)
+    N = _js_max(float(_js_round(n)), 4.0 * M * M + 1)
     if not math.isfinite(N) or not M >= 1:
         raise ValueError('eFAST needs a number of points and at least one harmonic.')
+    if not N < GSA_MOST:
+        return N
     N = int(N)
     while True:
         w = math.floor((N - 1) / (2 * M))
@@ -1671,6 +1675,15 @@ def gsa_options(method: str, K: int, given: Optional[Mapping[str, Any]] = None) 
     return out
 
 
+#: What a design's counts must stay below: past it a double no longer counts one by
+#: one (JavaScript's ``Number.MAX_SAFE_INTEGER`` is 2**53 - 1), and a setting or a
+#: number of runs is refused (:func:`gsa_refusal`).
+GSA_MOST = 9.0e15
+
+#: Why a design past :data:`GSA_MOST` is refused.
+_TOO_MANY = 'These settings ask for more than can be counted exactly, let alone run; give smaller numbers.'
+
+
 def _factorial(n: int) -> float:
     """``n!`` in floating point, multiplied as the application's recursion multiplies it."""
     f = 1.0
@@ -1755,6 +1768,13 @@ def gsa_refusal(method: str, K: int, options: Optional[Mapping[str, Any]] = None
             return f'All {k}! orders of {k} inputs is too many; give a number of random orders.'
         if not o['nVar'] >= 2 or not positive(o['nOuter']) or not o['nInner'] >= 2:
             return 'Shapley needs at least two variance samples, one outer and two inner samples.'
+    # Past what a double counts one by one, a setting, or the runs it makes, would hang
+    # eFAST's search for its points, or ask for more than any machine could lay out.
+    for opt in GSA_METHODS[method]['options']:
+        if opt[3] == 'int' and not abs(o[opt[0]]) < GSA_MOST:
+            return _TOO_MANY
+    if not gsa_runs(method, K, o) < GSA_MOST:
+        return _TOO_MANY
     return None
 
 
