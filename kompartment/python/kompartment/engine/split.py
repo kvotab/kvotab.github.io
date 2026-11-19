@@ -258,7 +258,8 @@ def state_materials(layout: Any) -> List[Optional[str]]:
 
 # --- the jobs -------------------------------------------------------------------------------
 
-def _recorder_owners(system: Any, owner: np.ndarray, smallest: int) -> Any:
+def _recorder_owners(system: Any, owner: np.ndarray, smallest: int,
+                     job_of_material: Optional[Dict[str, int]] = None) -> Any:
     """For every entry of a recorder that remembers (a min/max, a running mean):
     ``(key, job, slot)`` -- its name, the job whose states its target reads,
     and its place in the whole system's histories -- or a refusal, when those
@@ -269,9 +270,13 @@ def _recorder_owners(system: Any, owner: np.ndarray, smallest: int) -> Any:
     if not remembering:
         return out
     deps = state_dependencies(system)
-    space = system.layout.index_space
+    layout = system.layout
+    space = layout.index_space
+    material_list = space.get(layout.material_list) if layout.material_list else None
+    root = material_list.root_name if material_list is not None else None
     for rec in remembering:
         target = rec.aux['target']
+        md = _material_dim(space, root, list(rec.dims or []))
         for off in range(rec.width):
             reads = deps.get(target.base + off)
             jobs = sorted({int(owner[s]) for s in (reads.tolist() if reads is not None else [])})
@@ -279,7 +284,17 @@ def _recorder_owners(system: Any, owner: np.ndarray, smallest: int) -> Any:
                 return (f"'{rec.name}' remembers a value read from more than one part, so no part can give it "
                         'back')
             index = space.tuple_at(rec.dims, off) if rec.dims else []
-            out.append((f"{rec.kind}:{rec.name}[{','.join(index)}]", jobs[0] if jobs else smallest, rec.mem + off))
+            # A target that reads no state is the same in every build that holds the
+            # entry, but an entry per material is built only where its material is
+            # switched on: it is that job's to give back (the smallest job's never
+            # held it, and the split was solved whole instead).
+            if jobs:
+                job = jobs[0]
+            elif md >= 0 and job_of_material:
+                job = job_of_material.get(index[md], smallest)
+            else:
+                job = smallest
+            out.append((f"{rec.kind}:{rec.name}[{','.join(index)}]", job, rec.mem + off))
     return out
 
 
@@ -371,7 +386,8 @@ def split_jobs(system: Any) -> Dict[str, Any]:
         if m not in placed:
             jobs[smallest]['materials'].append(m)
             jobs[smallest]['seen'].add(m)
-    recorders = _recorder_owners(system, owner, smallest)
+    job_of_material = {m: k for k, jb in enumerate(jobs) for m in jb['materials']}
+    recorders = _recorder_owners(system, owner, smallest, job_of_material)
     if isinstance(recorders, str):
         return {'ok': False, 'why': recorders}
     return {'ok': True, 'jobs': [{'materials': list(jb['materials']), 'states': jb['states']} for jb in jobs],

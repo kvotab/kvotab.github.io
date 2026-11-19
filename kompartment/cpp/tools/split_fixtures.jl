@@ -191,8 +191,8 @@ model("two", two())
 model("recording", two(min_maxes=Any[J("name" => "PeakB", "target" => "B", "operation" => "max"),
                                      J("name" => "LowA", "target" => "A", "operation" => "min")],
                        running_means=Any[J("name" => "MeanB", "target" => "B")]))
-# A min/max per nuclide of what no state moves: each entry goes to the smallest job, whose part holds
-# only its own nuclide's entry, so the split is solved whole (a fault of the package's, kept).
+# A min/max per nuclide of what no state moves: each entry is given back by the job of its own
+# nuclide, whose part holds it (the smallest job's never did, and the split was solved whole).
 model("a min/max of no state, per nuclide", two(expressions=Any[J("name" => "E", "equation" => "k1 * (1 + sin(time))",
                                                                   "index_lists" => Any["Radionuclides"])],
                                                 min_maxes=Any[J("name" => "PeakE", "target" => "E", "operation" => "max",

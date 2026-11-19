@@ -645,6 +645,28 @@ class SplitRuns(unittest.TestCase):
         peak = parted['PeakB [Cs-137]']
         self.assertGreater(peak[-1], parted['B [Cs-137]'][-1] * 1.5)
 
+    def test_a_min_max_per_nuclide_of_what_no_state_moves_comes_back_from_its_nuclides_part(self) -> None:
+        # Its entries went to the smallest job, whose part holds only its own
+        # nuclide's entry, so the split was abandoned and solved whole.
+        raw = {'name': 'two', 'nuclides': ['Cs-137', 'Sr-90'],
+               'simulation': {'start_time': 0, 'end_time': 50, 'output_points': 11, 'spacing': 'linear',
+                              'solver': 'ndf', 'rtol': 1e-8, 'abstol': 1e-12, 'time_unit': 'year'},
+               'parameters': [{'name': 'k1', 'value': 0.2}, {'name': 'k2', 'value': 0.05}],
+               'compartments': [{'name': 'A', 'initial': '1'}, {'name': 'B', 'initial': '0'},
+                                {'name': 'C', 'initial': '0'}],
+               'transfers': [{'name': 'AB', 'from': 'A', 'to': 'B', 'rate': 'k1'},
+                             {'name': 'BC', 'from': 'B', 'to': 'C', 'rate': 'k2'}],
+               'expressions': [{'name': 'E', 'equation': 'k1 * (1 + sin(time))', 'index_lists': ['Radionuclides']}],
+               'min_maxes': [{'name': 'PeakE', 'target': 'E', 'operation': 'max', 'index_lists': ['Radionuclides']}]}
+        whole = run(with_split(raw, 'off'))
+        parted = run(with_split(raw, 'on'), workers=2)
+        self.assertTrue(parted.stats['split']['used'], parted.stats['split']['why'])
+        # The states to the tolerance; the peak as each part's steps sample it.
+        for label in ('C [Cs-137]', 'C [Sr-90]'):
+            self.assertLess(float(np.max(np.abs(parted[label] - whole[label]))), 1e-9, label)
+        for label in ('PeakE [Cs-137]', 'PeakE [Sr-90]'):
+            self.assertTrue(np.allclose(parted[label], whole[label], rtol=1e-3), label)
+
     def test_a_min_max_of_more_than_one_part_is_solved_whole(self) -> None:
         r = run(with_split(ACROSS, 'on'), workers=2)
         account = r.stats['split']

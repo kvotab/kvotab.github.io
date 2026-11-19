@@ -184,7 +184,8 @@ std::vector<std::pair<std::string, int>> remembering_entries(const System& sys) 
 /// For every entry of a recorder that remembers: `(key, job, slot)` -- or the refusal, when
 /// the states its target reads are in more than one job and no part can give it back
 /// (`_recorder_owners`).
-std::variant<std::vector<SplitRecorder>, std::string> recorder_owners(const System& sys, const std::vector<int>& owner, int smallest) {
+std::variant<std::vector<SplitRecorder>, std::string> recorder_owners(const System& sys, const std::vector<int>& owner, int smallest,
+                                                                      const std::unordered_map<std::string, int>& job_of_material) {
     std::vector<SplitRecorder> out;
     std::vector<EntryPtr> remembering;
     for (const auto& r : sys.builder->recorders)
@@ -194,20 +195,33 @@ std::variant<std::vector<SplitRecorder>, std::string> recorder_owners(const Syst
     const IndexSpace& space = *sys.builder->space;
     for (const auto& rec : remembering) {
         const EntryPtr& target = rec->aux_at("target");
+        const std::optional<std::string> d = material_dim(sys, rec->dims);
+        std::optional<std::size_t> at;
+        if (d)
+            for (std::size_t k = 0; k < rec->dims.size(); k++)
+                if (rec->dims[k] == *d) {
+                    at = k;
+                    break;
+                }
         for (int off = 0; off < rec->width; off++) {
             std::set<int> jobs;
             auto it = deps.find(target->base + off);
             if (it != deps.end())
                 for (int s : it->second) jobs.insert(owner[static_cast<std::size_t>(s)]);
             if (jobs.size() > 1) return "'" + rec->name + "' remembers a value read from more than one part, so no part can give it back";
-            // (A fault of the Julia package's, kept as it stands: an entry whose target reads no
-            // state goes to the smallest job -- but an entry of a recorder per material is built
-            // only by the job that owns its material, so a min/max or running mean per nuclide of
-            // something no state moves is not sent back from there, and the split is solved whole
-            // instead: "the part that owns ... did not send its history back". Its material's job
-            // would hold it.)
             std::vector<std::string> index = rec->dims.empty() ? std::vector<std::string>{} : space.tuple_at(rec->dims, off);
-            out.push_back({rec->kind + ":" + rec->name + "[" + joined(index, ",") + "]", jobs.empty() ? smallest : *jobs.begin(), rec->mem + off});
+            // A target that reads no state is the same in every build that holds the entry, but
+            // an entry per material is built only where its material is switched on: it is that
+            // job's to give back (the smallest job's never held it, and the split was solved
+            // whole instead).
+            int job = smallest;
+            if (!jobs.empty()) {
+                job = *jobs.begin();
+            } else if (at) {
+                auto found = job_of_material.find(index[*at]);
+                if (found != job_of_material.end()) job = found->second;
+            }
+            out.push_back({rec->kind + ":" + rec->name + "[" + joined(index, ",") + "]", job, rec->mem + off});
         }
     }
     return out;
@@ -636,7 +650,10 @@ SplitJobs split_jobs(const System& sys) {
             names[static_cast<std::size_t>(smallest)].push_back(m);
             seen[static_cast<std::size_t>(smallest)].insert(m);
         }
-    auto recorders = recorder_owners(sys, owner, smallest);
+    std::unordered_map<std::string, int> job_of_material;
+    for (std::size_t k = 0; k < names.size(); k++)
+        for (const auto& m : names[k]) job_of_material[m] = static_cast<int>(k);
+    auto recorders = recorder_owners(sys, owner, smallest, job_of_material);
     if (std::holds_alternative<std::string>(recorders)) return no_jobs(std::get<std::string>(recorders));
     SplitJobs out;
     for (std::size_t k = 0; k < names.size(); k++) out.jobs.push_back({names[k], owned[k]});

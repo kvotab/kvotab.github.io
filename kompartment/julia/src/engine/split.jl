@@ -253,7 +253,8 @@ For every entry of a recorder that remembers (a min/max, a running mean):
 place in the whole system's histories (from 0) -- or the refusal, when those
 states are in more than one job and no part can give it back.
 """
-function _recorder_owners(sys::System, owner::Vector{Int}, smallest::Int)
+function _recorder_owners(sys::System, owner::Vector{Int}, smallest::Int,
+                          job_of_material::Dict{String,Int}=Dict{String,Int}())
     out = Tuple{String,Int,Int}[]
     remembering = [r for r in sys.recorders if r.kind in ("min_max", "running_mean") && r[:mem] >= 0]
     isempty(remembering) && return out
@@ -261,14 +262,21 @@ function _recorder_owners(sys::System, owner::Vector{Int}, smallest::Int)
     space = sys.builder.space
     for rec in remembering
         target = rec[:aux]["target"]
+        d = _material_dim(sys, rec.dims)
+        at = d === nothing ? nothing : findfirst(==(d), rec.dims)
         for off in 0:rec.width-1
             reads = get(deps, target.base + off, Int[])
             jobs = sort!(unique!([owner[s+1] for s in reads]))
             length(jobs) > 1 &&
                 return "'$(rec.name)' remembers a value read from more than one part, so no part can give it back"
             index = isempty(rec.dims) ? String[] : tuple_at(space, rec.dims, off)
-            push!(out, ("$(rec.kind):$(rec.name)[$(join(index, ","))]", isempty(jobs) ? smallest : jobs[1],
-                        rec[:mem] + off))
+            # A target that reads no state is the same in every build that holds the entry,
+            # but an entry per material is built only where its material is switched on: it
+            # is that job's to give back (the smallest job's never held it, and the split
+            # was solved whole instead).
+            job = !isempty(jobs) ? jobs[1] :
+                  at === nothing ? smallest : get(job_of_material, index[at], smallest)
+            push!(out, ("$(rec.kind):$(rec.name)[$(join(index, ","))]", job, rec[:mem] + off))
         end
     end
     return out
@@ -371,7 +379,8 @@ function split_jobs(sys::System)
             push!(seen[smallest+1], m)
         end
     end
-    recorders = _recorder_owners(sys, owner, smallest)
+    job_of_material = Dict{String,Int}(m => k - 1 for k in eachindex(names) for m in names[k])
+    recorders = _recorder_owners(sys, owner, smallest, job_of_material)
     recorders isa String && return _no_jobs(recorders)
     return (why=nothing, jobs=[SplitJob(names[k], owned[k]) for k in eachindex(names)], owner=owner, keys=keys,
             parts=count, recorders=recorders)

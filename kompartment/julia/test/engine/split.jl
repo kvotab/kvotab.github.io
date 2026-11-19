@@ -433,6 +433,28 @@ end
         end
     end
 
+    @testset "a min/max per nuclide of what no state moves is given back by its nuclide's part" begin
+        # Its entries went to the smallest job, whose part holds only its own nuclide's
+        # entry, so the split was abandoned and solved whole.
+        raw = K.parse_json("""{"name": "two", "nuclides": ["Cs-137", "Sr-90"],
+            "simulation": {"start_time": 0, "end_time": 50, "output_points": 11, "spacing": "linear",
+                           "solver": "ndf", "rtol": 1e-8, "abstol": 1e-12, "time_unit": "year"},
+            "parameters": [{"name": "k1", "value": 0.2}, {"name": "k2", "value": 0.05}],
+            "compartments": [{"name": "A", "initial": "1"}, {"name": "B", "initial": "0"}, {"name": "C", "initial": "0"}],
+            "transfers": [{"name": "AB", "from": "A", "to": "B", "rate": "k1"}, {"name": "BC", "from": "B", "to": "C", "rate": "k2"}],
+            "expressions": [{"name": "E", "equation": "k1 * (1 + sin(time))", "index_lists": ["Radionuclides"]}],
+            "min_maxes": [{"name": "PeakE", "target": "E", "operation": "max", "index_lists": ["Radionuclides"]}]}""")
+        whole = K.run_project(with_split(raw, "off"))
+        parted = K.run_project(with_split(raw, "on"); threads=2)
+        @test parted.stats["split"]["used"]
+        @test parted.stats["split"]["why"] == "asked for: 2 parts, the largest 50% of the states, on 2 cores"
+        # The states to the tolerance; the peak as each part's steps sample it.
+        @test worst(whole, parted) < AGREE
+        for l in ("PeakE [Cs-137]", "PeakE [Sr-90]")
+            @test isapprox(K.series(parted, l), K.series(whole, l); rtol=1e-3)
+        end
+    end
+
     @testset "the account and the log" begin
         parted = K.run_project(with_split(example("biosphere"), "on"); threads=3)
         account = parted.stats["split"]
