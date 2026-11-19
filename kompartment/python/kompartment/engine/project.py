@@ -173,6 +173,21 @@ def js_number(v: Any) -> float:
     return js_to_number(v)
 
 
+def js_truthy(v: Any) -> bool:
+    """JavaScript's truthiness (``!!v``): null, false, 0, NaN and the empty
+    string are false; everything else -- an empty dictionary or list too -- is
+    true."""
+    if v is None or v is False:
+        return False
+    if v is True:
+        return True
+    if isinstance(v, (int, float)):
+        return not (v == 0 or v != v)
+    if isinstance(v, str):
+        return v != ''
+    return True
+
+
 def js_truthy_switch(v: Any, default: bool) -> bool:
     if default:
         return v is not False and v != 'false' and v != 0

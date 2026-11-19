@@ -212,9 +212,9 @@ end
                                     "method" => "lm", "maxEvals" => 40); model=decay, out="c1.json"),
         job("s1", "local-sensitivity", Dict("parameters" => ["leachRate[I-129]"]); out="s1.json"),
         job("e1", "calibrate", Dict("targets" => [], "variables" => []); model=decay, out="e1.json"),
-        # Kept as a sample where `design_for` runs one: a tornado of 0 is one (it is asked for),
-        # and of {} none, nor a design of {}.
-        job("k0", "probabilistic", Dict("seed" => 3, "tornado" => 0, "keep" => true, "blocks" => ["Dose"])),
+        # Kept as a sample where `design_for` runs one, a tornado or a design asked for as the
+        # application asks: a tornado of 0 is none, and of {} one (before a design of {}).
+        job("k0", "probabilistic", Dict("seed" => 3, "iterations" => 5, "tornado" => 0, "keep" => true, "blocks" => ["Dose"])),
         job("k1", "probabilistic", Dict("seed" => 3, "iterations" => 5, "tornado" => Dict(), "gsa" => Dict(), "keep" => true,
                                         "blocks" => ["Dose"])),
     ]
@@ -227,7 +227,7 @@ end
     meta = K.parse_json(String(copy(K._ds_unzip(read(joinpath(dir, "t1.zip")))["results/sample/meta.json"])))
     @test meta["iterations"] == 31 && meta["stats"]["tornado"]["swung"] == collect(0:14)
     # A tornado goes back whole, kept or not; a sample asked to be kept stays on the engine.
-    for (id, iterations, kept_here) in (("k0", 31, false), ("k1", 5, true))
+    for (id, iterations, kept_here) in (("k0", 5, true), ("k1", 31, false))
         entries = K._ds_unzip(read(joinpath(dir, "$id.zip")))
         m = K.parse_json(String(copy(entries["results/sample/meta.json"])))
         @test m["iterations"] == iterations && haskey(m["stats"], "tornado") == !kept_here

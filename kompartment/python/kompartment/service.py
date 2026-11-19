@@ -226,6 +226,7 @@ def run_job(job: Dict[str, Any], say: Callable[..., None], stopped: Callable[[],
             })
         elif kind == 'probabilistic':
             from .engine.probabilistic import run_probabilistic
+            from .engine.project import js_truthy
             from .io.dataset import write_sample_archive
             say(id=job_id, event='stage', stage='building')
 
@@ -238,7 +239,7 @@ def run_job(job: Dict[str, Any], say: Callable[..., None], stopped: Callable[[],
             # A sample the page asked the engine to keep is this machine's to hold, and
             # may come to what the page drew from its memory rather than a tab's limits.
             held = (options.get('keep') is True and kept is not None
-                    and not options.get('tornado') and not options.get('gsa'))
+                    and not js_truthy(options.get('tornado')) and not js_truthy(options.get('gsa')))
             limits = {k: int(options[o]) for k, o in (('most_bytes', 'most'), ('asked_bytes', 'asked'))
                       if held and isinstance(options.get(o), (int, float)) and not isinstance(options.get(o), bool)}
             prob = run_probabilistic(
@@ -252,8 +253,8 @@ def run_job(job: Dict[str, Any], say: Callable[..., None], stopped: Callable[[],
                 on_progress=tick,
                 large=options.get('large') is True,
                 # A tornado, or a sensitivity design, in place of a sample.
-                tornado=options.get('tornado') or None,
-                gsa=options.get('gsa') or None,
+                tornado=_unless_false(options.get('tornado')),
+                gsa=_unless_false(options.get('gsa')),
                 **limits,
             )
             say(id=job_id, event='stage', stage='writing')
@@ -273,6 +274,13 @@ def run_job(job: Dict[str, Any], say: Callable[..., None], stopped: Callable[[],
         say(**_error_event(job_id, e))
         return
     say(id=job_id, event='done', out=job['out'], ms=round((time.perf_counter() - started) * 1000))
+
+
+def _unless_false(v: Any) -> Any:
+    """A tornado or a sensitivity design as a job gives it: ``false`` is none,
+    and anything else is ``design_for``'s to read, as the application reads
+    it."""
+    return None if v is False else v
 
 
 def _plain(v: Any) -> Any:

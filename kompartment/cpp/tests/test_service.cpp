@@ -536,23 +536,24 @@ int main() {
         for (int k = 0; k < 15; k++) swung.push(Json(k));
         CHECK(meta.get("stats").get("tornado").get("swung") == swung);
         CHECK(!zip_entry(check::read_file((scratch / "t1.zip").string()), "results/sample/series.f64").empty());
-        // Kept as a sample where `design_for` runs one: a tornado of 0 is one (it is asked for),
-        // and of {} none, nor a design of {}.
+        // Kept as a sample where `design_for` runs one, a tornado or a design asked for as the
+        // application asks: a tornado of 0 is none, and of {} one (before a design of {}).
         in_buffer.put(job_line("t0", "probabilistic", Json(bio_text),
-                               Json::object({{"seed", Json(3)}, {"tornado", Json(0)}, {"keep", Json(true)}, {"blocks", Json::array({Json("Dose")})}})));
+                               Json::object({{"seed", Json(3)}, {"iterations", Json(5)}, {"tornado", Json(0)}, {"keep", Json(true)},
+                                             {"blocks", Json::array({Json("Dose")})}})));
         CHECK(name_of(out_buffer.until_ended("t0")) == "done");
         const Json t0 = sample_meta("t0");
-        CHECK_MSG(t0.get("iterations").as_int() == 31 && t0.get("stats").has("tornado") && !t0.has("onEngine") &&
-                      !zip_entry(check::read_file((scratch / "t0.zip").string()), "results/sample/series.f64").empty(),
-                  "a tornado of 0 goes back whole: " + json_text(t0.get("stats"), 0).substr(0, 200));
+        CHECK_MSG(t0.get("iterations").as_int() == 5 && !t0.get("stats").has("tornado") && t0.get("onEngine") == Json(true) &&
+                      zip_entry(check::read_file((scratch / "t0.zip").string()), "results/sample/series.f64").empty(),
+                  "a sample asked to be kept, its tornado 0, stays on the engine: " + json_text(t0.get("stats"), 0).substr(0, 200));
         in_buffer.put(job_line("s0", "probabilistic", Json(bio_text),
                                Json::object({{"seed", Json(3)}, {"iterations", Json(5)}, {"tornado", Json::object()}, {"gsa", Json::object()},
                                              {"keep", Json(true)}, {"blocks", Json::array({Json("Dose")})}})));
         CHECK(name_of(out_buffer.until_ended("s0")) == "done");
         const Json s0 = sample_meta("s0");
-        CHECK_MSG(s0.get("iterations").as_int() == 5 && !s0.get("stats").has("tornado") && s0.get("onEngine") == Json(true) &&
-                      zip_entry(check::read_file((scratch / "s0.zip").string()), "results/sample/series.f64").empty(),
-                  "a sample asked to be kept, its tornado and design {}, stays on the engine");
+        CHECK_MSG(s0.get("iterations").as_int() == 31 && s0.get("stats").has("tornado") && !s0.has("onEngine") &&
+                      !zip_entry(check::read_file((scratch / "s0.zip").string()), "results/sample/series.f64").empty(),
+                  "a tornado of {} goes back whole, its design {} after it");
 
         Json gsa = Json::object({{"method", Json("morris")}, {"options", Json::object({{"trajectories", Json(2)}, {"points", Json(3)}})}});
         in_buffer.put(job_line("g1", "probabilistic", Json(bio_text),

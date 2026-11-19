@@ -28,11 +28,11 @@ import numpy as np
 
 from ..stats.correlate import correlation_pairs, iman_conover
 from ..stats.gsa import build_design, cholesky
-from ..stats.pdf import _to_number
+from ..stats.pdf import _MISSING, _to_number
 from ..stats.sample import ValueDrawer, distributed_slots, stream_for, uniforms, value_at_probability
 from .. import jsmath
 from .builder import build_system, tuple_by_list
-from .project import Project, value_at
+from .project import Project, js_truthy, value_at
 from .runner import outputs_of, run
 
 MOST_BYTES = 1073741824
@@ -141,11 +141,14 @@ class Design:
 def design_for(project: Project, system: Any, *, seed: int = 1, iterations: Optional[int] = None,
                latin: bool = True, varied: Optional[Iterable[str]] = None, tornado: Optional[Dict[str, float]] = None,
                gsa: Optional[Dict[str, Any]] = None) -> Design:
+    # A tornado, or a sensitivity design, is asked for as the application asks:
+    # by any value JavaScript takes for true (an empty dictionary is one).
+    swing, designed = js_truthy(tornado), js_truthy(gsa)
     plan = sampling_plan(project, system)
     dice = any(D['timing'] == 'poisson' and D['sampled'] for D in system.layout.events)
-    if not plan and not (dice and not tornado and not gsa):
+    if not plan and not (dice and not swing and not designed):
         if dice:
-            what = 'tornado swings' if tornado else 'sensitivity design varies'
+            what = 'tornado swings' if swing else 'sensitivity design varies'
             tail = (f', and a {what} parameters; the disruptive events are what varies here, and they need a '
                     'probabilistic run.')
         else:
@@ -160,7 +163,7 @@ def design_for(project: Project, system: Any, *, seed: int = 1, iterations: Opti
     def varies(e: Dict[str, Any]) -> bool:
         return wanted is None or slot_name(e) in wanted
 
-    if tornado:
+    if swing:
         low, high = _tornado_end(tornado, 'low', 0.05), _tornado_end(tornado, 'high', 0.95)
         swung = [k for k in range(len(plan)) if varies(plan[k])]
         n = 2 * len(swung) + 1
@@ -176,7 +179,7 @@ def design_for(project: Project, system: Any, *, seed: int = 1, iterations: Opti
         return Design(plan, names, best, varies, n, value_for, seed,
                       {'seed': seed, 'latin': False, 'sampled': len(plan),
                        'tornado': {'low': low, 'high': high, 'swung': swung}})
-    if gsa:
+    if designed:
         return _gsa_design_for(project, plan, names, best, varies, seed, gsa)
     n = max(1, int(math.floor((iterations if iterations is not None else 100) + 0.5)))
     draws = [uniforms(n, stream_for(seed, group_of(e) or slot_name(e)), latin=latin) for e in plan]
@@ -216,7 +219,13 @@ def _tornado_end(tornado: Any, key: str, default: float) -> float:
 
 
 def _gsa_design_for(project: Project, plan: List[Dict[str, Any]], names: List[str], best: List[float],
-                    varies: Callable[[Any], bool], seed: int, gsa: Dict[str, Any]) -> Design:
+                    varies: Callable[[Any], bool], seed: int, gsa: Any) -> Design:
+    # Read as the application reads ``gsa.method`` and ``gsa.options ?? {}``: a
+    # design that is not a dictionary, or names no method, has an undefined
+    # one, which ``build_design`` refuses by that name; settings that are not
+    # a dictionary are none.
+    method = gsa.get('method', _MISSING) if isinstance(gsa, Mapping) else _MISSING
+    options = gsa.get('options') if isinstance(gsa, Mapping) else None
     factors: List[Dict[str, Any]] = []
     by_key: Dict[str, Dict[str, Any]] = {}
     for k, e in enumerate(plan):
@@ -241,7 +250,7 @@ def _gsa_design_for(project: Project, plan: List[Dict[str, Any]], names: List[st
                and factor_of[pr['a']] != factor_of[pr['b']]]
     corr = None
     shrunk = 0.0
-    if gsa.get('method') == 'shapley' and between:
+    if method == 'shapley' and between:
         K = len(factors)
         R = np.zeros(K * K)
         for j in range(K):
@@ -259,7 +268,8 @@ def _gsa_design_for(project: Project, plan: List[Dict[str, Any]], names: List[st
                 shrunk = lam
                 break
             lam += 0.05
-    design = build_design(gsa['method'], [f['key'] for f in factors], gsa.get('options') or {}, seed=seed, corr=corr,
+    design = build_design(method, [f['key'] for f in factors], options if isinstance(options, Mapping) else {},
+                          seed=seed, corr=corr,
                           stream_for=stream_for, uniforms=uniforms)
     drawn = [({**e['spec'], 'inorder': False} if (e['spec'] or {}).get('kind') == 'pg'
               and (e['spec'] or {}).get('inorder') is not False else e['spec']) for e in plan]
@@ -273,7 +283,7 @@ def _gsa_design_for(project: Project, plan: List[Dict[str, Any]], names: List[st
 
     return Design(plan, names, best, varies, int(design['runs']), value_for, seed,
                   {'seed': seed, 'latin': False, 'sampled': len(plan),
-                   'gsa': {'method': gsa['method'], 'options': design.get('options'),
+                   'gsa': {'method': method, 'options': design.get('options'),
                            'factors': [{'key': f['key'], 'group': f['group'], 'members': f['members']}
                                        for f in factors],
                            'correlated': len(between), 'correlationsUsed': corr is not None,
@@ -416,7 +426,7 @@ def run_probabilistic(model: Any, *, iterations: int = 100, seed: int = 1, latin
     line = None
     if progress:
         from .progress import ProgressLine
-        line = ProgressLine(iterations, what='runs' if (tornado or gsa) else 'realisations',
+        line = ProgressLine(iterations, what='runs' if (js_truthy(tornado) or js_truthy(gsa)) else 'realisations',
                             stream=None if progress is True else progress)
     tell = _both(on_progress, line)
     try:

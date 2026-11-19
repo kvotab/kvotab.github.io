@@ -33,6 +33,9 @@
 //                                        or none, taken through its ops ({values} factorises, {b} solves):
 //                                        the order, each factorisation's ok, singular and fill, each
 //                                        solve's answer, as little-endian hex
+//   design   { model, opts: [...] }    -> designFor(project, system, o) for each o of opts: what kind
+//                                        of design it is (tornado, the sensitivity method, or a
+//                                        sample) and its runs; or the refusal
 //   partition { model }                -> partitionOf(system): ok, refusal, count, of, sizes, largest
 //   plan     { model, opts: [...] }    -> stateKeys, stateMaterials and splitJobs of the built system,
 //                                        planSplit(system, project, o) for each o of opts (with
@@ -429,6 +432,21 @@ switch (req.task) {
 		} catch (e) {
 			out = { error: e.message, kind: e.name, stack: e.stack };
 		}
+		break;
+	}
+	case 'design': {
+		out = {
+			designs: req.opts.map((o) => {
+				try {
+					const p = new Project(structuredClone(req.model));
+					const d = prob.designFor(p, buildSystem(p), o);
+					const kind = d.stats.tornado ? 'tornado' : d.stats.gsa ? `gsa ${d.stats.gsa.method}` : 'sample';
+					return { kind, iterations: d.iterations };
+				} catch (e) {
+					return { error: e.message };
+				}
+			}),
+		};
 		break;
 	}
 	case 'partition': {

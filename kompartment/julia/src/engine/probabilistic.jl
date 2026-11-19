@@ -161,8 +161,12 @@ function _pb_tornado_ends(tornado)
     return (end_(:low, 0.05), end_(:high, 0.95))
 end
 
-_pb_truthy_opt(x) = !(x === nothing || x === false || (x isa AbstractDict && isempty(x)) ||
-                      (x isa NamedTuple && isempty(x)))
+"""
+Whether a tornado, or a sensitivity design, is asked for: as the application asks, by any
+value JavaScript takes for true -- an empty dictionary or named tuple too, and not 0, NaN
+or the empty string.
+"""
+_pb_truthy_opt(x) = js_truthy(x)
 
 """
     design_for(project, sys; seed=1, iterations=100, latin=true, varied=nothing, tornado=nothing,
@@ -249,10 +253,14 @@ function design_for(project::Project, sys::System; seed=1, iterations=nothing, l
     return SampleDesign(plan, names, best, varies, n, values, seed, stats)
 end
 
-"""A sensitivity design's method and settings, from a dictionary or a named tuple."""
+"""
+A sensitivity design's method and settings, from a dictionary or a named tuple, read as the
+application reads `gsa.method` and `gsa.options ?? {}`: a design that names no method has an
+undefined one (`_PD_MISSING`), which `build_design` refuses by that name.
+"""
 function _pb_gsa_spec(gsa)
-    get_(k) = gsa isa AbstractDict ? get(gsa, String(k), get(gsa, k, nothing)) :
-              hasproperty(gsa, k) ? getproperty(gsa, k) : nothing
+    get_(k) = gsa isa AbstractDict ? get(gsa, String(k), get(gsa, k, _PD_MISSING)) :
+              hasproperty(gsa, k) ? getproperty(gsa, k) : _PD_MISSING
     method = get_(:method)
     options = get_(:options)
     options isa NamedTuple && (options = Dict{String,Any}(String(k) => v for (k, v) in pairs(options)))

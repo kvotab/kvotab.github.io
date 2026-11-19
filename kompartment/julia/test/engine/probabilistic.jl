@@ -320,6 +320,30 @@ end
                       ((low=0.1, high=nothing), (0.1, 0.95)), ((low="0.25", high=0.7), (0.25, 0.7)))
         @test isequal(ends(t), want)
     end
+    # A tornado, or a design, asked for as the application asks: by any value JavaScript takes for
+    # true -- an empty dictionary or list too, and not 0, NaN or "". A design that is not a
+    # dictionary, or names no method, has an undefined one and is refused by that name.
+    kind(; kw...) = try
+        s = K.design_for(proj, sys; kw...).stats
+        haskey(s, "tornado") ? "tornado" : haskey(s, "gsa") ? "gsa " * s["gsa"]["method"] : "sample"
+    catch e
+        e isa ArgumentError ? e.msg : rethrow()
+    end
+    undefined = "There is no method called undefined."
+    for (t, want) in ((Dict{String,Any}(), "tornado"), (Any[], "tornado"), (0, "sample"), ("", "sample"), (NaN, "sample"),
+                      ("x", "tornado"), ("0", "tornado"), (1, "tornado"), (false, "sample"), (nothing, "sample"),
+                      ((;), "tornado"))
+        @test kind(tornado=t) == want
+    end
+    for (g, want) in ((Dict{String,Any}(), undefined), (Any[], undefined), (0, "sample"), ("", "sample"), (NaN, "sample"),
+                      (true, undefined), ("sobol", undefined), ((;), undefined),
+                      (Dict("method" => nothing), "There is no method called null."),
+                      (Dict("options" => Dict("samples" => 4)), undefined),
+                      (Dict("method" => "ff", "options" => 5), "gsa ff"), (Dict("method" => "ff", "options" => Any[1, 2]), "gsa ff"))
+        @test kind(gsa=g) == want
+    end
+    @test kind(tornado=Dict{String,Any}(), gsa=Dict("method" => "ff")) == "tornado"
+    @test kind(tornado=0, gsa=Dict("method" => "ff")) == "gsa ff"
     # A list read out of order, at a probability far below zero: no value there, as in JavaScript.
     unordered = Dict{String,Any}("kind" => "pg", "values" => Any[1, 2], "inorder" => false)
     @test all(isnan, (K.value_at_probability(unordered, u, 0) for u in (-5e18, -1e300, -Inf)))

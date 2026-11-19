@@ -209,8 +209,11 @@ void pb_draw(ValueTable& values, std::size_t k, const ValueDrawer& drawer, const
 /// say. A list read in order hands out its values by realisation number, which a design point
 /// is not; here it is read by probability, as an unordered list is.
 SampleDesign pb_gsa_design(const Project& project, SampleDesign d, const Json& gsa) {
-    // `_pb_gsa_spec`: the method and its settings, from a dictionary.
-    Json method = gsa.is_object() ? gsa.get("method") : Json();
+    // `_pb_gsa_spec`: the method and its settings, from a dictionary, read as the application
+    // reads `gsa.method` and `gsa.options ?? {}`. A design that names no method has an undefined
+    // one, refused by that name where `build_design` would refuse it.
+    const bool named = gsa.is_object() && gsa.has("method");
+    Json method = named ? gsa.get("method") : Json();
     Json options = gsa.is_object() ? gsa.get("options") : Json();
     const Json* opts = pd_truthy(&options) ? &options : nullptr;
 
@@ -267,6 +270,7 @@ SampleDesign pb_gsa_design(const Project& project, SampleDesign d, const Json& g
             lam += 0.05;
         }
     }
+    if (!named) throw ArgumentError("There is no method called undefined.");
     auto design = std::make_shared<GsaDesign>(build_design(method, keys, opts, d.seed, corr ? &*corr : nullptr));
     long long n = design->runs;
     ValueTable values(plan.size(), n);
@@ -305,9 +309,7 @@ SampleDesign pb_gsa_design(const Project& project, SampleDesign d, const Json& g
 
 bool can_be_endpoint(const Json& kind) { return !(kind == "parameter" || kind == "lookup"); }
 
-bool pb_truthy_opt(const Json& x) {
-    return !(x.is_null() || (x.is_bool() && !x.as_bool()) || (x.is_object() && x.empty()));
-}
+bool pb_truthy_opt(const Json& x) { return js_truthy(x); }
 
 std::string pb_py_str(const Json& v) {
     switch (v.type()) {

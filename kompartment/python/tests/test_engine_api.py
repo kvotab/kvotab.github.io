@@ -230,6 +230,34 @@ class Probabilistic(unittest.TestCase):
             got = (t['low'], t['high'])
             self.assertTrue(all((math.isnan(a) and math.isnan(b)) or a == b for a, b in zip(got, want)), (tornado, got))
 
+    @needs_app
+    def test_a_tornado_or_a_design_is_asked_for_as_the_application_asks(self) -> None:
+        # By any value JavaScript takes for true: an empty dictionary or list asks for one; 0, NaN
+        # and '' do not. A design that is not a dictionary, or names no method, has an undefined
+        # one and is refused by that name; settings that are not a dictionary are none.
+        from test_engine_lang import engine
+
+        from kompartment.engine.builder import build_system
+        from kompartment.engine.probabilistic import design_for
+        from kompartment.engine.project import Project
+        cases = ([{'tornado': v} for v in ({}, [], 0, '', math.nan, 'x', '0', [0], 1, True, False, None)]
+                 + [{'gsa': v} for v in ({}, [], 0, '', math.nan, True, 'sobol', False, None, {'method': None},
+                                         {'options': {'samples': 4}}, {'method': 'ff', 'options': 5},
+                                         {'method': 'ff', 'options': 'abc'}, {'method': 'ff', 'options': [1, 2]},
+                                         {'method': 'ff', 'options': None}, {'method': 'morris', 'options': 0})]
+                 + [{'tornado': {}, 'gsa': {'method': 'ff'}}, {'tornado': 0, 'gsa': {'method': 'ff'}}])
+        js = engine('design', model=example('biosphere'), opts=cases)['designs']
+        for opts, want in zip(cases, js):
+            project = Project(example('biosphere'))
+            try:
+                d = design_for(project, build_system(project), **opts)
+                s = d.stats
+                got = {'kind': 'tornado' if s.get('tornado') else f"gsa {s['gsa']['method']}" if s.get('gsa')
+                       else 'sample', 'iterations': d.iterations}
+            except ValueError as e:
+                got = {'error': str(e)}
+            self.assertEqual(got, want, opts)
+
     def test_a_realisation_is_asked_for_among_those_held(self) -> None:
         # A part of a run holds fewer realisations than its design has: one asked for by
         # number is brought into those held, as the Julia and C++ engines bring it.
