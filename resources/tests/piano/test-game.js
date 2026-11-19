@@ -77,6 +77,10 @@ check('rubbish stored is a clean start', G.validate({ xp: -5, days: 'x', lessons
     [120, { 'u1-cde': { stars: 3, times: 2 } }, 'b', 60, false, { count: 3, last: '2026-11-18', best: 3 }, -50]);
   check('an own song is kept, its tempo within reason', s.own, [{ id: 'own-a1', title: 'Min låt', text: 'C D E', time: 3, pickup: 0, bpm: 160, own: true }]);
 }
+check('how loud the piano came in is kept, and nonsense is not',
+  [G.validate({ loudness: { floor: 0.0006, typical: 0.002 } }).loudness, G.validate({ loudness: { floor: 'x', typical: 0.002 } }).loudness,
+    G.validate({ loudness: { floor: 0.0006, typical: 3 } }).loudness, G.validate({ loudness: [0.0006, 0.002] }).loudness, G.blank().loudness],
+  [{ floor: 0.0006, typical: 0.002 }, null, null, null, null]);
 
 /* ── Lessons, points, days in a row ────────────────────────────────────── */
 

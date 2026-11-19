@@ -724,7 +724,7 @@ const PN = (() => {
      running in browsers that only process what reaches the destination.
      own: the context is the listening's own, and is closed with it. */
   function micConnect(ctx, source, stream, own) {
-    const ear = PN_EAR.createListener(ctx.sampleRate, { tune: store.tune });
+    const ear = PN_EAR.createListener(ctx.sampleRate, { tune: store.tune, level: store.loudness });
     const hp = ctx.createBiquadFilter();
     hp.type = 'highpass';
     hp.frequency.value = 70;
@@ -753,7 +753,10 @@ const PN = (() => {
     mic.starting = false;
     if (mic.on) {
       if (mic.ear) {
+        // How the piano is tuned, and how loud it comes in through this
+        // microphone: both followed while listening, kept for next time.
         store.tune = Math.round(mic.ear.tune() * 10) / 10;
+        store.loudness = mic.ear.loudness();
         save();
       }
       if (mic.stream) mic.stream.getTracks().forEach(t => t.stop());
@@ -821,8 +824,9 @@ const PN = (() => {
   /* One reading of the microphone: the notes that began go to the exercise. */
   function hearFrame(samples, now, ear) {
     const events = ear.push(samples, now);
-    // -50 dBFS is no bar, -14 dBFS all of it.
-    setLevel((20 * Math.log10(Math.max(ear.level(), 1e-6)) + 50) / 36);
+    // The bar is drawn against what a note needs here, which follows the
+    // microphone: 10 dB under it is no bar, 26 dB over it all of it.
+    setLevel((dB(ear.level()) - dB(ear.floor()) + 10) / 36);
     for (const e of events) noteIn({ midi: e.midi, source: 'mic', t: e.t - MIC_LAG, again: e.again });
     return events;
   }
@@ -871,7 +875,7 @@ const PN = (() => {
     const o = ear.options;
     const r = ear.last();
     const level = ear.level();
-    const need = Math.max(o.floor, ear.room() * o.over);
+    const need = Math.max(ear.floor(), ear.room() * o.over);
     let say;
     if (!mic.alive) say = 'Mikrofonen ger inget ljud ännu.';
     else if (r && r.key !== null) say = `Hör ${sayName(S.fromMidi(r.key))}.`;
@@ -1942,7 +1946,7 @@ const PN = (() => {
         on: mic.on, starting: mic.starting, error: mic.error, note: mic.note, tune: mic.ear ? mic.ear.tune() : null,
         own: mic.own, rate: mic.ctx ? mic.ctx.sampleRate : null, state: mic.ctx ? mic.ctx.state : null, alive: mic.alive, tries: mic.tries,
       },
-      store: { xp: store.xp, streak: store.streak, lessons: store.lessons, songs: store.songs, notes: store.notes, badges: Object.keys(store.badges), days: store.days, settings: store.settings, own: store.own.length, tune: store.tune },
+      store: { xp: store.xp, streak: store.streak, lessons: store.lessons, songs: store.songs, notes: store.notes, badges: Object.keys(store.badges), days: store.days, settings: store.settings, own: store.own.length, tune: store.tune, loudness: store.loudness },
       next: (nextLesson() || {}).id || null,
       sounds: PN_SOUND.log(),
     }));

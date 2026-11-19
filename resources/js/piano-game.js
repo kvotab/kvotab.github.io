@@ -202,6 +202,7 @@ const PN_GAME = (() => {
       flags: {},                      // small facts the badges ask about
       own: [],                        // the player's own songs
       tune: 0,                        // how the piano is tuned, in cents from 440 Hz
+      loudness: null,                 // how loud it comes in through this microphone: piano-ear.js's loudness()
       settings: Object.assign({}, SETTINGS),
     };
   }
@@ -253,6 +254,10 @@ const PN_GAME = (() => {
       }
     }
     s.tune = Number.isFinite(raw.tune) ? Math.max(-50, Math.min(50, raw.tune)) : 0;
+    const L = raw.loudness;
+    if (isObject(L) && Number.isFinite(L.floor) && L.floor > 0 && L.floor <= 0.01 && Number.isFinite(L.typical) && L.typical >= 0 && L.typical < 1) {
+      s.loudness = { floor: L.floor, typical: L.typical };
+    }
     if (isObject(raw.settings)) {
       const t = raw.settings;
       if (t.names === 'h' || t.names === 'b') s.settings.names = t.names;

@@ -78,6 +78,59 @@ for (const cents of [-35, 30]) {
   check('a piano 45 cents flat, known from last time', keys(listen(sig, { tune: -45 })), wanted(sig));
 }
 
+/* ── A quiet microphone ────────────────────────────────────────────────── */
+
+/* At amp 0.005 these notes peak near -54 dBFS, under the -50 a note needs
+   where nothing is known: an iPad heard a piano about that much quieter than
+   an iPhone did, and the page heard nothing there but the loudest playing. */
+const dB = v => 20 * Math.log10(v);
+{
+  const sig = S.melody(JB, { bpm: 104, amp: 0.005 });
+  const r = listen(sig);
+  check('a quiet microphone (notes near -54 dBFS): every key all the same', keys(r), wanted(sig));
+  check(`... the level a note needs following the piano down (to ${dB(r.ear.floor()).toFixed(0)} dBFS)`, dB(r.ear.floor()) < -60, true);
+  check('... the first note known within 200 ms, the rest as fast as ever (130)',
+    r.out.map((e, i) => e.at - sig.times[i].at * 1000).every((late, i) => late <= (i ? 130 : 200)), true);
+  const again = listen(sig, { level: r.ear.loudness() });
+  check('... and next time, from where it was left, the first note too is known within 130 ms',
+    [keys(again).join() === wanted(sig).join(), again.out[0].at - sig.times[0].at * 1000 <= 130], [true, true]);
+}
+for (const amp of [0.01, 0.003]) {
+  const sig = S.melody(JB, { bpm: 104, amp });
+  check(`notes near ${dB(amp / 0.3 * 0.12).toFixed(0)} dBFS: every key`, keys(listen(sig)), wanted(sig));
+}
+{
+  const sig = S.melody(JB, { bpm: 104, amp: 0.005, noise: 0.0001 });
+  check('a quiet microphone in a room that hisses at -80 dBFS: every key', keys(listen(sig)), wanted(sig));
+}
+{
+  const r = listen(S.melody(JB, { bpm: 104 }));
+  check('playing as loud as these tests do leaves the level a note needs at -50 dBFS', Math.abs(dB(r.ear.floor()) + 50.5) < 0.2, true);
+}
+{
+  // A melody played loud, then a quieter one 34 dB down, as a radio might
+  // play it in the next room: the piano heard first was much louder.
+  const loud = S.melody(JB, { bpm: 104 });
+  const far = S.melody(scale(60, 67), { bpm: 100, amp: 0.006 });
+  const x = new Float32Array(loud.x.length + far.x.length);
+  x.set(loud.x);
+  x.set(far.x, loud.x.length);
+  const r = listen({ x, sr: loud.sr });
+  const after = keys(r).slice(wanted(loud).length);
+  check('a tune far quieter than the piano heard before is no piano: its first three notes are not heard',
+    [keys(r).slice(0, wanted(loud).length).join() === wanted(loud).join(), [60, 61, 62].some(k => after.includes(k))], [true, false]);
+  const short = S.melody([[60, 1], [64, 1], [67, 1]], { bpm: 100, amp: 0.006 });
+  check('... nor three such notes after a session that knew the piano was loud', keys(listen(short, { level: r.ear.loudness() })), []);
+  // But a piano that keeps coming in that quiet - moved away - is followed after a few notes.
+  const moved = S.melody(JB, { bpm: 104, amp: 0.005 });
+  const m = listen(moved, { level: r.ear.loudness() });
+  check(`... while a piano that keeps coming in that quiet is followed after a few notes (${keys(m).length} of 11, the last 6 at least)`,
+    keys(m).slice(-6).join(), wanted(moved).slice(-6).join());
+}
+check('what is kept for next time is as given: a floor between -70 and -50 dBFS',
+  [E.createListener(48000, { level: { floor: 0.0001, typical: 0.01 } }).floor(), E.createListener(48000, { level: { floor: 1, typical: 0.01 } }).floor(),
+    E.createListener(48000, { level: { floor: 0.001, typical: 0.01 } }).loudness()], [0.0003, 0.003, { floor: 0.001, typical: 0.01 }]);
+
 /* ── What is not a key struck ──────────────────────────────────────────── */
 
 {

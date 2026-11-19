@@ -618,6 +618,21 @@ async def mic_suite(page):
     await page.ev('PN.test.stopMic()')
     check('microphone: how the piano is tuned is kept for next time', (await page.state())['store']['tune'] < -8, True)
 
+    # A quiet microphone: an iPad heard a piano some 15 dB quieter than an
+    # iPhone did. The same notes about 35 dB down (near -54 dBFS), on a page
+    # that knows nothing yet of how loud the piano comes in.
+    await page.load(store=OPEN)
+    g = await walk(page, 'u2-bj1', lambda ex: ex['type'] == 'play')
+    await page.ev("(b => { window.__bar = 0; setInterval(() => { window.__bar = Math.max(window.__bar, parseFloat(b.style.getPropertyValue('--pn-level')) || 0); }, 20); return true; })(document.getElementById('pn-mic2'))")
+    check('microphone, quiet: the sound runs', await page.ev(MELODY % '{ amp: 0.005 }'), 'running')
+    ok = await next_exercise(page, g['run']['i'], tries=300)
+    g2 = await page.state()
+    check('microphone, quiet: every note is heard all the same, and the page moves on', [ok, g2['run']['right'] - g['run']['right']], [True, 11])
+    check('microphone, quiet: the bar on the button moves', await page.ev('window.__bar') > 0.3, True)
+    await page.ev('PN.test.stopMic()')
+    lv = (await page.state())['store']['loudness']
+    check('microphone, quiet: how loud the piano comes in is kept for next time', lv is not None and lv['floor'] < 0.001, True)
+
     # The button, the permission, and leaving the page.
     await page.load(width=390, height=664, mobile=True, store=OPEN)
     await page.ev(MIC_STUB)

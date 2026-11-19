@@ -29,6 +29,18 @@
    listener follows how far the notes it hears lie from the nearest key, a
    little at a time, and reads the next ones from there (tune(), in cents).
 
+   HOW LOUD THE PIANO COMES IN. Microphones differ: at the same piano an
+   iPad heard the notes some 15 dB quieter than an iPhone, and a fixed level
+   for a note (-50 dBFS) took all but the loudest playing there for silence.
+   So the level a note must reach (the floor) follows the piano as heard, as
+   the tuning does: it keeps MARGIN under how loud the notes come in, a step
+   at a time (FOLLOW), and never rises above FLOOR - the level it starts at
+   where nothing is known - nor falls below FLOOR_MIN. A clear key under the
+   floor - clearly periodic, well above the room's noise, held as long as a
+   note takes to be known - brings the floor down to just under it at once,
+   unless the notes heard before were much louder: a radio in the next room
+   is no piano. Where it was left is kept for next time (loudness()).
+
    AN OCTAVE OUT. A small microphone hears little of a low note's
    fundamental, and the detector may then take the octave above. Each note
    therefore carries `alts`: the keys an octave or more below that the same
@@ -47,7 +59,13 @@ const PN_EAR = (() => {
     window: 0.045,     // seconds of sound in each reading
     low: 45,           // A2 ...
     high: 89,          // ... to F6: readings outside are not keys
-    floor: 0.003,      // quieter than this (-50 dBFS) is silence
+    floor: 0.003,      // quieter than this (-50 dBFS) is silence, at first ...
+    floorMin: 0.0003,  // ... and the floor follows the piano down to this (-70 dBFS)
+    margin: 0.18,      // the floor's place: this share of how loud notes come in (-15 dB) ...
+    follow: 0.15,      // ... toward which it moves this much (in dB) with each note
+    sure: 0.8,         // a key under the floor brings it down: this periodic ...
+    sureOver: 5,       // ... this many times louder than the room ...
+    sureNear: 0.25,    // ... and at least this share of how loud notes have come in
     over: 2.5,         // and a note is this many times louder than the room
     clarity: 0.7,      // how periodic a reading must be
     confirm: 3,        // readings of one key before it is a note
@@ -80,14 +98,22 @@ const PN_EAR = (() => {
    * (a note is known some 60 to 100 ms after it), again true when it is the
    * sounding key struck once more.
    *
-   * options.tune is where the piano's tuning starts, in cents.
+   * options.tune is where the piano's tuning starts, in cents, and
+   * options.level how loud it came in last time ({ floor, typical }, as
+   * loudness() gives it).
    */
   function createListener(sampleRate, options) {
     const o = Object.assign({}, EAR, options || {});
     const det = P.createDetector(sampleRate, { fmin: o.fmin, fmax: o.fmax, window: o.window });
-    const gate = P.createGate({ floor: o.floor, over: o.over, clarity: o.clarity });
+    // The gate keeps the room's level and asks for clarity; the floor is this file's.
+    const gate = P.createGate({ floor: o.floorMin, over: o.over, clarity: o.clarity });
     const short = Math.round(0.02 * sampleRate);
+    const toFloor = v => Math.max(o.floorMin, Math.min(o.floor, v));
+    const lv = o.level || {};
     let tune = Number.isFinite(o.tune) ? o.tune : 0;
+    let floor = toFloor(lv.floor > 0 ? lv.floor : o.floor);
+    let typical = lv.typical > 0 && lv.typical < 1 ? lv.typical : 0;   // how loud notes come in; 0: not known
+    let quiet = null;          // a clear key under the floor: { key, n, since, peak }
     let cur = null;            // the key sounding now
     let cand = null;           // a key read, not yet a note
     let struck = null;         // the level jumped on the sounding key: perhaps struck again
@@ -108,10 +134,40 @@ const PN_EAR = (() => {
     function reset() {
       cur = null;
       cand = null;
+      quiet = null;
       struck = null;
       faded = null;
       peak = 0;
       env = [];
+    }
+
+    /* A note heard, this loud as it began: how loud notes come in, and the
+       floor a step toward MARGIN under that. */
+    function learn(loud) {
+      if (!(loud > 0)) return;
+      typical = typical ? typical * Math.pow(loud / typical, 0.2) : loud;
+      floor = toFloor(floor * Math.pow(toFloor(o.margin * loud) / floor, o.follow));
+    }
+
+    /* A reading clear in every way but its level. The same key, sure enough
+       and long enough to be a note: the floor comes down to just under it.
+       One much quieter than the notes heard before only brings what is
+       known of them a step down (in dB, a third of the way), so that a few
+       of them in a row are believed: the piano may have been moved away. */
+    function underFloor(reading, now) {
+      const k = Math.round(keyOf(reading.freq));
+      if (k < o.low || k > o.high || reading.clarity < o.sure || reading.rms < o.sureOver * gate.room()) {
+        quiet = null;
+        return;
+      }
+      if (!quiet || quiet.key !== k) quiet = { key: k, n: 0, since: now, peak: 0, done: false };
+      quiet.n++;
+      quiet.peak = Math.max(quiet.peak, reading.rms);
+      if (!quiet.done && quiet.n >= o.confirm && now - quiet.since >= o.confirmMs) {
+        quiet.done = true;
+        if (!typical || quiet.peak >= o.sureNear * typical) floor = toFloor(Math.min(floor, 0.5 * quiet.peak));
+        else typical *= Math.pow(quiet.peak / typical, 0.3);
+      }
     }
 
     function push(samples, now) {
@@ -123,7 +179,10 @@ const PN_EAR = (() => {
         return out;
       }
       const reading = det.analyse(samples);
-      const clear = gate.pass(reading);
+      const passed = gate.pass(reading);
+      const clear = passed && reading.rms >= floor;
+      if (passed && !clear) underFloor(reading, now);
+      else quiet = null;
       let key = null;
       let exact = 0;
       if (clear) {
@@ -156,6 +215,7 @@ const PN_EAR = (() => {
         }
         if (struck && now - struck.t >= o.reHoldMs) {
           lastOn = struck.t;
+          learn(reading.rms);
           out.push({ midi: key, alts: altsOf(reading, key), t: struck.t - 10, again: true });
           struck = null;
           peak = level;
@@ -168,8 +228,9 @@ const PN_EAR = (() => {
         }
       } else {
         struck = null;
-        if (!cand || cand.key !== key) cand = { key, n: 0, since: now };
+        if (!cand || cand.key !== key) cand = { key, n: 0, since: now, peak: 0 };
         cand.n++;
+        cand.peak = Math.max(cand.peak, reading.rms);
         // A note dying away hovers at the edge of hearing: the same key
         // back again just after it faded is the same note, unless it is
         // clearly louder than it was when it went.
@@ -181,6 +242,7 @@ const PN_EAR = (() => {
           lastClear = now;
           lastOn = now;
           peak = level;
+          learn(cand.peak);
           out.push({ midi: key, alts: altsOf(reading, key), t: cand.since - 30, again: false });
           cand = null;
           env = [];
@@ -219,6 +281,10 @@ const PN_EAR = (() => {
       tune: () => tune,
       setTune(cents) { tune = Math.max(-o.tuneMax, Math.min(o.tuneMax, Number(cents) || 0)); },
       room: () => gate.room(),
+      /* The level a note must reach now. */
+      floor: () => floor,
+      /* How loud the piano came in, to start from next time (options.level). */
+      loudness: () => ({ floor: Math.round(floor * 1e6) / 1e6, typical: Math.round(typical * 1e6) / 1e6 }),
       options: o,
     };
   }
