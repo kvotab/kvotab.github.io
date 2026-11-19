@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="base-uri 'self'; object-src 'none'">
+  <title>Pianoskolan — kvot ab</title>
+  <meta name="description" content="Lär dig spela piano i korta lektioner, med julsånger som Bjällerklang, Nu tändas tusen juleljus och Sankta Lucia. Sidan lyssnar på pianot genom mikrofonen och visar om tonen blev rätt. Poäng, stjärnor och dagar i rad gör det roligt att öva lite varje dag.">
+  <link rel="canonical" href="https://kvotab.se/piano.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="kvot ab">
+  <meta property="og:title" content="Pianoskolan — kvot ab">
+  <meta property="og:description" content="Lär dig spela piano i korta lektioner, med julsånger. Sidan lyssnar på pianot genom mikrofonen.">
+  <meta property="og:url" content="https://kvotab.se/piano.html">
+  <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
+  <meta name="twitter:card" content="summary">
+  <script>
+    // Set the theme before first paint so dark-mode visitors get no white flash.
+    (function () {
+      try {
+        var t = localStorage.getItem('kvot-theme');
+        if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* storage unavailable — site.js will apply the default */ }
+    })();
+  </script>
+  <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
+  <link rel="stylesheet" href="./resources/css/piano.css?v=20261119">
+  <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
+  <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
+</head>
+<body class="pn-body">
+<header></header>
+<div class="content pn-content">
+<main class="pn" id="pn">
+
+  <!-- The page bar. On a phone, and in a lesson on any screen, the site's
+       header and footer are not shown: the kvot mark, the title and the
+       theme switch stand in for them here. -->
+  <div class="pn-top" id="pn-top">
+    <div class="pn-brand">
+      <a class="pn-homelink" href="./index.html"><img src="./resources/images/kvot-logotype.svg" alt="kvot ab: startsidan" width="28" height="28"></a>
+      <h1 class="pn-title">Pianoskolan</h1>
+    </div>
+    <div class="pn-stats" id="pn-stats">
+      <button type="button" class="pn-stat" id="pn-stat-streak" data-on-click="pn:tab" data-tab="badges"></button>
+      <button type="button" class="pn-stat" id="pn-stat-goal" data-on-click="pn:tab" data-tab="badges"></button>
+      <button type="button" class="pn-stat" id="pn-stat-stars" data-on-click="pn:tab" data-tab="badges"></button>
+    </div>
+    <div class="pn-top-end">
+      <button type="button" class="pn-iconbtn" data-on-click="pn:help" aria-label="Så funkar det" title="Så funkar det">
+        <svg viewBox="0 0 16 16" width="17" height="17" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6"
+             stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.6"/><path d="M6.1 6.2a2 2 0 0 1 3.8.6c0 1.3-1.9 1.6-1.9 2.8"/><path d="M8 11.9v.1"/></svg>
+      </button>
+      <button type="button" class="pn-iconbtn" data-on-click="pn:settings" aria-label="Inställningar" title="Inställningar">
+        <svg viewBox="0 0 16 16" width="17" height="17" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3"
+             stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.1"/><path d="M6.75 3L6.97 1.08A7 7 0 0 1 9.03 1.08L9.25 3A5.15 5.15 0 0 1 10.65 3.59L12.16 2.37A7 7 0 0 1 13.63 3.84L12.41 5.35A5.15 5.15 0 0 1 13 6.75L14.92 6.97A7 7 0 0 1 14.92 9.03L13 9.25A5.15 5.15 0 0 1 12.41 10.65L13.63 12.16A7 7 0 0 1 12.16 13.63L10.65 12.41A5.15 5.15 0 0 1 9.25 13L9.03 14.92A7 7 0 0 1 6.97 14.92L6.75 13A5.15 5.15 0 0 1 5.35 12.41L3.84 13.63A7 7 0 0 1 2.37 12.16L3.59 10.65A5.15 5.15 0 0 1 3 9.25L1.08 9.03A7 7 0 0 1 1.08 6.97L3 6.75A5.15 5.15 0 0 1 3.59 5.35L2.37 3.84A7 7 0 0 1 3.84 2.37L5.35 3.59A5.15 5.15 0 0 1 6.75 3Z"/></svg>
+      </button>
+      <button type="button" class="theme-toggle" data-on-click="kvot:toggleTheme">🌙</button>
+    </div>
+  </div>
+
+  <!-- Home: the path of lessons, the songs, the badges. -->
+  <section class="pn-home" id="pn-home">
+    <div class="pn-homebar">
+      <div class="pn-tabs" role="tablist" aria-label="Pianoskolan">
+        <button type="button" role="tab" id="pn-tab-path" aria-controls="pn-path" aria-selected="true" data-on-click="pn:tab" data-tab="path">Lektioner</button>
+        <button type="button" role="tab" id="pn-tab-songs" aria-controls="pn-songs" aria-selected="false" data-on-click="pn:tab" data-tab="songs">Låtar</button>
+        <button type="button" role="tab" id="pn-tab-badges" aria-controls="pn-badges" aria-selected="false" data-on-click="pn:tab" data-tab="badges">Märken</button>
+      </div>
+      <button type="button" class="pn-micbtn" id="pn-mic" data-on-click="pn:mic" aria-pressed="false"></button>
+    </div>
+    <p class="pn-micnote" id="pn-micnote" hidden></p>
+    <div class="pn-panel" id="pn-path" role="tabpanel" aria-labelledby="pn-tab-path"></div>
+    <div class="pn-panel" id="pn-songs" role="tabpanel" aria-labelledby="pn-tab-songs" hidden></div>
+    <div class="pn-panel" id="pn-badges" role="tabpanel" aria-labelledby="pn-tab-badges" hidden></div>
+  </section>
+
+  <!-- A lesson: one exercise at a time. -->
+  <section class="pn-lesson" id="pn-lesson" aria-label="Lektion" hidden>
+    <div class="pn-lbar">
+      <button type="button" class="pn-iconbtn" data-on-click="pn:quit" aria-label="Avsluta" title="Avsluta">✕</button>
+      <div class="pn-progress" id="pn-progress" role="progressbar" aria-label="Så långt har du kommit" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="pn-progress-fill"></i></div>
+      <span class="pn-heard" id="pn-heard" aria-hidden="true"></span>
+      <button type="button" class="pn-micbtn" id="pn-mic2" data-on-click="pn:mic" aria-pressed="false"></button>
+    </div>
+    <div class="pn-prompt">
+      <h2 id="pn-prompt"></h2>
+      <p id="pn-sub"></p>
+    </div>
+    <div class="pn-card" id="pn-card" hidden></div>
+    <div class="pn-staffbox" id="pn-staff" hidden></div>
+    <div class="pn-keysbox" id="pn-keys"></div>
+    <div class="pn-foot" id="pn-foot">
+      <p class="pn-feedback" id="pn-feedback" role="status" aria-live="polite"></p>
+      <div class="pn-footbtns">
+        <button type="button" class="pn-btn pn-btn-quiet" id="pn-alt" data-on-click="pn:alt" hidden></button>
+        <button type="button" class="pn-btn pn-btn-go" id="pn-go" data-on-click="pn:go" hidden></button>
+      </div>
+    </div>
+  </section>
+
+  <!-- A lesson is over. -->
+  <section class="pn-finish" id="pn-finish" aria-label="Klart" hidden></section>
+
+  <p class="pn-toast" id="pn-toast" role="alert" hidden></p>
+</main>
+</div>
+
+<dialog class="pn-dialog" id="pn-help" aria-labelledby="pn-help-title">
+  <div class="pn-dialog-head">
+    <h2 id="pn-help-title">Så funkar Pianoskolan</h2>
+    <button type="button" class="pn-iconbtn" data-on-click="pn:close" aria-label="Stäng">✕</button>
+  </div>
+  <div class="pn-dialog-body">
+    <ol>
+      <li>Ställ mobilen, plattan eller datorn på pianots notställ.</li>
+      <li>Tryck på <b>Lyssna på pianot</b> och tillåt sidan att använda mikrofonen.</li>
+      <li>Välj lektionen som lyser. Varje lektion tar några minuter och består av små uppgifter: hitta en tangent, härma en melodi, spela efter noter.</li>
+      <li>Spela på pianot. Sidan hör vilken tangent du trycker ner och visar om det blev rätt.</li>
+    </ol>
+    <h3>Bra att veta</h3>
+    <ul>
+      <li><b>En ton i taget.</b> Sidan hör melodier, inte ackord. Släpp tangenten innan du tar nästa, och använd inte pedalen.</li>
+      <li><b>Utan piano</b> går det också: tryck på tangenterna på skärmen. På en dator fungerar tangentbordet: A S D F G H J K är de vita tangenterna från C, och W E T Y U de svarta.</li>
+      <li><b>Elpiano med USB?</b> Koppla in det och tryck på <i>Anslut MIDI-klaviatur</i> under inställningarna. Då behövs ingen mikrofon. (Fungerar i Chrome och Edge.)</li>
+      <li><b>Spela i takt.</b> I slutet av en lektion får du spela i takt. Lyssna på inräkningen, följ strecket som rör sig över noterna och fortsätt framåt även om en ton blir fel.</li>
+      <li><b>H eller B?</b> I Sverige heter den vita tangenten under C oftast H, och den svarta före den B. Vill du hellre ha B och B♭ kan du byta under inställningarna.</li>
+    </ul>
+    <h3>Om sidan hör fel</h3>
+    <ul>
+      <li>Stäng av musik, radio och tv i rummet, och ställ skärmen nära pianot.</li>
+      <li>Spela tydligt, en tangent i taget, och släpp den innan nästa.</li>
+      <li>Pianot behöver inte vara nystämt: sidan känner efter hur just ert piano är stämt och följer det.</li>
+      <li>Blir rätt ton ändå fel? Pröva <i>Rätt ton i fel oktav räknas</i> under inställningarna.</li>
+    </ul>
+    <h3>Poäng, stjärnor och dagar i rad</h3>
+    <p>Varje lektion ger poäng och en till tre stjärnor, efter hur många toner som kom rätt på första försöket. En lektion går aldrig att misslyckas med, och den går alltid att göra om för fler stjärnor.
+      Spelar du varje dag växer raden av dagar. Under <b>Märken</b> finns det du har samlat.</p>
+    <h3>Låtarna</h3>
+    <p>Alla melodier är så gamla att de är fria att använda. Texterna finns inte med.</p>
+    <table class="pn-table">
+      <thead><tr><th>Låt</th><th>Ursprung</th></tr></thead>
+      <tbody id="pn-songtable"></tbody>
+    </table>
+    <p>Saknar du en låt? Under <b>Låtar</b> kan du skriva in en egen melodi.</p>
+    <h3>Mikrofonen</h3>
+    <p>Ljudet analyseras bara här i webbläsaren. Inget spelas in och inget skickas någonstans. Mikrofonen stängs när du stänger av den, när du byter flik eller app,
+      och efter fem minuter utan pianoljud. Det du har klarat sparas bara i den här webbläsaren.</p>
+  </div>
+</dialog>
+
+<dialog class="pn-dialog" id="pn-settings" aria-labelledby="pn-settings-title">
+  <div class="pn-dialog-head">
+    <h2 id="pn-settings-title">Inställningar</h2>
+    <button type="button" class="pn-iconbtn" data-on-click="pn:close" aria-label="Stäng">✕</button>
+  </div>
+  <div class="pn-dialog-body">
+    <fieldset class="pn-set">
+      <legend>Tonernas namn</legend>
+      <label class="pn-radio"><input type="radio" name="names" value="h" data-on-change="pn:setting"><span>C D E F G A <b>H</b><small>Som i svenska notböcker. Den svarta tangenten före H heter B.</small></span></label>
+      <label class="pn-radio"><input type="radio" name="names" value="b" data-on-change="pn:setting"><span>C D E F G A <b>B</b><small>Som i engelska notböcker. Den svarta tangenten heter B♭.</small></span></label>
+    </fieldset>
+    <fieldset class="pn-set">
+      <legend>Hjälp i lektionerna</legend>
+      <label class="pn-field"><span>Bokstäver under noterna</span>
+        <select name="letters" data-on-change="pn:setting">
+          <option value="auto">Som lektionen vill</option>
+          <option value="always">Alltid</option>
+          <option value="never">Aldrig</option>
+        </select></label>
+      <label class="pn-check"><input type="checkbox" name="keyNames" data-on-change="pn:setting"><span>Namn på tangenterna<small>Namnen göms ändå i uppgifter där de vore svaret.</small></span></label>
+    </fieldset>
+    <fieldset class="pn-set">
+      <legend>Ljud</legend>
+      <label class="pn-check"><input type="checkbox" name="sound" data-on-change="pn:setting"><span>Sidans ljud<small>Tangenterna på skärmen, melodier som spelas upp och små signaler.</small></span></label>
+      <label class="pn-check"><input type="checkbox" name="tick" data-on-change="pn:setting"><span>Taktslag som hörs<small>När du spelar i takt. Utan ljud syns takten ändå.</small></span></label>
+    </fieldset>
+    <fieldset class="pn-set">
+      <legend>Dagens mål</legend>
+      <label class="pn-field"><span>Poäng per dag</span>
+        <select name="goal" data-on-change="pn:setting">
+          <option value="20">20 poäng – en lektion</option>
+          <option value="40">40 poäng – två lektioner</option>
+          <option value="60">60 poäng – tre lektioner</option>
+        </select></label>
+    </fieldset>
+    <fieldset class="pn-set">
+      <legend>Pianot</legend>
+      <label class="pn-check"><input type="checkbox" name="anyOctave" data-on-change="pn:setting"><span>Rätt ton i fel oktav räknas<small>För mikrofonen: ett C är ett C, var på pianot det än spelas.</small></span></label>
+      <div class="pn-setrow">
+        <button type="button" class="pn-btn pn-btn-quiet" data-on-click="pn:midi">Anslut MIDI-klaviatur</button>
+        <span class="pn-small" id="pn-midi-state"></span>
+      </div>
+    </fieldset>
+    <fieldset class="pn-set">
+      <legend>För vuxna</legend>
+      <label class="pn-check"><input type="checkbox" name="openAll" data-on-change="pn:setting"><span>Alla lektioner öppna<small>Annars öppnas en lektion när den före är klar.</small></span></label>
+      <div class="pn-setrow">
+        <button type="button" class="pn-btn pn-btn-quiet" data-on-click="pn:reset">Börja om från början …</button>
+      </div>
+    </fieldset>
+    <div class="pn-dialog-foot">
+      <button type="button" class="pn-btn pn-btn-go" data-on-click="pn:close">Klar</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog class="pn-dialog pn-dialog-small" id="pn-ask" aria-labelledby="pn-ask-title">
+  <div class="pn-dialog-body">
+    <h2 id="pn-ask-title"></h2>
+    <p id="pn-ask-text"></p>
+    <div class="pn-dialog-foot">
+      <button type="button" class="pn-btn pn-btn-quiet" id="pn-ask-no" data-on-click="pn:askNo"></button>
+      <button type="button" class="pn-btn pn-btn-go" id="pn-ask-yes" data-on-click="pn:askYes"></button>
+    </div>
+  </div>
+</dialog>
+
+<dialog class="pn-dialog" id="pn-own" aria-labelledby="pn-own-title">
+  <div class="pn-dialog-head">
+    <h2 id="pn-own-title">Egen låt</h2>
+    <button type="button" class="pn-iconbtn" data-on-click="pn:close" aria-label="Stäng">✕</button>
+  </div>
+  <div class="pn-dialog-body">
+    <label class="pn-field pn-field-wide"><span>Låtens namn</span>
+      <input type="text" id="pn-own-name" maxlength="60" autocomplete="off" data-on-input="pn:ownEdit"></label>
+    <div class="pn-ownrow">
+      <label class="pn-field"><span>Taktart</span>
+        <select id="pn-own-time" data-on-change="pn:ownEdit"><option value="4">4/4</option><option value="3">3/4</option></select></label>
+      <label class="pn-field"><span>Upptakt</span>
+        <select id="pn-own-pickup" data-on-change="pn:ownEdit"><option value="0">Ingen</option><option value="0.5">En åttondel</option><option value="1">Ett slag</option><option value="2">Två slag</option></select></label>
+      <label class="pn-field"><span>Tempo</span>
+        <select id="pn-own-bpm" data-on-change="pn:ownEdit"><option value="70">Lugnt</option><option value="90">Lagom</option><option value="110">Raskt</option></select></label>
+    </div>
+    <label class="pn-field pn-field-wide"><span>Melodin</span>
+      <textarea id="pn-own-text" rows="4" spellcheck="false" autocapitalize="characters" autocomplete="off" data-on-input="pn:ownEdit"
+                placeholder="E E E2 | E E E2 | E G C. D- | E4"></textarea></label>
+    <p class="pn-own-msg" id="pn-own-msg" role="status"></p>
+    <div class="pn-staffbox pn-own-staff" id="pn-own-staff"></div>
+    <details class="pn-own-how">
+      <summary>Så skriver du</summary>
+      <ul>
+        <li>Skriv tonernas namn med mellanslag emellan: <code>C D E F G A <span class="pn-hname">H</span></code>. Tonerna ligger från mitten-C och uppåt.</li>
+        <li>En oktav upp: <code>C'</code>. En oktav ner: <code>A,</code>.</li>
+        <li>Svarta tangenter: <code>F#</code> eller <code>Fiss</code>, <code>Eb</code> eller <code>Ess</code>, <code>Bb</code>.</li>
+        <li>Längd i slag efter tonen: <code>E2</code> är två slag, <code>E4</code> fyra. En vanlig fjärdedel behöver ingen siffra.</li>
+        <li>Kortare och längre: <code>E-</code> är en åttondel, <code>E.</code> en fjärdedel med punkt.</li>
+        <li>Paus: <code>R</code>. Taktstreck <code>|</code> får du gärna skriva, men de behövs inte.</li>
+      </ul>
+    </details>
+    <div class="pn-dialog-foot">
+      <button type="button" class="pn-btn pn-btn-quiet" id="pn-own-delete" data-on-click="pn:ownDelete" hidden>Ta bort</button>
+      <button type="button" class="pn-btn pn-btn-go" id="pn-own-save" data-on-click="pn:ownSave">Spara</button>
+    </div>
+  </div>
+</dialog>
+
+<div id="kvotmap"></div>
+
+<footer></footer>
+<noscript><p class="pn-noscript">Pianoskolan behöver JavaScript.</p></noscript>
+<script src="./resources/js/kvot-errors.js?v=20260921"></script>
+<script src="./resources/js/kvot-safe.js?v=20260911"></script>
+<script src="./resources/js/kvot-actions.js?v=20260902"></script>
+<script src="./resources/js/kvot-icons.js?v=20260902"></script>
+<script src="./resources/js/site.js?v=20261119"></script>
+<script src="./resources/js/gitarr-pitch.js?v=20261003"></script>
+<script src="./resources/js/piano-songs.js?v=20261119"></script>
+<script src="./resources/js/piano-game.js?v=20261119"></script>
+<script src="./resources/js/piano-ear.js?v=20261119"></script>
+<script src="./resources/js/piano-sound.js?v=20261119"></script>
+<script src="./resources/js/piano.js?v=20261119"></script>
+<script>
+  KVOT.renderHeader('Pianoskolan');
+  KVOT.renderNav('piano.html');
+  KVOT.renderFooter();
+  KVOT.initMap('kvotmap');
+  PN.init();
+</script>
+</body>
+</html>

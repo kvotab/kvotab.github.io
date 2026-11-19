@@ -180,6 +180,12 @@ const KVOT = (() => {
       desc: 'Tune a guitar by microphone, in Swedish: which key to turn, and which way.',
     },
     {
+      href: './piano.html',
+      label: 'Pianoskolan',
+      group: 'everyday',
+      desc: 'Learn the piano in short lessons, in Swedish: it listens as you play.',
+    },
+    {
       href: './svensk_text.html',
       label: 'Svensk text',
       group: 'everyday',
