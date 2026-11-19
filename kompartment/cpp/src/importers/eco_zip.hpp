@@ -1,11 +1,12 @@
-// The entries of an Ecolego archive (.eco, .eas), read as the Python port of the importer reads
-// them (the Julia package's importers/eco_zip.jl): the central directory as Python's `zipfile`
-// reads it (end record found the same way, entries counted by the directory's size, ZIP64 sizes
-// and offsets, an archive with something before it), with its refusals, and the data through
-// each entry's local header -- stored and deflated entries only, no CRC check, a deflated `.xml`
-// entry inflated up front and everything else when first asked for (an assessment's results
-// never are), one decompression allowance for the whole archive, and the application's messages
-// for what cannot be read.
+// The entries of an Ecolego archive (.eco, .eas), read as the application's `unzip`
+// (src/io/zip.js) reads them, and so as the Python and Julia packages do (importers/eco_zip.jl):
+// the end record nearest the end of the file, the ZIP64 end record where the locator says it is,
+// as many central records as the end record counts, from where it says they start, each entry's
+// name as UTF-8 whatever its flag says (less a leading byte-order mark), and ZIP64 sizes from the
+// first ZIP64 record only; then the data through each entry's local header -- stored and deflated
+// entries only, no CRC check, a deflated `.xml` entry inflated up front and everything else when
+// first asked for (an assessment's results never are), one decompression allowance for the whole
+// archive, and the application's messages for what cannot be read.
 
 #pragma once
 
@@ -48,9 +49,9 @@ private:
     bool with_zlib_ = false;
 };
 
-/// The entries of a ZIP archive; EcoImportError for one that cannot be read, EcoUnsupportedError
-/// for an entry that needs a later ZIP than `zipfile` reads. Inflated by the engine's own inflater
-/// (importers/inflate.hpp); `with_zlib` by the build's zlib instead, where it has one (the tests').
+/// The entries of a ZIP archive; EcoImportError for one that cannot be read. Inflated by the
+/// engine's own inflater (importers/inflate.hpp); `with_zlib` by the build's zlib instead, where it
+/// has one (the tests').
 EcoArchive unzip(std::string data, bool with_zlib = false);
 
 }  // namespace kompartment::eco

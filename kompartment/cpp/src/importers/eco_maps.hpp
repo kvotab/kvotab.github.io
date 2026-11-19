@@ -45,13 +45,6 @@ struct EcoArgumentError : std::invalid_argument {
     explicit EcoArgumentError(const std::string& m) : std::invalid_argument(m), message(m) {}
 };
 
-/// The Julia package's `ErrorException` (Python's `NotImplementedError`): an archive entry that
-/// asks for a ZIP version past what `zipfile` reads.
-struct EcoUnsupportedError : std::runtime_error {
-    std::string message;
-    explicit EcoUnsupportedError(const std::string& m) : std::runtime_error(m), message(m) {}
-};
-
 // --- strings ---------------------------------------------------------------------------------
 
 /// How many bytes the JavaScript white space starting at byte `i` of `s[0, n)` takes (0: none).

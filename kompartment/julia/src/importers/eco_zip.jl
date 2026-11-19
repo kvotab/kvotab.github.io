@@ -1,186 +1,92 @@
-# The entries of an Ecolego archive (.eco, .eas), read as the Python port of
-# the importer reads them: the central directory as Python's `zipfile` reads
-# it (end record found the same way, entries counted by the directory's size,
-# ZIP64 sizes and offsets, an archive with something before it), with its
-# refusals, and the data through each entry's local header -- stored and
+# The entries of an Ecolego archive (.eco, .eas), read as the application's
+# `unzip` (src/io/zip.js) reads them, and so as the Python package's `_unzip`
+# does: the end record nearest the end of the file, the ZIP64 end record where
+# the locator says it is, as many central records as the end record counts,
+# from where it says they start, each entry's name as UTF-8 whatever its flag
+# says (less a leading byte-order mark), and ZIP64 sizes from the first ZIP64
+# record only; then the data through each entry's local header -- stored and
 # deflated entries only, no CRC check, a deflated `.xml` entry inflated up
 # front and everything else when first asked for (an assessment's results
 # never are), one decompression allowance for the whole archive, and the
 # application's messages for what cannot be read.
+#
+# A 64-bit count from the file is kept whole (Int128), where the application
+# holds it as a double: no comparison here can tell the two apart -- one that
+# large is past the end of any archive either way -- and a message writes it
+# through `_eco_js_string`, which rounds it as `Number()` does.
 
 using Zlib_jll: libz
 
 """The most one entry, and the whole archive, may expand to."""
 const _ECO_MAX_INFLATED = 256 * 1024 * 1024
 
-# What zipfile raises, before the importer says it in its own words.
-struct _EcoBadZip <: Exception
-    msg::String
-end
-
-# One entry of the central directory, as zipfile's ZipInfo has it.
-struct _EcoZipInfo
-    orig_name::Vector{UInt8}      # the name's bytes
-    utf8::Bool                    # flagged as UTF-8 (bit 11)
-    flag_bits::UInt16
-    compress_type::UInt16
-    compress_size::Int128         # Python's integers: a ZIP64 field can hold up to 2^64 - 1
-    file_size::Int128
-    header_offset::Int128
-end
-
 @inline _eco_le16(d, i) = Int(d[i]) | (Int(d[i+1]) << 8)
 @inline _eco_le32(d, i) = Int(d[i]) | (Int(d[i+1]) << 8) | (Int(d[i+2]) << 16) | (Int(d[i+3]) << 24)
 @inline _eco_le64(d, i) = UInt64(_eco_le32(d, i)) | (UInt64(_eco_le32(d, i + 4)) << 32)
 
-# `BytesIO.seek(offset, 2)` followed by `read(count)`: a position before the
-# start is the start.
-function _eco_read_from_end(data::Vector{UInt8}, offset::Int, count::Int)
-    n = length(data)
-    pos = max(n + offset, 0)
-    return view(data, pos+1:min(pos + count, n)), pos
-end
+# Whether the four bytes from offset `p` (counted from 0) are `PK`, `c`, `e`.
+@inline _eco_zip_sig(d, p::Integer, c::UInt8, e::UInt8) =
+    d[p+1] == 0x50 && d[p+2] == 0x4b && d[p+3] == c && d[p+4] == e
 
-function _eco_rfind(data::AbstractVector{UInt8}, sig::NTuple{4,UInt8})
-    for i in length(data)-3:-1:1
-        (data[i] == sig[1] && data[i+1] == sig[2] && data[i+2] == sig[3] && data[i+3] == sig[4]) && return i
-    end
-    return 0
-end
-
-# The end of central directory record as zipfile's `_EndRecData` finds it:
-# `(signature64, size, offset, location)`, or `nothing` for no ZIP archive.
+# `findEOCD`: the end of central directory record in the last 64 KB, the one
+# nearest the end, as `(at, count, offset)` (`at` counted from 0); `nothing`
+# when there is none.
 function _eco_end_record(data::Vector{UInt8})
-    filesize = length(data)
-    rec, _ = _eco_read_from_end(data, -22, typemax(Int) ÷ 2)
-    if length(rec) == 22 && rec[1] == 0x50 && rec[2] == 0x4b && rec[3] == 0x05 && rec[4] == 0x06 &&
-       rec[21] == 0x00 && rec[22] == 0x00
-        endrec = (sig64=false, size=Int128(_eco_le32(rec, 13)), offset=Int128(_eco_le32(rec, 17)),
-                  location=Int128(filesize - 22))
-        return _eco_end_record64(data, -22, endrec)
-    end
-    max_comment_start = max(filesize - (1 << 16) - 22, 0)
-    tail = view(data, max_comment_start+1:filesize)
-    start = _eco_rfind(tail, (0x50, 0x4b, 0x05, 0x06))
-    if start > 0
-        length(tail) - start + 1 < 22 && return nothing
-        r = view(tail, start:start+21)
-        endrec = (sig64=false, size=Int128(_eco_le32(r, 13)), offset=Int128(_eco_le32(r, 17)),
-                  location=Int128(max_comment_start + start - 1))
-        return _eco_end_record64(data, max_comment_start + start - 1 - filesize, endrec)
+    n = length(data)
+    for p in n-22:-1:max(0, n - 0x10000 - 22)
+        _eco_zip_sig(data, p, 0x05, 0x06) &&
+            return (at=p, count=Int128(_eco_le16(data, p + 11)), offset=Int128(_eco_le32(data, p + 17)))
     end
     return nothing
 end
 
-function _eco_end_record64(data::Vector{UInt8}, offset::Int, endrec)
-    loc, _ = _eco_read_from_end(data, offset - 20, 20)
-    length(loc) == 20 || return endrec
-    (loc[1] == 0x50 && loc[2] == 0x4b && loc[3] == 0x06 && loc[4] == 0x07) || return endrec
-    diskno = _eco_le32(loc, 5)
-    disks = _eco_le32(loc, 17)
-    (diskno != 0 || disks > 1) && throw(_EcoBadZip("zipfiles that span multiple disks are not supported"))
-    rec, _ = _eco_read_from_end(data, offset - 20 - 56, 56)
-    length(rec) == 56 || return endrec
-    (rec[1] == 0x50 && rec[2] == 0x4b && rec[3] == 0x06 && rec[4] == 0x06) || return endrec
-    return (sig64=true, size=Int128(_eco_le64(rec, 41)), offset=Int128(_eco_le64(rec, 49)), location=endrec.location)
-end
-
-# zipfile's `_RealGetContents`: the entries of the central directory.
-function _eco_central_directory(data::Vector{UInt8})
-    endrec = _eco_end_record(data)
-    endrec === nothing && throw(_EcoBadZip("File is not a zip file"))
-    size_cd = endrec.size
-    offset_cd = endrec.offset
-    concat = endrec.location - size_cd - offset_cd
-    endrec.sig64 && (concat -= 56 + 20)
-    start_dir = offset_cd + concat
-    start_dir < 0 && throw(_EcoBadZip("Bad offset for central directory"))
-    n = length(data)
-    cd = view(data, Int(min(start_dir, n))+1:Int(min(start_dir + size_cd, n)))
-    p = 1                                     # the read position in `cd`
-    take(k) = (a = p; p = min(p + k, length(cd) + 1); view(cd, a:p-1))
-    infos = _EcoZipInfo[]
-    total = 0
-    while total < size_cd
-        centdir = take(46)
-        length(centdir) == 46 || throw(_EcoBadZip("Truncated central directory"))
-        (centdir[1] == 0x50 && centdir[2] == 0x4b && centdir[3] == 0x01 && centdir[4] == 0x02) ||
-            throw(_EcoBadZip("Bad magic number for central directory"))
-        extract_version = Int(centdir[7])
-        flags = UInt16(_eco_le16(centdir, 9))
-        method = UInt16(_eco_le16(centdir, 11))
-        compress_size = Int128(_eco_le32(centdir, 21))
-        file_size = Int128(_eco_le32(centdir, 25))
-        name_len = _eco_le16(centdir, 29)
-        extra_len = _eco_le16(centdir, 31)
-        comment_len = _eco_le16(centdir, 33)
-        header_offset = Int128(_eco_le32(centdir, 43))
-        name = Vector{UInt8}(take(name_len))
-        utf8 = (flags & 0x0800) != 0
-        # zipfile decodes a flagged name strictly, and fails on one that is not UTF-8.
-        utf8 && _eco_utf8_strict(name)
-        extra = Vector{UInt8}(take(extra_len))
-        take(comment_len)
-        if extract_version > 63
-            error(@sprintf("zip file version %.1f", extract_version / 10))
-        end
-        file_size, compress_size, header_offset = _eco_decode_extra(extra, name, file_size, compress_size,
-                                                                    header_offset)
-        push!(infos, _EcoZipInfo(name, utf8, flags, method, compress_size, file_size, header_offset + concat))
-        total += 46 + name_len + extra_len + comment_len
+# `findZip64`: the ZIP64 end record the locator before the end record points
+# at, as `(count, offset)`; `nothing` when there is none.
+function _eco_zip64_end(data::Vector{UInt8}, end_at::Int)
+    locator = end_at - 20
+    (locator < 0 || locator + 20 > length(data)) && return nothing
+    _eco_zip_sig(data, locator, 0x06, 0x07) || return nothing
+    at = Int128(_eco_le64(data, locator + 9))
+    # 56 bytes: through the central directory offset, the last field wanted.
+    if at > Int128(2)^53 - 1 || at + 56 > length(data)
+        throw(EcoImportError("This archive says its ZIP64 directory is at byte $at, which is outside " *
+                             "its own $(length(data)) bytes."))
     end
-    return infos
+    _eco_zip_sig(data, at, 0x06, 0x06) || return nothing
+    return (count=Int128(_eco_le64(data, at + 33)), offset=Int128(_eco_le64(data, at + 49)))
 end
 
-# ZipInfo._decodeExtra: the ZIP64 sizes and offset, and the checks on the
-# unicode path field (whose name zipfile uses for nothing the importer reads).
-function _eco_decode_extra(extra::Vector{UInt8}, name::Vector{UInt8}, file_size::Int128, compress_size::Int128,
-                           header_offset::Int128)
-    k = 1
-    while length(extra) - k + 1 >= 4
-        tp = _eco_le16(extra, k)
-        ln = _eco_le16(extra, k + 2)
-        if ln + 4 > length(extra) - k + 1
-            throw(_EcoBadZip(@sprintf("Corrupt extra field %04x (size=%d)", tp, ln)))
-        end
-        body = view(extra, k+4:k+3+ln)
-        if tp == 0x0001
-            q = 1
-            field = ""
-            function next8()
-                q + 7 <= length(body) || throw(_EcoBadZip("Corrupt zip64 extra field. $field not found."))
-                v = Int128(_eco_le64(body, q))
-                q += 8
+# `readZip64Extra`: the sizes and offset a central record left at 0xFFFFFFFF,
+# from the first ZIP64 record in its extra field (`start` counted from 0) --
+# the uncompressed size, the compressed size and the offset, those that are
+# saturated, in that order. Any record after the first is not read.
+function _eco_zip64_sizes(data::Vector{UInt8}, start::Int, len::Int, expected::Int128, compressed::Int128,
+                          offset::Int128, name::String)
+    p = start
+    # The walk is clamped to the archive, and each 64-bit read to its record.
+    stop_all = min(start + len, length(data))
+    while p + 4 <= stop_all
+        kind = _eco_le16(data, p + 1)
+        size = _eco_le16(data, p + 3)
+        if kind == 0x0001
+            q = Ref(p + 4)
+            stop = min(p + 4 + size, stop_all)
+            function take()
+                q[] + 8 > stop && throw(EcoImportError(
+                    "The ZIP64 record for '$name' says it is $size bytes long but " *
+                    "does not hold the sizes it promises; the archive looks damaged."))
+                v = Int128(_eco_le64(data, q[] + 1))
+                q[] += 8
                 return v
             end
-            if file_size == 0xffffffff
-                field = "File size"
-                file_size = next8()
-            end
-            if compress_size == 0xffffffff
-                field = "Compress size"
-                compress_size = next8()
-            end
-            if header_offset == 0xffffffff
-                field = "Header offset"
-                header_offset = next8()
-            end
-        elseif tp == 0x7075
-            length(body) >= 5 || throw(_EcoBadZip("Corrupt unicode path extra field (0x7075)"))
-            up_version = body[1]
-            up_crc = UInt32(_eco_le32(body, 2))
-            if up_version == 1 && up_crc == crc32(name)
-                try
-                    _eco_utf8_strict(view(body, 6:length(body)))
-                catch e
-                    e isa _EcoDecodeError || rethrow()
-                    throw(_EcoBadZip("Corrupt unicode path extra field (0x7075): invalid utf-8 bytes"))
-                end
-            end
+            expected == 0xffffffff && (expected = take())
+            compressed == 0xffffffff && (compressed = take())
+            offset == 0xffffffff && (offset = take())
+            break
         end
-        k += ln + 4
+        p += 4 + size
     end
-    return file_size, compress_size, header_offset
+    return expected, compressed, offset
 end
 
 # An entry's bytes: stored, inflated, or still to be inflated.
@@ -323,66 +229,74 @@ function _eco_inflate(a::_EcoArchive, name::String, raw::UnitRange{Int}, expecte
     return buf
 end
 
-# The name the application gives an entry: UTF-8 whatever the flag says (a
-# flagged name was checked by the directory's reader), less a leading
-# byte-order mark.
-_eco_entry_name(info::_EcoZipInfo) = _eco_without_bom(_eco_utf8_replace(info.orig_name))
-
 """The entries of a ZIP archive; [`EcoImportError`](@ref) for one that cannot be read."""
 function _eco_unzip(data::Vector{UInt8})
-    infos = try
-        _eco_central_directory(data)
-    catch e
-        if e isa _EcoBadZip
-            e.msg == "File is not a zip file" && throw(EcoImportError(
-                "This does not look like a ZIP archive. An Ecolego project (.eco) is a " *
-                "zipped project folder; a bare model.xml should be opened directly instead."))
-            e.msg in ("Bad magic number for central directory", "Truncated central directory") &&
-                throw(EcoImportError("The central directory is damaged"))
-            throw(EcoImportError("The archive is damaged: $(e.msg)"))
-        elseif e isa _EcoDecodeError
-            throw(EcoImportError("The archive is damaged: $(e.msg)"))
-        end
-        rethrow()
+    found = _eco_end_record(data)
+    found === nothing && throw(EcoImportError(
+        "This does not look like a ZIP archive. An Ecolego project (.eco) is a " *
+        "zipped project folder; a bare model.xml should be opened directly instead."))
+    entry_count, p = found.count, found.offset
+    # ZIP64, for the rare enormous project.
+    if entry_count == 0xffff || p == 0xffffffff
+        z64 = _eco_zip64_end(data, found.at)
+        z64 === nothing || ((entry_count, p) = (z64.count, z64.offset))
     end
 
     archive = _EcoArchive(data, String[], Dict{String,_EcoEntry}(), 0)
     size = length(data)
-    for info in infos
-        name = _eco_entry_name(info)
-        if (info.flag_bits & 0x1) != 0
+    i = Int128(0)
+    while i < entry_count
+        i += 1
+        (p < 0 || p + 46 > size || !_eco_zip_sig(data, p, 0x01, 0x02)) &&
+            throw(EcoImportError("The central directory is damaged"))
+        c = Int(p)
+        flags = _eco_le16(data, c + 9)
+        method = _eco_le16(data, c + 11)
+        compressed = Int128(_eco_le32(data, c + 21))
+        expected = Int128(_eco_le32(data, c + 25))
+        name_len = _eco_le16(data, c + 29)
+        extra_len = _eco_le16(data, c + 31)
+        comment_len = _eco_le16(data, c + 33)
+        offset = Int128(_eco_le32(data, c + 43))
+        # The record's three variable parts have to fit too.
+        c + 46 + name_len + extra_len + comment_len > size &&
+            throw(EcoImportError("The central directory runs past the end of this $size-byte archive"))
+        name = _eco_without_bom(_eco_utf8_replace(data, c + 47, c + 46 + name_len))
+        if (flags & 0x1) != 0
             throw(EcoImportError(
                 "'$name' is encrypted. Ecolego can obfuscate a project on save; " *
                 "re-save it without that option, or export the model, before importing."))
         end
+        # ZIP64 extended information, when the 32-bit fields are saturated.
+        if compressed == 0xffffffff || expected == 0xffffffff || offset == 0xffffffff
+            expected, compressed, offset = _eco_zip64_sizes(data, c + 46 + name_len, extra_len, expected,
+                                                            compressed, offset, name)
+        end
+        p += 46 + name_len + extra_len + comment_len
         endswith(name, "/") && continue          # a directory
-        offset = info.header_offset
         if offset < 0 || offset + 30 > size
             throw(EcoImportError(
-                "'$name' says its data begins at byte $offset, which is " *
+                "'$name' says its data begins at byte $(_eco_js_string(offset)), which is " *
                 "outside this $size-byte archive."))
         end
+        # The local header repeats the name and extra field, and its extra
+        # field length can differ from the central one.
         o = Int(offset)
-        (data[o+1] == 0x50 && data[o+2] == 0x4b && data[o+3] == 0x03 && data[o+4] == 0x04) ||
-            throw(EcoImportError("The local header for '$name' is damaged"))
-        name_len = _eco_le16(data, o + 27)
-        extra_len = _eco_le16(data, o + 29)
-        start = offset + 30 + name_len + extra_len
-        compressed = info.compress_size
+        _eco_zip_sig(data, o, 0x03, 0x04) || throw(EcoImportError("The local header for '$name' is damaged"))
+        start = o + 30 + _eco_le16(data, o + 27) + _eco_le16(data, o + 29)
         if start > size || start + compressed > size
             throw(EcoImportError(
-                "'$name' claims $compressed bytes from $start, which " *
+                "'$name' claims $(_eco_js_string(compressed)) bytes from $start, which " *
                 "runs past the end of this $size-byte archive."))
         end
-        raw = Int(start)+1:Int(start + compressed)
-        method = info.compress_type
+        raw = start+1:start+Int(compressed)
         entry = if method == 0
-            _EcoEntry(nothing, raw, false, info.file_size)
+            _EcoEntry(nothing, raw, false, expected)
         elseif method == 8
             if endswith(_eco_py_lower(name), ".xml")
-                _EcoEntry(_eco_inflate(archive, name, raw, info.file_size), raw, true, info.file_size)
+                _EcoEntry(_eco_inflate(archive, name, raw, expected), raw, true, expected)
             else
-                _EcoEntry(nothing, raw, true, info.file_size)
+                _EcoEntry(nothing, raw, true, expected)
             end
         else
             throw(EcoImportError(

@@ -129,8 +129,6 @@ std::string import_answer(const std::function<eco::EcoImport()>& f) {
         return "error:EcoImportError:" + e.message;
     } catch (const eco::EcoArgumentError& e) {
         return "error:ArgumentError:" + e.message;
-    } catch (const eco::EcoUnsupportedError& e) {
-        return "error:ErrorException:" + e.message;
     }
 }
 
@@ -219,8 +217,6 @@ std::string archive_dump(const std::string& bytes, bool builtin) {
         a.emplace(eco::unzip(bytes, builtin));
     } catch (const eco::EcoImportError& e) {
         return "error:EcoImportError:" + e.message;
-    } catch (const eco::EcoUnsupportedError& e) {
-        return "error:ErrorException:" + e.message;
     }
     std::string out;
     for (const std::string& name : a->names()) {

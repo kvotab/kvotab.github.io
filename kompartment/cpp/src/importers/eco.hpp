@@ -60,10 +60,9 @@ struct EcoImport {
 /// `file_name` is which file this is (it goes into the model's name and description);
 /// `version` the Ecolego version, for a bare XML file (an archive's `.version` is used instead).
 /// Throws EcoImportError for a file it cannot read, EcoArgumentError("Invalid time value") for a
-/// modification date past what a JavaScript `Date` holds, EcoUnsupportedError for an archive
-/// entry of a later ZIP version. An archive is inflated by the engine's own inflater, as zlib 1.3.1
-/// inflates (importers/inflate.hpp); `with_zlib` inflates by the build's zlib instead, where it has
-/// one -- for the tests, which check the two against each other.
+/// modification date past what a JavaScript `Date` holds. An archive is inflated by the engine's
+/// own inflater, as zlib 1.3.1 inflates (importers/inflate.hpp); `with_zlib` inflates by the
+/// build's zlib instead, where it has one -- for the tests, which check the two against each other.
 EcoImport import_eco_file(std::string bytes, const std::optional<std::string>& file_name = std::nullopt,
                           const std::optional<std::string>& version = std::nullopt, bool with_zlib = false);
 

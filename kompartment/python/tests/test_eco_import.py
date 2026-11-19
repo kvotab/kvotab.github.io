@@ -1256,6 +1256,130 @@ def lie_about_directory(data: bytes) -> bytes:
     return data[:at] + b'PK\x09\x09' + data[at + 4:]
 
 
+def zip_layout(entries: List[Dict[str, Any]], *, before: bytes = b'', comment: bytes = b'',
+               count: Optional[int] = None, cd_size: Optional[int] = None, cd_offset: Optional[int] = None,
+               zip64: Optional[Dict[str, int]] = None) -> bytes:
+    """An archive whose every number is the test's to set, for the layouts a
+    reader may read in more than one way.
+
+    Each entry as :func:`raw_zip` takes it, and besides: ``csize`` (the
+    compressed size the directory claims), ``offset`` (where it says the local
+    header is), ``extra`` (the central record's extra field), ``local_extra``
+    and ``needs`` (the version of ZIP the directory says it needs).
+    ``before`` is written ahead of the archive, which counts its offsets from
+    the start of the file. The end record's ``count``, ``cd_size`` and
+    ``cd_offset`` may lie; ``zip64`` closes the archive with ZIP64 end records
+    (keys ``at``, where the locator says the record is; ``disks``; ``count16``
+    and ``offset32``, the end record's own fields; ``count`` and ``offset``,
+    the record's).
+    """
+    local = bytearray()
+    central = bytearray()
+    for e in entries:
+        name = e['name'].encode('utf-8') if isinstance(e['name'], str) else e['name']
+        data = e.get('data', b'')
+        method = e.get('method', 8)
+        if 'payload' in e:
+            payload = e['payload']
+        elif method == 8:
+            c = zlib.compressobj(9, zlib.DEFLATED, -15)
+            payload = c.compress(data) + c.flush()
+        else:
+            payload = data
+        flags = e.get('flags', 0x800)
+        crc = zlib.crc32(data)
+        here = len(before) + len(local)
+        lx, cx = e.get('local_extra', b''), e.get('extra', b'')
+        local += struct.pack('<IHHHHHIIIHH', 0x04034B50, 20, flags, method, 0, 0, crc, len(payload), len(data),
+                             len(name), len(lx)) + name + lx + payload
+        central += struct.pack('<IHHHHHHIIIHHHHHII', 0x02014B50, 45, e.get('needs', 45), flags, method, 0, 0, crc,
+                               e.get('csize', len(payload)), e.get('size', len(data)), len(name), len(cx), 0, 0, 0,
+                               0, e.get('offset', here)) + name + cx
+    n = len(entries) if count is None else count
+    start = len(before) + len(local) if cd_offset is None else cd_offset
+    length = len(central) if cd_size is None else cd_size
+    out = bytes(before) + bytes(local) + bytes(central)
+    if zip64 is None:
+        end = struct.pack('<IHHHHIIH', 0x06054B50, 0, 0, n, n, length, start, len(comment))
+    else:
+        z = zip64
+        record = struct.pack('<IQHHIIQQQQ', 0x06064B50, 44, 45, 45, 0, 0, z.get('count', n), z.get('count', n),
+                             length, z.get('offset', start))
+        locator = struct.pack('<IIQI', 0x07064B50, 0, z.get('at', len(out)), z.get('disks', 1))
+        out += record + locator
+        c16 = z.get('count16', 0xFFFF)
+        end = struct.pack('<IHHHHIIH', 0x06054B50, 0, 0, c16, c16, 0xFFFFFFFF, z.get('offset32', 0xFFFFFFFF),
+                          len(comment))
+    return out + end + comment
+
+
+def zip64_extra(*values: int) -> bytes:
+    """A ZIP64 extended information record holding ``values``."""
+    return struct.pack(f'<HH{len(values)}Q', 1, 8 * len(values), *values)
+
+
+def layout_cases() -> List[Case]:
+    """Archives a reader may read in more than one way: the application reads
+    them by ``src/io/zip.js``, and so must the package (not as Python's
+    ``zipfile`` would)."""
+    m = MINIMAL.encode('utf-8')
+    model = {'name': 'model.xml', 'data': m}
+    stored = {**model, 'method': 0}
+    big = 2 ** 64 - 1
+    return [
+        file('two ZIP64 records, the first saying 2^64 - 1',
+             zip_layout([{**model, 'size': 0xFFFFFFFF, 'extra': zip64_extra(big) + zip64_extra(len(m))}])),
+        file('two ZIP64 records, the first honest',
+             zip_layout([{**model, 'size': 0xFFFFFFFF, 'extra': zip64_extra(len(m)) + zip64_extra(big)}])),
+        file('two ZIP64 records, stored',
+             zip_layout([{**stored, 'size': 0xFFFFFFFF, 'extra': zip64_extra(big) + zip64_extra(len(m))}])),
+        file('a ZIP64 compressed size of 2^64 - 1',
+             zip_layout([{**stored, 'csize': 0xFFFFFFFF, 'extra': zip64_extra(big) + zip64_extra(len(m))}])),
+        file('a ZIP64 offset of 2^64 - 1', zip_layout([{**model, 'offset': 0xFFFFFFFF, 'extra': zip64_extra(big)}])),
+        file('a ZIP64 size past 2^53', zip_layout([{**model, 'size': 0xFFFFFFFF, 'extra': zip64_extra(2 ** 53 + 1)}])),
+        file('a ZIP64 record after another', zip_layout([{**stored, 'size': 0xFFFFFFFF,
+                                                         'extra': b'UT\x05\x00\x01abcd' + zip64_extra(len(m))}])),
+        file('all three in a ZIP64 record', zip_layout([{**stored, 'size': 0xFFFFFFFF, 'csize': 0xFFFFFFFF,
+                                                         'offset': 0xFFFFFFFF,
+                                                         'extra': zip64_extra(len(m), len(m), 0)}])),
+        file('a ZIP64 record too short', zip_layout([{**stored, 'size': 0xFFFFFFFF,
+                                                      'extra': b'\x01\x00\x04\x00abcd'}])),
+        file('no ZIP64 record where one is wanted', zip_layout([{**stored, 'size': 0xFFFFFFFF}])),
+        file('an extra field longer than it is', zip_layout([{**model, 'extra': b'UT\x32\x00\x01abcd'}])),
+        file('an extra field longer than it is, ZIP64 wanted',
+             zip_layout([{**stored, 'size': 0xFFFFFFFF, 'extra': b'UT\x32\x00\x01abcd'}])),
+        file('a unicode path field that does not hold', zip_layout([{**model, 'extra': b'up\x03\x00\x01ab'}])),
+        file('a flagged name that is not UTF-8', zip_layout([{**model, 'name': b'x\xff/model.xml'}])),
+        file('a version of ZIP nobody reads', zip_layout([{**model, 'needs': 64}])),
+        file('something before the archive', zip_layout([model], before=b'PK\x03\x04' + b'junk' * 9)),
+        file('something before, offsets from the archive', b'PK\x03\x04' + b'junk' * 9 + zip_layout([model])),
+        file('the directory said to start elsewhere', zip_layout([model], cd_offset=10)),
+        file('one entry counted twice', zip_layout([model], count=2)),
+        file('one entry counted none', zip_layout([model], count=0)),
+        file('a directory shorter than it is',
+             zip_layout([model, {'name': 'b.txt', 'data': b'x'}], cd_size=10)),
+        file('a directory longer than it is', zip_layout([model], cd_size=500)),
+        file('a comment cut short', zip_layout([model], comment=b'hi')[:-1]),
+        file('an end record in the last 21 bytes', zip_layout([model]) + b'PK\x05\x06' + bytes(10)),
+        file('two archives, one after the other', zip_layout([model]) + zip_layout([{'name': 'o.txt', 'data': b'x'}])),
+        file('ZIP64 end records', zip_layout([model], zip64={})),
+        file('ZIP64 end records on two disks', zip_layout([model], zip64={'disks': 2})),
+        file('a ZIP64 locator pointing elsewhere', zip_layout([model], zip64={'at': 5})),
+        file('a ZIP64 locator pointing past the end', zip_layout([model], zip64={'at': 10 ** 9})),
+        file('a ZIP64 locator pointing past 2^53', zip_layout([model], zip64={'at': 2 ** 53})),
+        file('ZIP64 end records, the count in the end record', zip_layout([model], zip64={'count16': 1})),
+        file('ZIP64 end records, only the offset saturated',
+             zip_layout([model], zip64={'count16': 1, 'offset32': 0xFFFFFFFF})),
+        file('a ZIP64 directory offset of 2^64 - 1', zip_layout([model], zip64={'offset': big})),
+        file('a ZIP64 entry count of 2^64 - 1', zip_layout([model], zip64={'count': big})),
+        file('a directory entry holding data', zip_layout([{'name': 'd/', 'data': b'xyz', 'method': 0}, model])),
+        file('a directory entry encrypted', zip_layout([{'name': 'd/', 'method': 0, 'flags': 0x801}, model])),
+        file('a local extra field the directory does not have', zip_layout([{**model, 'local_extra': bytes(12)}])),
+        file('a name the local header gives otherwise',
+             zip_layout([model]).replace(b'model.xml', b'MODEL.XML', 1)),
+    ]
+
+
 MINIMAL = ('<data-model><block-model><component type="expression" name="x" dimension="0" '
            'index-lists=""><id>X</id><entry type="expression"><equation>1</equation></entry></component>'
            '</block-model></data-model>')
@@ -1340,7 +1464,7 @@ def archive_cases() -> List[Case]:
             {'name': 'x/.version', 'data': b'track-changes=false\nversionx=1'},
             {'name': 'model.xml', 'data': MINIMAL.encode('utf-8')},
         ])),
-    ]
+    ] + layout_cases()
 
 # --- random models ------------------------------------------------------------------------------
 
