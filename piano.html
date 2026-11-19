@@ -25,7 +25,7 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
-  <link rel="stylesheet" href="./resources/css/piano.css?v=20261119b">
+  <link rel="stylesheet" href="./resources/css/piano.css?v=20261119c">
   <!-- The page's own mark, in the kvot mark's language (see piano-icon.svg):
        two eighth notes on one beam. The 32 px PNG comes first, for a browser
        that will not take an SVG (Safari before version 26); Chrome and Firefox
@@ -145,6 +145,7 @@
     </ul>
     <h3>Om sidan hör fel</h3>
     <ul>
+      <li>Hör sidan ingenting? Tryck på <i>Testa mikrofonen</i> under inställningarna och spela en ton: där syns vad sidan hör och hur starkt.</li>
       <li>Stäng av musik, radio och tv i rummet, och ställ skärmen nära pianot.</li>
       <li>Spela tydligt, en tangent i taget, och släpp den innan nästa.</li>
       <li>Pianot behöver inte vara nystämt: sidan känner efter hur just ert piano är stämt och följer det.</li>
@@ -204,6 +205,18 @@
     <fieldset class="pn-set">
       <legend>Pianot</legend>
       <label class="pn-check"><input type="checkbox" name="anyOctave" data-on-change="pn:setting"><span>Rätt ton i fel oktav räknas<small>För mikrofonen: ett C är ett C, var på pianot det än spelas.</small></span></label>
+      <!-- What the page hears, live while the microphone is on. -->
+      <div class="pn-mictest">
+        <div class="pn-setrow">
+          <button type="button" class="pn-btn pn-btn-quiet" id="pn-mictest-btn" data-on-click="pn:mictest">Testa mikrofonen</button>
+          <span class="pn-small" id="pn-mictest-hint">Spela en ton på pianot och se vad sidan hör.</span>
+        </div>
+        <div class="pn-mictest-live" id="pn-mictest-live" hidden>
+          <p class="pn-mictest-now" id="pn-mictest-now" aria-live="polite"></p>
+          <div class="pn-mictest-meter" aria-hidden="true"><i id="pn-mictest-bar"></i><b id="pn-mictest-mark"></b></div>
+          <p class="pn-mictest-tech" id="pn-mictest-tech"></p>
+        </div>
+      </div>
       <div class="pn-setrow">
         <button type="button" class="pn-btn pn-btn-quiet" data-on-click="pn:midi">Anslut MIDI-klaviatur</button>
         <span class="pn-small" id="pn-midi-state"></span>
@@ -285,8 +298,8 @@
 <script src="./resources/js/piano-songs.js?v=20261119b"></script>
 <script src="./resources/js/piano-game.js?v=20261119b"></script>
 <script src="./resources/js/piano-ear.js?v=20261119"></script>
-<script src="./resources/js/piano-sound.js?v=20261119"></script>
-<script src="./resources/js/piano.js?v=20261119b"></script>
+<script src="./resources/js/piano-sound.js?v=20261119c"></script>
+<script src="./resources/js/piano.js?v=20261119c"></script>
 <script>
   KVOT.renderHeader('Pianoskolan');
   KVOT.renderNav('piano.html');

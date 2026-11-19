@@ -211,6 +211,9 @@ body.pn-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior:
   font-size: .95rem;
   line-height: 1.4;
   z-index: 20;
+  /* Taps go through: on a phone it lies over the lesson's bar, and what it
+     says is often to tap the microphone button under it. */
+  pointer-events: none;
 }
 
 /* ── Home ─────────────────────────────────────────────────────────────── */
@@ -703,6 +706,15 @@ body.pn-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior:
 .pn-field-wide textarea { font-family: var(--font-mono); line-height: 1.5; resize: vertical; }
 .pn-setrow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 0; }
 .pn-setrow .pn-btn { min-height: 42px; font-size: .98rem; padding: 6px 16px; }
+/* The microphone test: what the page hears, the level against the mark a note needs, and how the sound comes in. */
+.pn-mictest { border-bottom: 1px solid var(--border-color); }
+.pn-mictest .pn-small[data-state="error"] { color: var(--text-primary); }
+.pn-mictest-live { padding: 0 0 12px; }
+.pn-mictest-now { margin: 0 0 8px; font-size: 1.05rem; font-weight: 600; min-height: 1.4em; }
+.pn-mictest-meter { position: relative; height: 12px; border-radius: 6px; background: var(--border-color); overflow: hidden; }
+.pn-mictest-meter i { display: block; height: 100%; width: calc(var(--pn-level, 0) * 100%); background: var(--pn-ok); }
+.pn-mictest-meter b { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--text-primary); }
+.pn-mictest-tech { margin: 8px 0 0; font-size: .82rem; line-height: 1.45; color: var(--text-secondary); overflow-wrap: anywhere; }
 .pn-ownrow { display: flex; gap: 6px 18px; flex-wrap: wrap; }
 .pn-ownrow .pn-field { flex-direction: column; align-items: stretch; gap: 4px; }
 .pn-own-msg { margin: 2px 0 8px; min-height: 1.4em; font-size: .92rem; color: var(--text-secondary); }

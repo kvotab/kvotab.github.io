@@ -542,28 +542,52 @@ async def settings_suite(page):
     check('settings: no errors', page.errors + page.console, [])
 
 
-# getUserMedia answers with a MediaStream of silence from an AudioContext of
-# its own (or refuses, as a visitor who says no), and remembers what it was
-# asked for.
+# getUserMedia answers with a MediaStream from an AudioContext of its own (or
+# refuses, as a visitor who says no), and remembers what it was asked for.
+# The stream hisses at about -70 dBFS, as every real microphone does, or with
+# __silent is exact zeros (its gain at 0: a microphone that gives nothing,
+# until the test turns the gain up). Its track says its rate is __rate, as a
+# real microphone's does, and that the browser does nothing to its sound.
 MIC_STUB = """(() => {
   window.__gum = [];
   window.__refuse = false;
+  window.__silent = false;
+  window.__rate = 44100;
   const AC0 = window.AudioContext;
   navigator.mediaDevices.getUserMedia = async constraints => {
     if (window.__refuse) throw new DOMException('no', 'NotAllowedError');
     const ctx = new AC0({ sampleRate: 48000 });
     const dest = ctx.createMediaStreamDestination();
-    const osc = ctx.createOscillator();
-    const g = ctx.createGain();
-    g.gain.value = 0;
-    osc.connect(g).connect(dest);
-    osc.start();
+    const hiss = ctx.createBuffer(1, 48000, 48000);
+    const d = hiss.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * 0.0005;
+    const src = ctx.createBufferSource();
+    src.buffer = hiss;
+    src.loop = true;
+    const gain = ctx.createGain();
+    gain.gain.value = window.__silent ? 0 : 1;
+    src.connect(gain).connect(dest);
+    src.start();
     await ctx.resume();
-    window.__gum.push({ constraints, track: dest.stream.getAudioTracks()[0] });
+    const track = dest.stream.getAudioTracks()[0];
+    const own = track.getSettings.bind(track);
+    const rate = window.__rate;
+    track.getSettings = () => Object.assign(own(), { sampleRate: rate, echoCancellation: false, noiseSuppression: false, autoGainControl: false });
+    window.__gum.push({ constraints, track, gain });
     return dest.stream;
   };
   return true;
 })()"""
+
+# A held A4 as a piano plays it, through the page's real audio path.
+HELD_A = "PN.test.play(PN_SYNTH.melody([[69, 3]], { bpm: 60, lead: 0.3, sr: 48000 }).x, 48000)"
+MIC_DEAD = 'Mikrofonen ger inget ljud än. Stäng andra appar som kan använda den, som samtal och videomöten. Sidan fortsätter att lyssna.'
+MIC_TAP = 'Ljudet stannade, kanske för ett samtal eller en annan app. Tryck för att lyssna igen.'
+
+
+def plain(text):
+    """Text with the no-break spaces of Swedish numbers as plain ones."""
+    return (text or '').replace(' ', ' ').replace(' ', ' ')
 
 # Bjällerklang's first four bars as a piano plays them, in place of the microphone.
 MELODY = """(async () => {
@@ -604,6 +628,9 @@ async def mic_suite(page):
     check('microphone: the button opens it', ok, True)
     check('microphone: asked for without echo cancelling, noise suppression or gain control',
           await page.js('window.__gum[0].constraints'), {'audio': {'echoCancellation': False, 'noiseSuppression': False, 'autoGainControl': False}})
+    check('microphone: heard in a context of its own, at the rate the microphone gives',
+          await page.js('(m => [m.own, m.rate, m.state])(PN.inspect().mic)'), [True, 44100, 'running'])
+    check('microphone: its sound comes in', await settle(page, 'PN.inspect().mic.alive', True, tries=30), True)
     check('microphone: the button says it listens, and it is remembered',
           await page.js("[document.getElementById('pn-mic').getAttribute('aria-pressed'), document.querySelector('#pn-mic .pn-miclabel').textContent, PN.inspect().store.settings.mic]"), ['true', 'Lyssnar', True])
     await page.shot('mic-on-phone.png')
@@ -629,6 +656,81 @@ async def mic_suite(page):
           [g['mic']['on'], g['mic']['error'], await page.ev("document.getElementById('pn-toast').hidden"), g['view']],
           [False, 'Sidan fick inte använda mikrofonen. Tillåt mikrofonen för den här sidan i webbläsarens inställningar och tryck igen.', False, 'lesson'])
     check('microphone: no errors', page.errors + page.console, [])
+
+    # The microphone test in the settings: what the page hears, live.
+    await page.load(width=390, height=664, mobile=True, store=OPEN)
+    await page.ev(MIC_STUB)
+    await page.click('[data-on-click="pn:settings"]')
+    live = "(id => !document.getElementById(id).hidden)"
+    check('microphone test: in the settings, offered while the microphone is off',
+          await page.js(f"[{live}('pn-mictest-btn'), document.getElementById('pn-mictest-btn').textContent, {live}('pn-mictest-live')]"),
+          [True, 'Testa mikrofonen', False])
+    await page.click('#pn-mictest-btn')
+    ok = await settle(page, f"{live}('pn-mictest-live') && PN.inspect().mic.alive", True, tries=50)
+    check('microphone test: the button opens the microphone, and what it hears is shown', ok, True)
+    await asyncio.sleep(0.4)
+    g = await page.js("['pn-mictest-btn', 'pn-mictest-now', 'pn-mictest-tech'].map(id => document.getElementById(id)).map(e => [!e.hidden, e.textContent])")
+    check('microphone test: the button gives way, and a microphone that only hisses is quiet', [g[0][0], g[1][1]], [False, 'Tyst. Spela en ton på pianot.'])
+    tech = plain(g[2][1])
+    check('microphone test: how the sound comes in, to read out when something is wrong',
+          [x in tech for x in ('Mikrofonen: 44 100 Hz', 'lyssnar i 44 100 Hz', 'sidans ljud: ', 'en ton behöver -50 dB')], [True] * 4)
+    await page.shot('mictest-quiet.png')
+    await page.ev(HELD_A)
+    ok = await settle(page, "document.getElementById('pn-mictest-now').textContent", 'Hör A.', tries=40)
+    check("microphone test: a piano's A is heard as A", ok, 'Hör A.')
+    level = await page.ev("parseFloat(document.getElementById('pn-mictest-bar').style.getPropertyValue('--pn-level'))")
+    mark = await page.ev("parseFloat(document.getElementById('pn-mictest-mark').style.left)")
+    check('microphone test: the level passes the mark a note needs', level * 100 > mark > 0, True)
+    await page.shot('mictest-a.png')
+    await page.ev('PN.test.stopMic()')
+    await page.click('#pn-settings .pn-dialog-foot .pn-btn-go')
+
+    # Notes played while a dialog is open are no answers: here the one that
+    # asks whether to leave the lesson.
+    g = await walk(page, 'u1-cde', lambda ex: ex['type'] == 'find')
+    want = g['ex']['note']
+    await page.click('[data-on-click="pn:quit"]')
+    check('microphone: a note heard while a dialog is open is no answer',
+          [await page.ev("document.getElementById('pn-ask').open"), await page.ev(f"PN.test.hear({want}, 'mic')"), (await page.state())['run']['items']],
+          [True, None, g['run']['items']])
+    await page.click('#pn-ask-no')
+    check('microphone: and once it is closed it is', await page.ev(f"PN.test.hear({want}, 'mic')"), 'right')
+
+    # A context that stops - a call, another app - is started again; one
+    # that will not start again makes the page ask for a tap.
+    # (The lesson opened the microphone by itself: the test above left it on.)
+    if not await settle(page, 'PN.inspect().mic.on', True, tries=30):
+        await page.click('#pn-mic2')
+        await settle(page, 'PN.inspect().mic.on', True, tries=50)
+    check('microphone: on again in the lesson, in its own context', (await page.state())['mic']['own'], True)
+    await page.ev('PN.test.micContext().suspend()')
+    check('microphone: a context that stops is started again',
+          await settle(page, "(m => m.on && m.state === 'running')(PN.inspect().mic)", True, tries=30), True)
+    await page.ev('(c => { c.resume = () => new Promise(() => {}); return c.suspend(); })(PN.test.micContext())')
+    ok = await settle(page, 'PN.inspect().mic.on', False, tries=40)
+    g = await page.state()
+    check('microphone: one that will not start again: the page stops listening and asks for a tap',
+          [ok, g['mic']['note'], await page.ev("document.getElementById('pn-toast').textContent")], [False, MIC_TAP, MIC_TAP])
+
+    # A microphone that gives nothing at all: tried once more the other way
+    # (in the sounds' context), and then the page says so and listens on,
+    # until sound comes. The tap is on the button under the toast above.
+    await page.ev('window.__silent = true')
+    n = await page.ev('window.__gum.length')
+    await page.click('#pn-mic2')
+    ok = await settle(page, f"window.__gum.length === {n + 2} && PN.inspect().mic.on", True, tries=80)
+    g = await page.state()
+    check('microphone: nothing coming in, it is opened again, in the sounds\' context', [ok, g['mic']['own']], [True, False])
+    ok = await settle(page, 'PN.inspect().mic.note', MIC_DEAD, tries=60)
+    g = await page.state()
+    check('microphone: and nothing again: the page says so, and listens on',
+          [ok, g['mic']['on'], await page.ev("document.getElementById('pn-toast').textContent"),
+           await page.js(f"window.__gum.slice({n}).map(x => x.track.readyState)")],
+          [MIC_DEAD, True, MIC_DEAD, ['ended', 'live']])
+    await page.ev(f'window.__gum[{n + 1}].gain.gain.value = 1')
+    check('microphone: sound comes after all: the note goes',
+          await settle(page, '(m => m.alive && m.note === null && m.on)(PN.inspect().mic)', True, tries=30), True)
+    check('microphone test: no errors', page.errors + page.console, [])
 
 
 # What of the site's chrome is on screen, and whether the lesson fits it.

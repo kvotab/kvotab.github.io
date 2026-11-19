@@ -7,10 +7,12 @@
    oscillator with a piano's overtones under an envelope that strikes and
    dies away: no sound files, nothing downloaded.
 
-   There is one AudioContext, and the microphone listens through the same
-   one (piano.js). A browser only lets a page make sound after a tap or a
-   key, so it is made, and resumed, from one. On an iPhone, Web Audio follows
-   the ring/silent switch: with the phone on silent, nothing is heard.
+   The sounds have one AudioContext, made at the speaker's rate. A browser
+   only lets a page make sound after a tap or a key, so it is made, and
+   resumed, from one. The microphone listens in a context of its own, at the
+   microphone's rate, and in this one only where that cannot be (piano.js).
+   On an iPhone, Web Audio follows the ring/silent switch: with the phone on
+   silent, nothing is heard.
 
    THE MICROPHONE HEARS THE PAGE. Whatever is played here comes back through
    the microphone as if the pupil had played it. Every sound therefore says
@@ -44,7 +46,8 @@ const PN_SOUND = (() => {
       const partials = [0, 1, 0.55, 0.32, 0.2, 0.12, 0.07, 0.04, 0.02];
       wave = ctx.createPeriodicWave(new Float32Array(partials.length), Float32Array.from(partials));
     }
-    if (ctx.state === 'suspended') ctx.resume().catch(e => ignoreFailure('piano sound: resume', e));
+    // Safari says 'interrupted' where sound was taken away (a call, another app).
+    if (ctx.state === 'suspended' || ctx.state === 'interrupted') ctx.resume().catch(e => ignoreFailure('piano sound: resume', e));
     return ctx;
   }
 
@@ -161,5 +164,7 @@ const PN_SOUND = (() => {
     log: () => played.slice(),
     clearLog: () => { played.length = 0; },
     state: () => (ctx ? ctx.state : 'none'),
+    /* The sounds' sample rate, 0 before the first sound. */
+    rate: () => (ctx ? ctx.sampleRate : 0),
   };
 })();

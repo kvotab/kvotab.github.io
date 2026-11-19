@@ -539,7 +539,8 @@ const PN = (() => {
       mic.heardAt = performance.now();
       if (run) run.real = true;
     }
-    const answer = ctl && ctl.hear ? ctl.hear(ev) : null;
+    // Not while a dialog is open: notes played to test the microphone are no answers.
+    const answer = ctl && ctl.hear && !document.querySelector('dialog[open]') ? ctl.hear(ev) : null;
     if (keys) keys.light(ev.midi, answer === 'right' ? 'is-right' : answer === 'wrong' ? 'is-wrong' : 'is-down');
     if (dom.heard) {
       dom.heard.textContent = nameOf(S.fromMidi(ev.midi));
@@ -577,7 +578,42 @@ const PN = (() => {
 
   /* ── The microphone ───────────────────────────────────────────────────── */
 
-  const mic = { on: false, starting: false, error: null, note: null, stream: null, source: null, analyser: null, buf: null, ear: null, raf: 0, lastRead: 0, heardAt: 0, player: null, resume: false };
+  /* THE MICROPHONE IS HEARD AT ITS OWN RATE. The page's sounds play in the
+     context made at the first tap, at the speaker's rate, and a microphone
+     of another rate fed into that context is converted on the way in. The
+     conversion has garbled the sound on iOS (an iPhone with AirPods: the
+     context at 24 kHz, the microphone at 48), and an iPad has heard nothing
+     where an iPhone heard every note. So the listening gets a context of its
+     own once the microphone is open, at the rate the microphone gives, and
+     WebKit leaves the sound as it is (MediaStreamAudioSourceNode::setFormat
+     converts only where the rates differ). Safari lets a page that is
+     listening start sound without a tap. Where the microphone does not say
+     its rate, or the new context will not start, the sounds' context
+     listens, as it always did.
+
+     NOTHING COMING IN. Every real microphone hisses a little, so readings of
+     exact zeros mean that no sound arrives at all. After DEAD_MS of only
+     that, the page tries once more the other way (its own context or the
+     sounds' one); if nothing comes then either, it says so and goes on
+     listening, and the note goes when sound comes. Going on is safer than
+     stopping: a microphone another app has taken comes back by itself, and
+     one that sends exact zeros in a quiet room would be stopped wrongly. A
+     context that stops - a call, another app, what Safari calls
+     'interrupted' - is asked to go on, and after PAUSE_MS without it the
+     page stops listening and asks for a tap. */
+  const DEAD_MS = 2500;
+  const PAUSE_MS = 1500;
+  const MIC_NOTES = {
+    idle: 'Mikrofonen stängdes av efter en stund utan pianoljud. Tryck för att lyssna igen.',
+    tap: 'Ljudet stannade, kanske för ett samtal eller en annan app. Tryck för att lyssna igen.',
+    ended: 'Mikrofonen stängdes av utanför sidan. Tryck för att lyssna igen.',
+  };
+  const MIC_DEAD = 'Mikrofonen ger inget ljud än. Stäng andra appar som kan använda den, som samtal och videomöten. Sidan fortsätter att lyssna.';
+  const mic = {
+    on: false, starting: false, error: null, note: null, stream: null, track: null, ctx: null, own: false,
+    source: null, analyser: null, buf: null, ear: null, raf: 0, lastRead: 0, heardAt: 0, startedAt: 0,
+    alive: false, pausedAt: 0, tries: 0, player: null, resume: false,
+  };
 
   function micError(e) {
     const name = e && e.name;
@@ -593,8 +629,12 @@ const PN = (() => {
     return 'Mikrofonen gick inte att starta.';
   }
 
-  async function micStart() {
+  /* opts.again: the second try after nothing came in; opts.shared: listen
+     in the sounds' context. */
+  async function micStart(opts) {
     if (mic.on || mic.starting) return;
+    const o = opts || {};
+    if (!o.again) mic.tries = 0;
     mic.error = null;
     mic.note = null;
     if (!window.isSecureContext) {
@@ -603,8 +643,8 @@ const PN = (() => {
       return;
     }
     // Made and resumed inside the tap, which is what a browser asks of sound.
-    const ctx = PN_SOUND.context();
-    if (!ctx || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    const shared = PN_SOUND.context();
+    if (!shared || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       mic.error = 'Den här webbläsaren kan inte lyssna via mikrofonen. Du kan spela på tangenterna på skärmen i stället.';
       renderMic();
       return;
@@ -622,18 +662,68 @@ const PN = (() => {
       renderMic();
       return;
     }
+    const track = stream.getAudioTracks()[0] || null;
+    const own = o.shared ? null : await ownContext(track);
     if (!mic.starting) {
       stream.getTracks().forEach(t => t.stop());
+      if (own) own.close().catch(e => ignoreFailure('piano: closing the listening', e));
       return;
     }
-    micConnect(ctx, ctx.createMediaStreamSource(stream), stream);
+    let ctx = own || shared;
+    let source = null;
+    try {
+      source = ctx.createMediaStreamSource(stream);
+    } catch (e) {
+      if (own) {
+        own.close().catch(err => ignoreFailure('piano: closing the listening', err));
+        ctx = shared;
+        try { source = ctx.createMediaStreamSource(stream); } catch (e2) { /* said below */ }
+      }
+    }
+    if (!source) {
+      stream.getTracks().forEach(t => t.stop());
+      mic.starting = false;
+      mic.error = 'Mikrofonen gick inte att starta.';
+      renderMic();
+      return;
+    }
+    micConnect(ctx, source, stream, ctx === own);
+    mic.tries++;
+    if (track) track.addEventListener('ended', () => { if (mic.stream === stream) micStop('ended'); });
     if (!store.settings.mic) { store.settings.mic = true; save(); }
+  }
+
+  /* A context to listen in at the microphone's own rate, or null: where the
+     microphone does not say its rate, where the browser will not make a
+     context at it, or where the context has not started within a second. */
+  async function ownContext(track) {
+    const AC = window.AudioContext;
+    const rate = track && track.getSettings ? Number(track.getSettings().sampleRate) : 0;
+    if (!AC || !(rate > 0)) return null;
+    let ctx;
+    try {
+      ctx = new AC({ sampleRate: rate });
+    } catch (e) {
+      return null;
+    }
+    await Promise.race([ctx.resume().catch(() => {}), new Promise(r => setTimeout(r, 1000))]);
+    if (ctx.state === 'running') return ctx;
+    ctx.close().catch(e => ignoreFailure('piano: closing the listening', e));
+    return null;
+  }
+
+  /* Nothing has come in since the microphone opened: once more, the other way. */
+  function micAgain() {
+    const wasOwn = mic.own;
+    micStop('again');
+    micStart({ again: true, shared: wasOwn });
   }
 
   /* source → high-pass at 70 Hz (rumble, the pedal's thud) → analyser. The
      analyser also feeds a silent gain to the output, which keeps the graph
-     running in browsers that only process what reaches the destination. */
-  function micConnect(ctx, source, stream) {
+     running in browsers that only process what reaches the destination.
+     own: the context is the listening's own, and is closed with it. */
+  function micConnect(ctx, source, stream, own) {
     const ear = PN_EAR.createListener(ctx.sampleRate, { tune: store.tune });
     const hp = ctx.createBiquadFilter();
     hp.type = 'highpass';
@@ -649,7 +739,11 @@ const PN = (() => {
     hp.connect(analyser);
     analyser.connect(sink);
     sink.connect(ctx.destination);
-    Object.assign(mic, { on: true, starting: false, stream, source, analyser, sink, hp, ear, buf: new Float32Array(size), lastRead: -Infinity, heardAt: performance.now() });
+    const now = performance.now();
+    Object.assign(mic, {
+      on: true, starting: false, stream, track: stream ? stream.getAudioTracks()[0] || null : null, ctx, own: !!own,
+      source, analyser, sink, hp, ear, buf: new Float32Array(size), lastRead: -Infinity, heardAt: now, startedAt: now, alive: false, pausedAt: 0,
+    });
     deafen();
     renderMic();
     if (!mic.raf) mic.raf = requestAnimationFrame(micFrame);
@@ -665,10 +759,11 @@ const PN = (() => {
       if (mic.stream) mic.stream.getTracks().forEach(t => t.stop());
       if (mic.player) { try { mic.player.stop(); } catch (e) { /* already ended */ } }
       for (const node of [mic.source, mic.hp, mic.analyser, mic.sink]) { try { node.disconnect(); } catch (e) { /* not connected */ } }
+      if (mic.own) mic.ctx.close().catch(e => ignoreFailure('piano: closing the listening', e));
     }
     if (mic.raf) cancelAnimationFrame(mic.raf);
-    Object.assign(mic, { on: false, raf: 0, stream: null, source: null, analyser: null, sink: null, hp: null, ear: null, buf: null, player: null });
-    mic.note = why === 'idle' ? 'Mikrofonen stängdes av efter en stund utan pianoljud. Tryck för att lyssna igen.' : null;
+    Object.assign(mic, { on: false, raf: 0, stream: null, track: null, ctx: null, own: false, source: null, analyser: null, sink: null, hp: null, ear: null, buf: null, player: null });
+    mic.note = MIC_NOTES[why] || null;
     setLevel(0);
     renderMic();
   }
@@ -681,17 +776,44 @@ const PN = (() => {
   function micFrame(now) {
     mic.raf = 0;
     if (!mic.on) return;
+    // Sound can be taken away while the page listens (a call, another app):
+    // it is asked back once, and if it has not come back within PAUSE_MS
+    // the page stops and asks for a tap.
+    const running = mic.ctx.state === 'running';
+    if (running) {
+      mic.pausedAt = 0;
+    } else if (!mic.pausedAt) {
+      mic.pausedAt = now;
+      mic.ctx.resume().catch(() => {});
+    } else if (now - mic.pausedAt > PAUSE_MS) {
+      micStop('tap');
+      return;
+    }
     if (now - mic.lastRead >= FRAME_MS) {
       mic.lastRead = now;
-      // Sound can be taken away while the page listens (a call, another
-      // app): context() asks for it back, and until then this reads silence.
-      PN_SOUND.context();
       mic.analyser.getFloatTimeDomainData(mic.buf);
+      if (!mic.alive) {
+        mic.alive = mic.buf.some(v => v !== 0);
+        if (mic.alive && mic.note === MIC_DEAD) {
+          mic.note = null;
+          renderMic();
+        } else if (!mic.alive && running && !mic.player && now - mic.startedAt > DEAD_MS) {
+          if (mic.tries < 2) {
+            micAgain();
+            return;
+          }
+          if (mic.note !== MIC_DEAD) {
+            mic.note = MIC_DEAD;
+            renderMic();
+          }
+        }
+      }
       hearFrame(mic.buf, now, mic.ear);
       if (now - mic.heardAt > IDLE_STOP_MS && view !== 'lesson') {
         micStop('idle');
         return;
       }
+      renderMicTest(now);
     }
     mic.raf = requestAnimationFrame(micFrame);
   }
@@ -720,6 +842,68 @@ const PN = (() => {
     dom.micnote.textContent = text || '';
     dom.micnote.setAttribute('data-state', mic.error ? 'error' : 'note');
     if (text && view === 'lesson') toast(text);
+    renderMicTest();
+  }
+
+  /* ── The microphone test, in the settings ─────────────────────────────── */
+
+  /* What the page hears, for a grown-up checking that it hears the piano:
+     the note it would take, the level against what is needed, and how the
+     sound comes in (the line to read out when something is wrong). now: a
+     reading's time, for at most a few updates a second; none redraws at once. */
+  let testShown = -Infinity;
+  function renderMicTest(now) {
+    const t = dom.mt;
+    if (!t || !t.dialog.open) return;
+    if (now !== undefined) {
+      if (now - testShown < 150) return;
+      testShown = now;
+    }
+    const on = mic.on && !!mic.ear;
+    t.btn.hidden = on;
+    t.btn.disabled = mic.starting;
+    t.btn.textContent = mic.starting ? 'Startar …' : 'Testa mikrofonen';
+    t.hint.textContent = mic.error || (on ? 'Sidan lyssnar. Spela en ton på pianot.' : 'Spela en ton på pianot och se vad sidan hör.');
+    t.hint.setAttribute('data-state', mic.error ? 'error' : '');
+    t.live.hidden = !on;
+    if (!on) return;
+    const ear = mic.ear;
+    const o = ear.options;
+    const r = ear.last();
+    const level = ear.level();
+    const need = Math.max(o.floor, ear.room() * o.over);
+    let say;
+    if (!mic.alive) say = 'Mikrofonen ger inget ljud ännu.';
+    else if (r && r.key !== null) say = `Hör ${sayName(S.fromMidi(r.key))}.`;
+    else if (r && r.freq > 0 && r.clarity >= o.clarity && r.rms < need) say = 'Hör en ton, men den är för svag. Ställ skärmen närmare pianot.';
+    else if (r && r.freq > 0 && r.clarity >= o.clarity) say = 'Hör en ton utanför tangenterna som sidan lyssnar efter.';
+    else if (level >= need) say = 'Hör ljud, men ingen tydlig ton.';
+    else say = 'Tyst. Spela en ton på pianot.';
+    if (t.now.textContent !== say) t.now.textContent = say;
+    // The bar runs from -70 dBFS to -10; the mark is what a note needs.
+    const pos = v => Math.max(0, Math.min(1, (dB(v) + 70) / 60));
+    t.bar.style.setProperty('--pn-level', pos(level).toFixed(3));
+    t.mark.style.left = `${(pos(need) * 100).toFixed(1)}%`;
+    t.tech.textContent = micTech(r, level, need);
+  }
+
+  const dB = v => (v > 0 ? Math.round(20 * Math.log10(v)) : -120);
+  const hz = v => `${Math.round(v).toLocaleString('sv-SE')} Hz`;
+
+  /* How the sound comes in: the microphone's rate and what the browser does
+     to it, the rate listened at and the sounds' rate, and the levels. */
+  function micTech(r, level, need) {
+    const s = mic.track && mic.track.getSettings ? mic.track.getSettings() : {};
+    const done = [s.echoCancellation && 'ekosläckning', s.noiseSuppression && 'brusdämpning', s.autoGainControl && 'nivåreglering'].filter(Boolean);
+    const parts = [
+      `Mikrofonen: ${s.sampleRate ? hz(s.sampleRate) : 'okänd samplingsfrekvens'}${done.length ? `, med ${done.join(' och ')}` : ''}`,
+      `lyssnar i ${hz(mic.ctx.sampleRate)}${mic.own ? '' : ', samma som sidans ljud'}`,
+      `sidans ljud: ${PN_SOUND.rate() ? hz(PN_SOUND.rate()) : 'inte startat'}`,
+      `nivå ${dB(level)} dB, en ton behöver ${dB(need)} dB`,
+    ];
+    if (r && r.freq > 0) parts.push(`tonhöjd ${Math.round(r.freq)} Hz, tydlighet ${Math.round(r.clarity * 100)} %`);
+    if (mic.ctx.state !== 'running') parts.push(`ljudet: ${mic.ctx.state}`);
+    return parts.join(' · ');
   }
 
   function toast(text) {
@@ -1667,8 +1851,9 @@ const PN = (() => {
     'pn:alt': () => { if (altFn) altFn(); },
     'pn:mic': () => (mic.on ? (store.settings.mic = false, save(), micStop('user')) : micStart()),
     'pn:midi': midiStart,
+    'pn:mictest': () => micStart(),
     'pn:help': () => openDialog('pn-help'),
-    'pn:settings': () => { syncSettings(); openDialog('pn-settings'); },
+    'pn:settings': () => { syncSettings(); openDialog('pn-settings'); renderMicTest(); },
     'pn:close': closeDialog,
     'pn:setting': changeSetting,
     'pn:reset': () => ask('Börja om från början?', 'Alla poäng, stjärnor, märken och egna låtar tas bort. Det går inte att ångra.', 'Börja om', 'Behåll allt', () => {
@@ -1699,6 +1884,10 @@ const PN = (() => {
       progress: id('pn-progress'), progressFill: id('pn-progress-fill'), heard: id('pn-heard'),
       prompt: id('pn-prompt'), sub: id('pn-sub'), card: id('pn-card'), staff: id('pn-staff'), keys: id('pn-keys'),
       foot: id('pn-foot'), feedback: id('pn-feedback'), go: id('pn-go'), alt: id('pn-alt'),
+      mt: {
+        dialog: id('pn-settings'), btn: id('pn-mictest-btn'), hint: id('pn-mictest-hint'), live: id('pn-mictest-live'),
+        now: id('pn-mictest-now'), bar: id('pn-mictest-bar'), mark: id('pn-mictest-mark'), tech: id('pn-mictest-tech'),
+      },
     };
     staff = NO_STAFF;
     load();
@@ -1749,7 +1938,10 @@ const PN = (() => {
       keys: keys ? { lo: keys.lo, hi: keys.hi } : null,
       last,
       finish: lastFinish,
-      mic: { on: mic.on, starting: mic.starting, error: mic.error, note: mic.note, tune: mic.ear ? mic.ear.tune() : null },
+      mic: {
+        on: mic.on, starting: mic.starting, error: mic.error, note: mic.note, tune: mic.ear ? mic.ear.tune() : null,
+        own: mic.own, rate: mic.ctx ? mic.ctx.sampleRate : null, state: mic.ctx ? mic.ctx.state : null, alive: mic.alive, tries: mic.tries,
+      },
       store: { xp: store.xp, streak: store.streak, lessons: store.lessons, songs: store.songs, notes: store.notes, badges: Object.keys(store.badges), days: store.days, settings: store.settings, own: store.own.length, tune: store.tune },
       next: (nextLesson() || {}).id || null,
       sounds: PN_SOUND.log(),
@@ -1777,12 +1969,14 @@ const PN = (() => {
       buffer.copyToChannel(samples instanceof Float32Array ? samples : Float32Array.from(samples), 0);
       const player = ctx.createBufferSource();
       player.buffer = buffer;
-      micConnect(ctx, player, null);
+      micConnect(ctx, player, null, false);
       mic.player = player;
       player.start();
       return ctx.resume().then(() => ctx.state);
     },
     stopMic: () => micStop('user'),
+    /* The context the page listens in, to stop it as a call would. */
+    micContext: () => mic.ctx,
     today(day) { clock = day || null; if (view === 'home') renderHome(); },
     hurry(k) { tempoScale = k > 0 ? k : 1; },
     reload() { load(); goHome(); },

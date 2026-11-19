@@ -32,6 +32,16 @@ missed or doubled there, the numbers to look at are `EAR` in
 `resources/js/piano-ear.js`, and a recording of the piano fed through
 `test-ear.js`'s `listen()` will show which of them it is.
 
+No test has a phone or a tablet either. The microphone in `test-ui.py` is a
+stream made in the page (a faint hiss, or exact zeros for a microphone that
+gives nothing) whose track says what rate it has, so the tests show what the
+page does with what it is given: it listens in a context of its own at the
+microphone's rate, starts a stopped context again, and tries once more and
+then says so when nothing comes in. What a real device gives - its rate,
+what the browser does to the sound, how loud a piano is there - only the
+device can show: *Testa mikrofonen* in the page's settings shows it, with a
+line of technical detail to read out.
+
 ## The melodies
 
 Each song's text in `piano-songs.js` was checked against published notation
