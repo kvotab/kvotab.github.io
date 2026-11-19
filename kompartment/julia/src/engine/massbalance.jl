@@ -6,7 +6,7 @@
 
 budget_index(budget, term, family) = budget.base + (findfirst(==(term), BUDGET_TERMS) - 1) * budget.nfam + family
 
-closed_below(rtol) = (r = py_float(something(rtol, NaN)); max(1e-10, 20 * (isfinite(r) && r > 0 ? r : 1e-6)))
+closed_below(rtol) = (r = js_number_of(something(rtol, NaN)); max(1e-10, 20 * (isfinite(r) && r > 0 ? r : 1e-6)))
 
 const _AUDIT_KEYS = ("inventory", "start", "in", "out", "decay", "ingrowth", "explicit", "between", "expected", "residual")
 

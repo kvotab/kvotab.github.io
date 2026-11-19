@@ -44,15 +44,8 @@ const _PB_MIN_VALUE = 5e-324
 """Anything but an input: not a parameter, not a lookup table."""
 can_be_endpoint(kind) = !(kind == "parameter" || kind == "lookup")
 
-"""Python's `str(v)`, for a name or a group a model file gives."""
-function _pb_py_str(v)
-    v isa AbstractString && return String(v)
-    v isa Bool && return v ? "True" : "False"
-    v isa Integer && return string(v)
-    v isa AbstractFloat && return py_repr(v)
-    v === nothing && return "None"
-    return string(v)
-end
+"""`String(v)`, for a name or a group a model file gives."""
+_pb_py_str(v) = v isa AbstractString ? String(v) : js_text(v)
 
 """Python's `max(a, b)` and `min(a, b)`: the first unless the second is strictly beyond it."""
 _pb_pymax(a::Float64, b::Float64) = b > a ? b : a

@@ -1236,9 +1236,11 @@ class Project:
         for o in self.blocks['index_reductions']:
             if o['operation'] not in OPERATIONS:
                 raise ValidationError(f"'{o['operation']}' is not a reduction ({', '.join(OPERATIONS)})", o['qname'])
-            if o['operation'] == 'percentile' and not (o.get('percentile') is not None and 0 <= o['percentile'] <= 100):
-                raise ValidationError(f"A percentile must be between 0 and 100; '{o.get('percentile')}' is not",
-                                      o['qname'])
+            # `!(p >= 0 && p <= 100)`, where JavaScript compares null as 0: a percentile
+            # left out is the 0th, the least.
+            pc = o.get('percentile')
+            if o['operation'] == 'percentile' and not (0 <= (0 if pc is None else pc) <= 100):
+                raise ValidationError(f"A percentile must be between 0 and 100; '{js_text(pc)}' is not", o['qname'])
             if not o.get('target'):
                 raise ValidationError('An index operation needs a block to reduce', o['qname'])
         for m in self.blocks['min_maxes']:
@@ -1287,7 +1289,7 @@ class Project:
         for key, label in (('rtol', 'Relative'), ('abstol', 'Absolute')):
             v = js_number(sim.get(key))
             if not (v > 0):
-                raise ValidationError(f'{label} tolerance must be greater than zero (got {sim.get(key)})')
+                raise ValidationError(f'{label} tolerance must be greater than zero (got {js_text(sim.get(key))})')
         return self
 
     # --- the output grid ---------------------------------------------------------------

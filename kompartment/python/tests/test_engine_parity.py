@@ -133,6 +133,41 @@ class ProjectParity(unittest.TestCase):
                     built = str(e)
                 self.assertEqual(built, js['built'])
 
+    def test_a_model_s_numbers_are_read_as_the_application_reads_them(self) -> None:
+        # With `Number()`, not `float()`: a far-field count left blank is 0, one in hex a number,
+        # 1_000 none, a list what its text reads as; a percentile left out is the 0th, as
+        # `null >= 0` holds; and the messages write their numbers as JavaScript does.
+        models = []
+        for key, v in (('n_f', ''), ('n_f', '0x10'), ('n_f', '1_000'), ('n_f', [20]), ('n_m', None), ('o_b', ' 4 '),
+                       ('o_b', True), ('pen_dep_0', '\xa0'), ('pen_dep_0', '1'), ('de_m', '-1e-5'), ('de_m', '-0x1'),
+                       ('pen_dep', '1e-5'), ('pe', '0x0a')):
+            model = example('farfield')
+            model['farfields'][0][key] = v
+            models.append(model)
+        for pc in (None, 'abc', 120, '50'):
+            model = example('post-processing')
+            model['index_reductions'][0]['operation'] = 'percentile'
+            if pc is None:
+                model['index_reductions'][0].pop('percentile', None)
+            else:
+                model['index_reductions'][0]['percentile'] = pc
+            models.append(model)
+        theirs = engine('projects', models=models)['projects']
+        for model, js in zip(models, theirs):
+            with self.subTest(farfield=model.get('farfields', [{}])[0], reduction=model.get('index_reductions')):
+                try:
+                    p = Project(model)
+                except ValidationError as e:
+                    self.assertEqual(str(e), js.get('error'))
+                    continue
+                self.assertNotIn('error', js)
+                try:
+                    build_system(p, jacobian=False)
+                    built = None
+                except Exception as e:  # noqa: BLE001 -- whatever the build says, the application says it too
+                    built = str(e)
+                self.assertEqual(built, js['built'])
+
     def test_output_points_are_asked_of_the_two_shorthands_alone(self) -> None:
         # A list of series, the solver's own points and the two together carry their own times, so a
         # count left in the field from a shorthand is refused only where a grid is spread over it; where
@@ -298,6 +333,31 @@ class BuildParity(unittest.TestCase):
                 d = layer_depths(pen_dep, nm, aw, first)
                 self.assertEqual(d.size, nm)
                 self.assertLessEqual(float(np.max(np.abs(d / np.array(ref) - 1))), 4.5e-16)
+
+    def test_a_far_field_setting_is_checked_as_the_application_reads_it(self) -> None:
+        # With `Number()`: null and blank are 0, a setting not given NaN, 0x10 16, 1_000 and inf NaN,
+        # [5] 5 -- and the messages write numbers as JavaScript does.
+        from kompartment.engine.farfield import (dispersion_warning, extra_cells, geometry_problem, rock_problem,
+                                                 structure_problem)
+        base = {'n_f': 20, 'n_m': 12, 'o_b': 4, 'n_b': '', 'pe': '10', 'pen_dep': '12.5', 'pen_dep_0': '',
+                'de_m': '1e-4'}
+        values = [None, '', ' ', '\xa0', '0', '1', '2', 2.5, '2.5', '0x10', '0x0c', '1_000', 'inf', 'Infinity', '-3',
+                  [5], ['7'], [], [1, 2], True, False, '1e1', ' 12 ', '\ufeff4', '\x854', 'abc', {}]
+        blocks = []
+        for key in ('n_f', 'n_m', 'n_b', 'o_b', 'pe', 'pen_dep', 'pen_dep_0', 'de_m'):
+            blocks.append({k: v for k, v in base.items() if k != key})
+            blocks += [dict(base, **{key: v}) for v in values]
+        blocks += [dict(base, pen_dep='1', pen_dep_0='1', n_m=5), dict(base, pen_dep='1e-5', pen_dep_0='0.5', n_m=3),
+                   dict(base, pe='12.3456789', n_f=4), dict(base, pe=40, n_f=1), dict(base, pe='2.5e1', n_f=3)]
+        js = engine('farfield_checks', blocks=blocks)['checks']
+        for b, ref in zip(blocks, js):
+            with self.subTest(block=b):
+                self.assertEqual(structure_problem(b), ref['structure'])
+                self.assertEqual(geometry_problem(b), ref['geometry'])
+                self.assertEqual(rock_problem(b), ref['rock'])
+                self.assertEqual(dispersion_warning(b), ref['dispersion'])
+                if ref['structure'] is None:
+                    self.assertEqual(extra_cells(b), ref['extra'])
 
     def test_matched_layers_and_extra_cells_as_the_application_works_them_out(self) -> None:
         # Square roots, the four operations and repeated multiplication only,

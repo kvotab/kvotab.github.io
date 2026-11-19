@@ -293,8 +293,8 @@ function kf_transport_point(args::AbstractVector{Float64})
     x = args[end]
     n = length(args) - 1
     isnan(x) && return NaN
-    x < 0 && throw(TransportRangeError("transport operation: the position $(py_repr(x)) is lower than zero"))
-    x > 1 && throw(TransportRangeError("transport operation: the position $(py_repr(x)) is higher than one"))
+    x < 0 && throw(TransportRangeError("transport operation: the position $(js_number(x)) is lower than zero"))
+    x > 1 && throw(TransportRangeError("transport operation: the position $(js_number(x)) is higher than one"))
     return args[(x == 1 ? n - 1 : trunc(Int, x * n))+1]
 end
 
@@ -303,8 +303,8 @@ function kf_transport_range(args::AbstractVector{Float64}, mean::Bool)
     a, b = args[n+1], args[n+2]
     (isnan(a) || isnan(b)) && return NaN
     a > b && ((a, b) = (b, a))
-    a < 0 && throw(TransportRangeError("transport operation: the range starts at $(py_repr(a)), which is lower than zero"))
-    b > 1 && throw(TransportRangeError("transport operation: the range ends at $(py_repr(b)), which is higher than one"))
+    a < 0 && throw(TransportRangeError("transport operation: the range starts at $(js_number(a)), which is lower than zero"))
+    b > 1 && throw(TransportRangeError("transport operation: the range ends at $(js_number(b)), which is higher than one"))
     total = 0.0
     if a == 0 && b == 1
         for e in 1:n

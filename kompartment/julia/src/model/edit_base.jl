@@ -148,11 +148,9 @@ end
 
 """The number an equation is when it is one written out, as JavaScript's `Number` reads it; `nothing` otherwise."""
 function _written_number(text::AbstractString)
-    t = strip(text)
-    (isempty(t) || occursin('_', t)) && return nothing
-    v = _ed_pyfloat(t)
-    (v === nothing || !isfinite(v)) && return nothing
-    return v
+    isempty(js_trim(text)) && return nothing
+    v = js_number_of(text)
+    return isfinite(v) ? v : nothing
 end
 
 """`list(dict.fromkeys(xs))`: the values in order, each once."""

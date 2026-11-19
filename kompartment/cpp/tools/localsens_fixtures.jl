@@ -565,7 +565,7 @@ function points(t0, t1, Y0, n)
             (t1, [abs(Y0[i]) * 0.3 + 1e-3 * i for i in 1:N])]
 end
 
-min_change(project) = (v = K.py_float(something(get(project.simulation, "min_change_time", nothing), 0)); isfinite(v) ? v : 0.0)
+min_change(project) = (v = K.js_number_of(something(get(project.simulation, "min_change_time", nothing), 0)); isfinite(v) ? v : 0.0)
 
 function problem_lines(pr, project)
     sys = pr.system

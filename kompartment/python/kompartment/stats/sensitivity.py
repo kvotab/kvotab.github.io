@@ -54,10 +54,6 @@ Mask = Optional[Union[Sequence[Any], np.ndarray]]
 # JavaScript arithmetic, shared with the other statistics modules.
 # ---------------------------------------------------------------------------
 
-# What JavaScript's Number() trims: its WhiteSpace and LineTerminator characters.
-_JS_SPACE = ('\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a'
-             '\u2028\u2029\u202f\u205f\u3000\ufeff')
-
 
 def _f64(a: Any) -> np.ndarray:
     """A float64 array of ``a`` (a copy only where needed)."""
@@ -183,10 +179,7 @@ def _js_min(*xs: float) -> float:
 
 def _loop_count(n: Any, length: int) -> int:
     """How many of ``i = 0, 1, ...`` pass ``i < n``, at most ``length`` of them."""
-    try:
-        v = float(n)
-    except (TypeError, ValueError):
-        return 0
+    v = _js_number(n)
     if not v > 0:
         return 0
     if v >= length:
@@ -277,43 +270,15 @@ def _js_number(v: Any) -> float:
         return _js_number(_js_string(v))
     if not isinstance(v, str):
         return math.nan
-    s = v.strip(_JS_SPACE)
-    if not s:
-        return 0.0
-    if s in ('Infinity', '+Infinity'):
-        return math.inf
-    if s == '-Infinity':
-        return -math.inf
-    head = s[:2].lower()
-    base = {'0x': 16, '0o': 8, '0b': 2}.get(head)
-    if base:
-        digits = s[2:]
-        try:
-            return float(int(digits, base)) if digits and digits.isalnum() else math.nan
-        except (ValueError, OverflowError):
-            return math.inf if digits and digits.isalnum() and _all_digits(digits, base) else math.nan
-    import re  # pylint: disable=import-outside-toplevel
-    if re.fullmatch(r'[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?', s):
-        return float(s)
-    return math.nan
-
-
-def _all_digits(text: str, base: int) -> bool:
-    try:
-        int(text, base)
-        return True
-    except ValueError:
-        return False
+    from ..io.csv import js_to_number  # pylint: disable=import-outside-toplevel
+    return js_to_number(v)
 
 
 def _js_slice_end(most: Any, length: int) -> int:
     """Where ``array.slice(0, most)`` stops."""
     if most is None:
         return length
-    try:
-        v = float(most)
-    except (TypeError, ValueError):
-        v = _js_number(most)
+    v = _js_number(most)
     if v != v:
         return 0
     if v == math.inf:

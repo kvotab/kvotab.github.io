@@ -160,7 +160,7 @@ end
 function percentiles_for(list)
     want = Set{Float64}([0.5])
     for p in (list isa Union{AbstractVector,Tuple} ? list : PROB_QUANTILES)
-        v = p isa Real ? Float64(p) : py_float(p)
+        v = _pd_to_number(p)   # `Number(p)`
         (isfinite(v) && 0 < v < 1) && push!(want, v)
     end
     return sort!(collect(want))
@@ -413,7 +413,7 @@ end
 
 """How many of `i = 0, 1, ...` pass `i < n`, at most `len` of them."""
 function _sn_loop_count(n, len::Int)
-    v = Float64(n)
+    v = _pd_to_number(n)   # `i < n` compares by `Number(n)`
     v > 0 || return 0
     v >= len && return len
     return Int(ceil(v))

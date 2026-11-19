@@ -58,60 +58,10 @@ Json simulation_defaults() {
     });
 }
 
-std::optional<double> py_float(const Json& v) {
-    if (v.is_bool()) return v.as_bool() ? 1.0 : 0.0;
-    if (v.is_number()) return v.as_double();
-    if (!v.is_string()) return std::nullopt;
-    std::string s(js_trim(v.as_string()));
-    {
-        std::string low = lowercase(s);
-        std::string_view body = low;
-        bool negative = false;
-        if (!body.empty() && (body[0] == '+' || body[0] == '-')) {
-            negative = body[0] == '-';
-            body.remove_prefix(1);
-        }
-        if (body == "nan") return std::numeric_limits<double>::quiet_NaN();
-        if (body == "inf" || body == "infinity")
-            return negative ? -std::numeric_limits<double>::infinity() : std::numeric_limits<double>::infinity();
-    }
-    // [+-] digits[.digits] | .digits, an optional exponent; an underscore may stand
-    // between two digits.
-    std::string clean;
-    std::size_t k = 0, n = s.size();
-    auto digits = [&]() {
-        std::size_t count = 0;
-        while (k < n) {
-            if (s[k] >= '0' && s[k] <= '9') {
-                clean.push_back(s[k++]);
-                count++;
-            } else if (s[k] == '_' && count > 0 && k + 1 < n && s[k + 1] >= '0' && s[k + 1] <= '9') {
-                k++;
-            } else {
-                break;
-            }
-        }
-        return count;
-    };
-    if (k < n && (s[k] == '+' || s[k] == '-')) clean.push_back(s[k++]);
-    std::size_t whole = digits(), frac = 0;
-    if (k < n && s[k] == '.') {
-        clean.push_back(s[k++]);
-        frac = digits();
-    }
-    if (whole == 0 && frac == 0) return std::nullopt;
-    if (k < n && (s[k] == 'e' || s[k] == 'E')) {
-        clean.push_back(s[k++]);
-        if (k < n && (s[k] == '+' || s[k] == '-')) clean.push_back(s[k++]);
-        if (digits() == 0) return std::nullopt;
-    }
-    if (k != n) return std::nullopt;
-    return std::strtod(clean.c_str(), nullptr);
-}
-
 int shorthand_points(const Json& count) {
-    std::optional<double> v = py_float(count);
-    if (v && 2 <= *v && *v <= MAX_OUTPUT_POINTS) return static_cast<int>(std::floor(*v + 0.5));
+    // As the application's comparisons read the count: with `Number()` ("0x10" is 16).
+    const double v = js_number_of(count);
+    if (2 <= v && v <= MAX_OUTPUT_POINTS) return static_cast<int>(std::floor(v + 0.5));
     return 250;
 }
 

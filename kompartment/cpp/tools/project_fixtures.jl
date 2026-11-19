@@ -104,6 +104,30 @@ with(m -> (m["simulation"] = K.JDict("startTime" => 1, "endTime" => 50, "outputP
 with(m -> (m["simulation"]["max_order"] = 3; m["simulation"]["min_order"] = "2"; m["simulation"]["max_step"] = ""), "orders")
 with(m -> (m["simulation"]["time_unit"] = "day"), "days")
 with(m -> (m["decay_unit"] = "mol"), "mol")
+# A far-field path's settings, read as the application reads them, with `Number()`: blank is 0,
+# a setting not there NaN, hex a number, `1_000` none, a list what its text reads as.
+let ff = models["farfield"]
+    for (tag, key, v) in (("blank n_f", "n_f", ""), ("n_f in hex", "n_f", "0x10"), ("n_f 1_000", "n_f", "1_000"),
+                          ("n_f a list", "n_f", Any[20]), ("no n_m", "n_m", missing), ("n_m null", "n_m", nothing),
+                          ("o_b as text", "o_b", " 4 "), ("o_b true", "o_b", true), ("a first layer of a space", "pen_dep_0", "\u00a0"),
+                          ("a first layer too thick", "pen_dep_0", "1"), ("de_m negative", "de_m", "-1e-5"),
+                          ("de_m in hex", "de_m", "-0x1"))
+        m = K.jcopy(ff)
+        f = m["farfields"][1]
+        v === missing ? delete!(f, key) : (f[key] = v)
+        record("far field, $tag", m)
+    end
+end
+# A percentile left out is the 0th, as `null >= 0` holds in JavaScript.
+let m = K.jcopy(models["post-processing"])
+    m["index_reductions"][1]["operation"] = "percentile"
+    delete!(m["index_reductions"][1], "percentile")
+    record("a percentile left out", m)
+    m = K.jcopy(models["post-processing"])
+    m["index_reductions"][1]["operation"] = "percentile"
+    m["index_reductions"][1]["percentile"] = "abc"
+    record("a percentile that is no number", m)
+end
 # Text with white space at an end, trimmed as JavaScript trims it: a byte-order mark and the line
 # separator are white space there, U+0085 and U+001C are not.
 for (tag, c) in (("a byte-order mark", "\ufeff"), ("a line separator", "\u2028"), ("U+0085", "\u0085"), ("U+001C", "\x1c"))

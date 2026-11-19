@@ -1175,9 +1175,11 @@ function validate!(p::Project)
         o["operation"] in OPERATIONS ||
             throw(ValidationError("'$(js_text(o["operation"]))' is not a reduction ($(join(OPERATIONS, ", ")))", o["qname"]))
         if o["operation"] == "percentile"
+            # `!(p >= 0 && p <= 100)`, where JavaScript compares null as 0: a percentile left out
+            # is the 0th, the least.
             pc = get(o, "percentile", nothing)
-            (pc !== nothing && 0 <= pc <= 100) ||
-                throw(ValidationError("A percentile must be between 0 and 100; '$(py_text(pc))' is not", o["qname"]))
+            (0 <= something(pc, 0) <= 100) ||
+                throw(ValidationError("A percentile must be between 0 and 100; '$(js_text(pc))' is not", o["qname"]))
         end
         js_truthy(get(o, "target", nothing)) || throw(ValidationError("An index operation needs a block to reduce", o["qname"]))
     end
@@ -1229,7 +1231,7 @@ function validate!(p::Project)
         throw(ValidationError("$(js_text(points)) output points is more than this can report ($MAX_OUTPUT_POINTS)."))
     for (key, label) in (("rtol", "Relative"), ("abstol", "Absolute"))
         v = js_number_of(get(sim, key, nothing))
-        v > 0 || throw(ValidationError("$label tolerance must be greater than zero (got $(py_text(get(sim, key, nothing))))"))
+        v > 0 || throw(ValidationError("$label tolerance must be greater than zero (got $(js_text(get(sim, key, nothing))))"))
     end
     return p
 end

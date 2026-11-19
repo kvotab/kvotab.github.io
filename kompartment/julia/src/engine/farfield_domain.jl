@@ -42,38 +42,14 @@ const ROCK_TERM = Dict(
     "rho_m" => "The dry bulk density of the rock matrix ρ_m",
 )
 
-"""
-    py_float(v) -> Float64
+"""A setting left empty, which asks for it to be worked out (`isEmpty`): null, not there, or blank."""
+_farf_empty(v) = v === nothing || v === _PD_MISSING || (v isa AbstractString && isempty(js_trim(v)))
 
-Python's `float(v)` where it succeeds, NaN where it raises: what the far-field
-checks read a setting as (an empty string is NaN, not 0).
-"""
-py_float(v::Bool) = v ? 1.0 : 0.0
-py_float(v::Real) = Float64(v)
-const _PY_DECIMAL = r"^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?\z"
-function py_float(v::AbstractString)
-    s = strip(v)
-    isempty(s) && return NaN
-    low = lowercase(s)
-    low in ("inf", "+inf", "infinity", "+infinity") && return Inf
-    low in ("-inf", "-infinity") && return -Inf
-    low in ("nan", "+nan", "-nan") && return NaN
-    t = replace(s, '_' => "")
-    # A decimal and nothing else: Julia's parser also reads hexadecimal
-    # (`0x1p3`), which Python's float() refuses.
-    occursin(_PY_DECIMAL, t) || return NaN
-    x = tryparse(Float64, t)
-    x === nothing || return x
-    # Out of a double's range, where Julia's parser refuses what Python rounds:
-    # to the infinities, or to zero.
-    return setprecision(BigFloat, 4096) do
-        Float64(parse(BigFloat, t))
-    end
-end
-py_float(v) = NaN
+"""`Number.isInteger(v)`."""
+_farf_whole(v::Float64) = isfinite(v) && isinteger(v)
 
-_farf_empty(v) = v === nothing || (v isa AbstractString && isempty(js_trim(v)))
-_is_whole(v) = (f = py_float(v); isfinite(f) && isinteger(f))
+"""`Number(block.key)`: null and blank text 0, a setting not there NaN, text by JavaScript's grammar."""
+_farf_number(block, key::String) = _pd_to_number(_pd_prop(block, key))
 
 """Whether a path is worked out on cells, which is what gives it states."""
 function uses_cells(block)
@@ -99,9 +75,9 @@ end
 
 """How many cells of rock past the release point the semi-infinite outlet needs."""
 function auto_extra_cells(nf, pe)
-    n = py_float(nf)
-    p = py_float(pe)
-    (isfinite(n) && isinteger(n)) && n >= 1 || return 0
+    n = _pd_to_number(nf)
+    p = _pd_to_number(pe)
+    _farf_whole(n) && n >= 1 || return 0
     (p > 0 && isfinite(p)) || (p = 10.0)
     rho = (2 * n - p) / (2 * n + p)
     rho > 0 || return 0
@@ -116,19 +92,19 @@ end
 
 """The extra cells past the release point."""
 function extra_cells(block)
-    nb = jget(block, "n_b")
+    nb = _pd_prop(block, "n_b")
     if _farf_empty(nb)
-        return py_float(jget(block, "o_b")) == CONTINUES ? auto_extra_cells(jget(block, "n_f"), jget(block, "pe")) : 0
+        return _farf_number(block, "o_b") == CONTINUES ? auto_extra_cells(_pd_prop(block, "n_f"), _pd_prop(block, "pe")) : 0
     end
-    return Int(py_float(nb))
+    return Int(_pd_to_number(nb))
 end
 
 """The structure the cells are built on: the semi-infinite outlet as extra
 cells closed by linear extrapolation (`effectiveStructure`)."""
 function effective_structure(block)
-    ob = py_float(jget(block, "o_b"))
-    nf = Int(py_float(jget(block, "n_f")))
-    nm = Int(py_float(jget(block, "n_m")))
+    ob = _farf_number(block, "o_b")
+    nf = Int(_farf_number(block, "n_f"))
+    nm = Int(_farf_number(block, "n_m"))
     nb = extra_cells(block)
     if ob == CONTINUES
         return (n_f=nf, n_m=nm, o_b=2, n_b=nb, downstream=true)
@@ -175,15 +151,15 @@ function structure_problem(g)
         return (v === nothing || v == "" || v in SURFACES) ? nothing : "surface must be one of $(join(SURFACES, ", "))"
     end
     function whole(key, least)
-        v = jget(g, key)
-        _is_whole(v) || return "$key must be a whole number"
-        py_float(v) < least && return "$key must be at least $least"
+        v = _farf_number(g, key)
+        _farf_whole(v) || return "$key must be a whole number"
+        v < least && return "$key must be at least $least"
         return nothing
     end
-    for problem in (whole("n_f", 1), whole("n_m", 2), _farf_empty(jget(g, "n_b")) ? nothing : whole("n_b", 0))
+    for problem in (whole("n_f", 1), whole("n_m", 2), _farf_empty(_pd_prop(g, "n_b")) ? nothing : whole("n_b", 0))
         problem !== nothing && return problem
     end
-    ob = py_float(jget(g, "o_b"))
+    ob = _farf_number(g, "o_b")
     ob in OUTFLOWS || return "o_b must be one of $(join(OUTFLOWS, ", "))"
     for (key, allowed) in (("method", FARF_METHODS), ("grid", GRIDS), ("surface", SURFACES))
         v = jget(g, key)
@@ -202,21 +178,21 @@ end
 
 """The penetration-depth check ahead of a run, when the depths are numbers."""
 function geometry_problem(block)
-    nm = py_float(jget(block, "n_m"))
-    pen_dep = py_float(jget(block, "pen_dep"))
-    raw_first = jget(block, "pen_dep_0")
-    first = (raw_first == "" || raw_first === nothing) ? nothing : py_float(raw_first)
+    nm = _farf_number(block, "n_m")
+    pen_dep = _farf_number(block, "pen_dep")
+    raw_first = _pd_prop(block, "pen_dep_0")
+    first = (raw_first == "" || raw_first === nothing || raw_first === _PD_MISSING) ? nothing : _pd_to_number(raw_first)
     if is_semi_analytic(block)
         return isfinite(pen_dep) && !(pen_dep > 0) ? "the penetration depth must be a positive length" : nothing
     end
-    (!isfinite(pen_dep) || !(isfinite(nm) && isinteger(nm))) && return nothing
+    (!isfinite(pen_dep) || !_farf_whole(nm)) && return nothing
     pen_dep > 0 || return "the penetration depth must be a positive length"
     (first === nothing || !isfinite(first)) && return nothing
     first > 0 || return "the first matrix layer must be a positive length"
     if first * nm > pen_dep * (1 + 1e-12)
-        return "$(Int(nm)) matrix layers starting at $(py_repr(first)) m cannot add up to a penetration depth of " *
-               "$(py_repr(pen_dep)) m: the layers grow with depth, so the first must be smaller than " *
-               "$(py_repr(pen_dep / nm)) m"
+        return "$(js_number(nm)) matrix layers starting at $(js_number(first)) m cannot add up to a penetration depth of " *
+               "$(js_number(pen_dep)) m: the layers grow with depth, so the first must be smaller than " *
+               "$(js_number(pen_dep / nm)) m"
     end
     return nothing
 end
@@ -229,8 +205,8 @@ function rock_problem(block)
         holder isa AbstractDict || continue
         for key in ROCK_KEYS
             v = get(holder, key, nothing)
-            (v === nothing || isempty(js_trim(js_str(v)))) && continue
-            n = py_float(v)
+            (v === nothing || isempty(js_trim(_pd_js_str(v)))) && continue
+            n = _pd_to_number(v)
             (!isfinite(n) || n >= 0) && continue
             at = holder === block ? "" :
                  " at " * join((js_text(x) for x in values(something(get(holder, "index", nothing), JDict()))), ", ")

@@ -170,14 +170,8 @@ end
     return copysign(Inf, a) * copysign(1.0, b)
 end
 
-"""A number as the Python engine's messages write it (`_num_text`: JavaScript's integers, Python's repr)."""
-function _num_text(x::Real)
-    f = Float64(x)
-    isnan(f) && return "NaN"
-    isinf(f) && return f > 0 ? "Infinity" : "-Infinity"
-    (isinteger(f) && abs(f) < 1e21) && return string(BigInt(f))
-    return py_repr(f)
-end
+"""A number as JavaScript's `String()` writes it, for messages."""
+_num_text(x::Real) = js_text(Float64(x))
 
 # --- errors ----------------------------------------------------------------------------------
 
@@ -280,18 +274,18 @@ end
 adding up to the penetration depth; `first` NaN where it is to be worked out."""
 function layer_depths!(d::AbstractVector{Float64}, pen_dep::Float64, nm::Int, aw::Float64, first::Float64)
     (pen_dep > 0 && isfinite(pen_dep)) ||
-        throw(FarfError("The penetration depth must be a positive length (got $(py_repr(pen_dep)))"))
+        throw(FarfError("The penetration depth must be a positive length (got $(_num_text(pen_dep)))"))
     (aw > 0 && isfinite(aw)) ||
-        throw(FarfError("F/TW must be positive: it is the flow-wetted surface per unit volume of water (got $(py_repr(aw)))"))
+        throw(FarfError("F/TW must be positive: it is the flow-wetted surface per unit volume of water (got $(_num_text(aw)))"))
     d0 = first
     if !isfinite(d0) || !(d0 > 0)
         E = 2.718281828459045
         d0 = zeroin(_GeoSeries(nm, pen_dep), 1e-12 / E, 2 / aw / E) * E
     end
     if d0 * nm > pen_dep * (1 + 1e-12)
-        throw(FarfError("$nm matrix layers starting at $(py_repr(d0)) m cannot add up to a penetration depth of " *
-                        "$(py_repr(pen_dep)) m: the layers grow with depth, so the first must be smaller than " *
-                        "$(py_repr(pen_dep / nm)) m. Use a thinner first layer, fewer layers, a greater depth, or leave " *
+        throw(FarfError("$nm matrix layers starting at $(_num_text(d0)) m cannot add up to a penetration depth of " *
+                        "$(_num_text(pen_dep)) m: the layers grow with depth, so the first must be smaller than " *
+                        "$(_num_text(pen_dep / nm)) m. Use a thinner first layer, fewer layers, a greater depth, or leave " *
                         "the first layer empty to have it worked out."))
     end
     total = _PowerSeries(d0, nm, pen_dep)
@@ -699,8 +693,8 @@ function _slot_rates!(F::FarfPath, s::FarfSetting, slot::Int, o::Int, ref_ready:
     rock === nothing || throw(FarfError(rock))
     r_m = s.eps_m + s.rho_m * s.kd_m
     if !(r_m > 0 && isfinite(r_m))
-        throw(FarfError("The matrix capacity eps + rho*Kd must be greater than zero (got $(py_repr(s.eps_m)) + " *
-                        "$(py_repr(s.rho_m))*$(py_repr(s.kd_m)) = $(py_repr(r_m))). A rock with no porosity and no " *
+        throw(FarfError("The matrix capacity eps + rho*Kd must be greater than zero (got $(_num_text(s.eps_m)) + " *
+                        "$(_num_text(s.rho_m))*$(_num_text(s.kd_m)) = $(_num_text(r_m))). A rock with no porosity and no " *
                         "sorption has nothing for the nuclide to diffuse into."))
     end
     f_df = 1 / (1 + s.kd_f * aw)

@@ -7,6 +7,7 @@
 #include <unordered_set>
 
 #include "engine/farfield_domain.hpp"
+#include "stats/pdf.hpp"
 #include "util/jsnum.hpp"
 
 namespace kompartment {
@@ -15,7 +16,8 @@ namespace {
 const double NaN = std::numeric_limits<double>::quiet_NaN();
 bool is_period_kind(const std::string& k) { return k == "period_mean" || k == "period_sum" || k == "period_change" || k == "period_rate"; }
 std::string text_of(const Json& v) { return v.is_null() ? std::string() : std::string(js_trim(js_str(v))); }
-double number_or_nan(const Json& v) { return v.is_null() ? NaN : py_float_nan(v); }
+/// `Number(d.key)`: null 0, a value not there NaN.
+double given_number(const Json& d, const char* key) { return pd_to_number(pd_prop(d, key)); }
 
 std::vector<double> by_period(const std::string& kind, const std::vector<double>& t, const std::vector<double>& values, std::size_t n, double period) {
     std::vector<double> out(n, NaN);
@@ -159,8 +161,8 @@ std::vector<Json> derived_outputs(const Project& project, const std::vector<Json
             Json o = Json::object({
                 {"kind", Json("derived")}, {"source", Json("D")}, {"block", Json(name)}, {"label", Json(name)},
                 {"unit", Json(derived_unit(kind, src == by_label.end() ? Json() : src->second.get("unit"), time_unit))},
-                {"derived", Json::object({{"kind", Json(kind)}, {"of", d.get("of")}, {"at", Json(number_or_nan(d.get("at")))},
-                                          {"period", Json(number_or_nan(d.get("period")))}})},
+                {"derived", Json::object({{"kind", Json(kind)}, {"of", d.get("of")}, {"at", Json(given_number(d, "at"))},
+                                          {"period", Json(given_number(d, "period"))}})},
                 {"dims", Json::array()}, {"index", Json()}});
             if (!is_series_kind(kind)) o.set("timeDependent", Json(false));
             out.push_back(o);

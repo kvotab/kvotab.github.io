@@ -222,8 +222,8 @@ double kf_transport_point(const double* args, std::size_t count) {
     double x = args[count - 1];
     long n = static_cast<long>(count) - 1;
     if (std::isnan(x)) return std::numeric_limits<double>::quiet_NaN();
-    if (x < 0) throw TransportRangeError("transport operation: the position " + py_repr(x) + " is lower than zero");
-    if (x > 1) throw TransportRangeError("transport operation: the position " + py_repr(x) + " is higher than one");
+    if (x < 0) throw TransportRangeError("transport operation: the position " + js_number(x) + " is lower than zero");
+    if (x > 1) throw TransportRangeError("transport operation: the position " + js_number(x) + " is higher than one");
     long at = x == 1 ? n - 1 : static_cast<long>(std::trunc(x * static_cast<double>(n)));
     return args[at];
 }
@@ -233,8 +233,8 @@ double kf_transport_range(const double* args, std::size_t count, bool mean) {
     double a = args[n], b = args[n + 1];
     if (std::isnan(a) || std::isnan(b)) return std::numeric_limits<double>::quiet_NaN();
     if (a > b) std::swap(a, b);
-    if (a < 0) throw TransportRangeError("transport operation: the range starts at " + py_repr(a) + ", which is lower than zero");
-    if (b > 1) throw TransportRangeError("transport operation: the range ends at " + py_repr(b) + ", which is higher than one");
+    if (a < 0) throw TransportRangeError("transport operation: the range starts at " + js_number(a) + ", which is lower than zero");
+    if (b > 1) throw TransportRangeError("transport operation: the range ends at " + js_number(b) + ", which is higher than one");
     double total = 0.0;
     if (a == 0 && b == 1) {
         for (long e = 0; e < n; e++) total += args[e];

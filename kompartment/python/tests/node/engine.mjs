@@ -38,6 +38,9 @@
 //   design   { model, opts: [...] }    -> designFor(project, system, o) for each o of opts: what kind
 //                                        of design it is (tornado, the sensitivity method, or a
 //                                        sample) and its runs; or the refusal
+//   farfield_checks { blocks: [...] }  -> structureProblem, geometryProblem, rockProblem,
+//                                        dispersionWarning and extraCells of each far-field
+//                                        block (an error's message where one throws)
 //   partition { model }                -> partitionOf(system): ok, refusal, count, of, sizes, largest
 //   plan     { model, opts: [...] }    -> stateKeys, stateMaterials and splitJobs of the built system,
 //                                        planSplit(system, project, o) for each o of opts (with
@@ -414,6 +417,26 @@ switch (req.task) {
 	}
 	case 'layer_depths': {
 		out = req.cases.map(([penDep, nm, aw, first]) => Array.from(layerDepths(penDep, nm, aw, first)));
+		break;
+	}
+	case 'farfield_checks': {
+		const said = (f) => {
+			try {
+				const v = f();
+				return typeof v === 'number' && !Number.isFinite(v) ? String(v) : v;
+			} catch (e) {
+				return { error: e.message };
+			}
+		};
+		out = {
+			checks: req.blocks.map((b) => ({
+				structure: said(() => farf.structureProblem(b)),
+				geometry: said(() => farf.geometryProblem(b)),
+				rock: said(() => farf.rockProblem(b)),
+				dispersion: said(() => farf.dispersionWarning(b)),
+				extra: said(() => farf.extraCells(b)),
+			})),
+		};
 		break;
 	}
 	case 'farfield_grids': {

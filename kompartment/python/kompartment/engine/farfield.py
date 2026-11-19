@@ -20,7 +20,8 @@ import numpy as np
 
 from ..io.csv import JS_WHITESPACE
 from ..jsonio import js_text
-from ..stats.pdf import _to_precision
+from ..jsonio import js_number
+from ..stats.pdf import _MISSING, _js_str, _prop, _to_number, _to_precision
 
 
 class FarfError(ValueError):
@@ -135,9 +136,10 @@ def layer_depths(pen_dep: float, nm: int, aw: float, first: Optional[float] = No
     """The rock matrix's layer thicknesses in metres: a geometric series adding
     up to the penetration depth (``get_d``)."""
     if not (pen_dep > 0) or not math.isfinite(pen_dep):
-        raise FarfError(f'The penetration depth must be a positive length (got {pen_dep})')
+        raise FarfError(f'The penetration depth must be a positive length (got {_num_text(pen_dep)})')
     if not (aw > 0) or not math.isfinite(aw):
-        raise FarfError(f'F/TW must be positive: it is the flow-wetted surface per unit volume of water (got {aw})')
+        raise FarfError('F/TW must be positive: it is the flow-wetted surface per unit volume of water '
+                        f'(got {_num_text(aw)})')
     d0 = first
     if d0 is None or not math.isfinite(d0) or d0 <= 0:
         def geo(x: float) -> float:
@@ -149,9 +151,10 @@ def layer_depths(pen_dep: float, nm: int, aw: float, first: Optional[float] = No
         d0 = zeroin(geo, 1e-12 / E, 2 / aw / E) * E
     if d0 * nm > pen_dep * (1 + 1e-12):
         raise FarfError(
-            f'{nm} matrix layers starting at {d0} m cannot add up to a penetration depth of {pen_dep} m: the '
-            f'layers grow with depth, so the first must be smaller than {pen_dep / nm} m. Use a thinner first '
-            'layer, fewer layers, a greater depth, or leave the first layer empty to have it worked out.')
+            f'{nm} matrix layers starting at {_num_text(d0)} m cannot add up to a penetration depth of '
+            f'{_num_text(pen_dep)} m: the layers grow with depth, so the first must be smaller than '
+            f'{_num_text(pen_dep / nm)} m. Use a thinner first layer, fewer layers, a greater depth, or leave the '
+            'first layer empty to have it worked out.')
 
     def total(q: float) -> float:
         s = 0.0
@@ -309,13 +312,7 @@ def matched_grid(pen_dep: float, nm: int, first: Optional[float], aw: float, tw:
 
 def _num_text(x: float) -> str:
     """A number as JavaScript's String() writes it, for messages."""
-    if x != x:
-        return 'NaN'
-    if math.isinf(x):
-        return 'Infinity' if x > 0 else '-Infinity'
-    if float(x).is_integer() and abs(x) < 1e21:
-        return str(int(x))
-    return repr(float(x))
+    return js_text(float(x))
 
 
 #: How much matched layers may grow from one to the next before they are said to be coarse at
@@ -436,9 +433,9 @@ def coefficients(s: Dict[str, Any], grid: Optional[Dict[str, Any]] = None) -> Di
     r_m = s['eps_m'] + s['rho_m'] * s['kd_m']
     if not (r_m > 0) or not math.isfinite(r_m):
         raise FarfError(
-            f"The matrix capacity eps + rho*Kd must be greater than zero (got {s['eps_m']} + {s['rho_m']}*"
-            f"{s['kd_m']} = {r_m}). A rock with no porosity and no sorption has nothing for the nuclide to "
-            'diffuse into.')
+            f"The matrix capacity eps + rho*Kd must be greater than zero (got {_num_text(s['eps_m'])} + "
+            f"{_num_text(s['rho_m'])}*{_num_text(s['kd_m'])} = {_num_text(r_m)}). A rock with no porosity and no "
+            'sorption has nothing for the nuclide to diffuse into.')
     f_df = 1 / (1 + s['kd_f'] * aw)
     adv_f = (f_df * nf) / s['tw']
     d_f = max(0.0, adv_f * (nf / s['pe'] - 0.5))
@@ -523,7 +520,7 @@ def auto_extra_cells(nf: Any, pe: Any) -> int:
     multiplication; a Peclet number that is not a number is taken as 10."""
     n = _num(nf)
     p = _num(pe)
-    if not (math.isfinite(n) and n.is_integer()) or n < 1:
+    if not _whole(n) or n < 1:
         return 0
     if not (p > 0) or not math.isfinite(p):
         p = 10.0
@@ -539,15 +536,16 @@ def auto_extra_cells(nf: Any, pe: Any) -> int:
 
 
 def _empty(v: Any) -> bool:
-    return v is None or (isinstance(v, str) and v.strip(JS_WHITESPACE) == '')
+    return v is None or v is _MISSING or (isinstance(v, str) and v.strip(JS_WHITESPACE) == '')
 
 
 def extra_cells(block: Dict[str, Any]) -> int:
     """The extra cells past the release point: the count given, or, left empty,
     none -- unless the outlet is the semi-infinite rock, which works it out."""
-    nb = block.get('n_b')
+    nb = _prop(block, 'n_b')
     if _empty(nb):
-        return auto_extra_cells(block.get('n_f'), block.get('pe')) if _num(block.get('o_b')) == CONTINUES else 0
+        continues = _num(_prop(block, 'o_b')) == CONTINUES
+        return auto_extra_cells(_prop(block, 'n_f'), _prop(block, 'pe')) if continues else 0
     return int(_num(nb))
 
 
@@ -555,9 +553,9 @@ def effective_structure(block: Dict[str, Any]) -> Dict[str, Any]:
     """The structure the cells are built on (``effectiveStructure``): the
     semi-infinite outlet as extra cells closed by linear extrapolation, which
     stand for rock downstream. Idempotent."""
-    ob = _num(block.get('o_b'))
-    nf = int(_num(block.get('n_f')))
-    nm = int(_num(block.get('n_m')))
+    ob = _num(_prop(block, 'o_b'))
+    nf = int(_num(_prop(block, 'n_f')))
+    nm = int(_num(_prop(block, 'n_m')))
     nb = extra_cells(block)
     if ob == CONTINUES:
         return {'n_f': nf, 'n_m': nm, 'o_b': 2, 'n_b': nb, 'downstream': True}
@@ -726,14 +724,6 @@ def release_weights(g: Dict[str, Any], c: Dict[str, Any], out: np.ndarray) -> np
     return out
 
 
-def _is_whole(v: Any) -> bool:
-    try:
-        f = float(v)
-    except (TypeError, ValueError):
-        return False
-    return math.isfinite(f) and f.is_integer()
-
-
 def structure_problem(g: Dict[str, Any]) -> Optional[str]:
     """What is wrong with a path's cell counts and outflow condition, or ``None``."""
     # A semi-analytical path has no cells: the counts and the outlet are the
@@ -742,20 +732,17 @@ def structure_problem(g: Dict[str, Any]) -> Optional[str]:
         v = g.get('surface')
         return None if v is None or v == '' or v in SURFACES else f"surface must be one of {', '.join(SURFACES)}"
     def whole(key: str, least: int) -> Optional[str]:
-        v = g.get(key)
-        if not _is_whole(v):
+        v = _num(_prop(g, key))
+        if not _whole(v):
             return f'{key} must be a whole number'
-        if float(v) < least:
+        if v < least:
             return f'{key} must be at least {least}'
         return None
 
-    for problem in (whole('n_f', 1), whole('n_m', 2), None if _empty(g.get('n_b')) else whole('n_b', 0)):
+    for problem in (whole('n_f', 1), whole('n_m', 2), None if _empty(_prop(g, 'n_b')) else whole('n_b', 0)):
         if problem:
             return problem
-    try:
-        ob = float(g.get('o_b'))
-    except (TypeError, ValueError):
-        ob = math.nan
+    ob = _num(_prop(g, 'o_b'))
     if ob not in OUTFLOWS:
         return f"o_b must be one of {', '.join(map(str, OUTFLOWS))}"
     for key, allowed in (('method', FARF_METHODS), ('grid', GRIDS), ('surface', SURFACES)):
@@ -776,23 +763,29 @@ def structure_problem(g: Dict[str, Any]) -> Optional[str]:
 
 
 def _num(v: Any) -> float:
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return math.nan
+    """``Number(v)``, as the application reads a setting: null and blank text are
+    0, a setting that is not there (``_MISSING``, from :func:`_prop`) NaN, text
+    by JavaScript's grammar (``0x10`` is 16; ``1_000`` and ``inf`` are NaN), a
+    list what its text reads as."""
+    return _to_number(v)
+
+
+def _whole(v: float) -> bool:
+    """``Number.isInteger(v)``."""
+    return math.isfinite(v) and v == math.floor(v)
 
 
 def geometry_problem(block: Dict[str, Any]) -> Optional[str]:
     """The penetration-depth check ahead of a run, when the depths are numbers."""
-    nm = _num(block.get('n_m'))
-    pen_dep = _num(block.get('pen_dep'))
-    raw_first = block.get('pen_dep_0')
-    first = None if raw_first == '' or raw_first is None else _num(raw_first)
+    nm = _num(_prop(block, 'n_m'))
+    pen_dep = _num(_prop(block, 'pen_dep'))
+    raw_first = _prop(block, 'pen_dep_0')
+    first = None if raw_first == '' or raw_first is None or raw_first is _MISSING else _num(raw_first)
     # Without layers the depth is the only geometry: the rock's own thickness.
     if is_semi_analytic(block):
         return 'the penetration depth must be a positive length' if math.isfinite(pen_dep) and not (pen_dep > 0) \
             else None
-    if not math.isfinite(pen_dep) or not (math.isfinite(nm) and float(nm).is_integer()):
+    if not math.isfinite(pen_dep) or not _whole(nm):
         return None
     if not (pen_dep > 0):
         return 'the penetration depth must be a positive length'
@@ -801,8 +794,9 @@ def geometry_problem(block: Dict[str, Any]) -> Optional[str]:
     if not (first > 0):
         return 'the first matrix layer must be a positive length'
     if first * nm > pen_dep * (1 + 1e-12):
-        return (f'{int(nm)} matrix layers starting at {first} m cannot add up to a penetration depth of {pen_dep} '
-                f'm: the layers grow with depth, so the first must be smaller than {pen_dep / nm} m')
+        return (f'{js_number(nm)} matrix layers starting at {js_number(first)} m cannot add up to a penetration '
+                f'depth of {js_number(pen_dep)} m: the layers grow with depth, so the first must be smaller than '
+                f'{js_number(pen_dep / nm)} m')
     return None
 
 
@@ -816,7 +810,7 @@ def rock_problem(block: Dict[str, Any]) -> Optional[str]:
             continue
         for key in ROCK_KEYS:
             v = holder.get(key)
-            if v is None or str(v).strip(JS_WHITESPACE) == '':
+            if v is None or _js_str(v).strip(JS_WHITESPACE) == '':
                 continue
             n = _num(v)
             if not math.isfinite(n) or n >= 0:
@@ -832,9 +826,9 @@ def dispersion_warning(g: Dict[str, Any]) -> Optional[str]:
     # Worked out exactly, the path disperses as its Peclet number says.
     if is_semi_analytic(g):
         return None
-    nf = _num(g.get('n_f'))
-    pe = _num(g.get('pe'))
-    if not (math.isfinite(nf) and nf.is_integer()) or nf < 1:
+    nf = _num(_prop(g, 'n_f'))
+    pe = _num(_prop(g, 'pe'))
+    if not _whole(nf) or nf < 1:
         return None
     if not math.isfinite(pe) or not (pe > 0):
         return None
@@ -842,11 +836,12 @@ def dispersion_warning(g: Dict[str, Any]) -> Optional[str]:
     if own >= pe:
         return None
     need = math.ceil(pe / 2)
-    n = int(nf)
-    return (f"{n} fracture cell{'' if n == 1 else 's'} disperse{'s' if n == 1 else ''} as a Peclet number of "
-            f'{int(own)} would, and {pe:g} was asked for: a coarser grid spreads a front more, and the correction '
-            'that would sharpen it back up cannot be negative, so none is applied and the path is more dispersive '
-            f"than the setting says. {need} cell{'' if need == 1 else 's'} (Pe/2) is the fewest that reaches Pe {pe:g}")
+    # In the application's words, its numbers as it writes them.
+    return (f"{js_number(nf)} fracture cell{'' if nf == 1 else 's'} disperse{'s' if nf == 1 else ''} as a Peclet "
+            f'number of {js_number(own)} would, and {js_number(pe)} was asked for: a coarser grid spreads a front '
+            'more, and the correction that would sharpen it back up cannot be negative — so none is applied and '
+            f"the path is more dispersive than the setting says. {need} cell{'' if need == 1 else 's'} (Pe/2) is "
+            f'the fewest that reaches Pe {js_number(pe)}')
 
 
 def cell_names(g: Dict[str, Any]) -> List[str]:

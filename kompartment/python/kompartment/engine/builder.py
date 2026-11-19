@@ -1109,7 +1109,7 @@ class _Builder:
         args: List[Node] = [Ref(target, {over: idx}) for idx in names]
         shown = [f'{target}[{idx}]' for idx in names]
         if op == 'percentile':
-            args.insert(0, Num(float(a.block.get('percentile'))))
+            args.insert(0, Num(js_to_number(a.block.get('percentile'))))  # `Number(...)`: none is the 0th
             shown.insert(0, _js_str(a.block.get('percentile')))
         return {'ast': Call(fn, args), 'text': f"{fn}({', '.join(shown)})", 'over': over}
 

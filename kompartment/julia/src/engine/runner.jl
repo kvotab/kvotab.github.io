@@ -55,7 +55,7 @@ function absolute_tolerance(project::Project, sys::System)
         for off in 0:s.width-1
             v = value_at(s.block, "abstol", tuple_by_list(sys.builder.space, s.dims, off))
             (v === nothing || v == "") && continue
-            n = py_float(v)
+            n = _pd_to_number(v)   # `Number(v)`
             (isfinite(n) && n > 0) || continue
             per_state[s.base+off+1] = n
             asked = true
@@ -315,7 +315,7 @@ function run_project(project::Project; system::Union{Nothing,System}=nothing, on
         jumped[] += length(due)
         return nxt
     end
-    min_change = py_float(something(get(sim, "min_change_time", nothing), 0))
+    min_change = js_number_of(something(get(sim, "min_change_time", nothing), 0))   # `Number(x ?? 0)`
     isfinite(min_change) || (min_change = 0.0)
     f = equations === nothing ? RHSFunction((dy, t, y) -> (rhs!(sys, dy, t, y); nothing)) :
         RHSFunction((dy, t, y) -> (equations.dydt(dy, t, y); nothing))
@@ -770,7 +770,7 @@ function series_many(res::Results, outs)
                 cols[k] .= NaN
                 continue
             end
-            v = derived_reduce(d["kind"], res.t, src; at=d["at"], period=d["period"])
+            v = derived_reduce(d["kind"], res.t, src; at=get(d, "at", _PD_MISSING), period=get(d, "period", _PD_MISSING))
             if v isa AbstractVector
                 cols[k] .= v[1:n]
             else

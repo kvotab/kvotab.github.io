@@ -92,10 +92,8 @@ _D = (7.784695709041462e-3, 3.224671290700398e-1, 2.445134137142996,
 
 def probit(p: float) -> Optional[float]:
     """Acklam's approximation to the normal quantile; ``None`` outside (0, 1)."""
-    try:
-        q = float(p)
-    except (TypeError, ValueError):
-        return None
+    from ..io.csv import js_to_number  # pylint: disable=import-outside-toplevel
+    q = js_to_number(p)  # `Number(p)`
     if not (0 < q < 1):
         return None
     a, b, c, d = _A, _B, _C, _D

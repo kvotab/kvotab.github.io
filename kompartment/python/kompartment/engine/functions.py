@@ -16,6 +16,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
 
+from ..jsonio import js_number as _js_text
 from ..stats._normal import erf as _erf_scalar
 from ..stats._normal import erfc as _erfc_scalar
 
@@ -271,9 +272,9 @@ def _transport_point(*args: float) -> float:
     if math.isnan(x):
         return math.nan
     if x < 0:
-        raise TransportRangeError(f'transport operation: the position {x} is lower than zero')
+        raise TransportRangeError(f'transport operation: the position {_js_text(x)} is lower than zero')
     if x > 1:
-        raise TransportRangeError(f'transport operation: the position {x} is higher than one')
+        raise TransportRangeError(f'transport operation: the position {_js_text(x)} is higher than one')
     return args[n - 1 if x == 1 else math.trunc(x * n)]
 
 

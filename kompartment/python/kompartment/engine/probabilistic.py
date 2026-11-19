@@ -27,6 +27,7 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Seque
 import numpy as np
 
 from ..io.csv import JS_WHITESPACE
+from ..jsonio import js_text
 from ..stats.correlate import correlation_pairs, iman_conover
 from ..stats.gsa import build_design, cholesky
 from ..stats.pdf import _MISSING, _to_number
@@ -48,13 +49,17 @@ def can_be_endpoint(kind: Optional[str]) -> bool:
 
 def group_of(entry: Dict[str, Any]) -> Optional[str]:
     g = (entry.get('spec') or {}).get('group') if isinstance(entry.get('spec'), dict) else None
-    t = '' if g is None else str(g).strip(JS_WHITESPACE)
+    t = '' if g is None else js_text(g).strip(JS_WHITESPACE)  # `String(g).trim()`
     return None if t == '' else t
 
 
 def slot_name(entry: Dict[str, Any]) -> str:
+    # `${name}[${idx.join('][')}]`, or `String(name ?? '')`.
     idx = list((entry.get('index') or {}).values())
-    return f"{entry['name']}[{']['.join(idx)}]" if idx else str(entry.get('name') or '')
+    if idx:
+        return f"{js_text(entry.get('name'))}[{']['.join('' if x is None else js_text(x) for x in idx)}]"
+    name = entry.get('name')
+    return '' if name is None else js_text(name)
 
 
 def _groups_of(plan: List[Dict[str, Any]], names: List[str]) -> List[Dict[str, Any]]:
@@ -159,7 +164,7 @@ def design_for(project: Project, system: Any, *, seed: int = 1, iterations: Opti
     names = [slot_name(e) for e in plan]
     P = system.P
     best = [float(P[e['slot']]) for e in plan]
-    wanted = None if varied is None else {str(v) for v in varied}
+    wanted = None if varied is None else {js_text(v) for v in varied}
 
     def varies(e: Dict[str, Any]) -> bool:
         return wanted is None or slot_name(e) in wanted
@@ -469,7 +474,7 @@ def _keep_fn(keep: Any) -> Optional[Callable[[str, Dict[str, Any]], bool]]:
         return None
     if callable(keep):
         return keep
-    wanted = {str(k) for k in keep}
+    wanted = {js_text(k) for k in keep}
     return lambda name, o: name in wanted or o.get('label') in wanted
 
 

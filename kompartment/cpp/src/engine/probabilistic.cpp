@@ -311,16 +311,7 @@ bool can_be_endpoint(const Json& kind) { return !(kind == "parameter" || kind ==
 
 bool pb_truthy_opt(const Json& x) { return js_truthy(x); }
 
-std::string pb_py_str(const Json& v) {
-    switch (v.type()) {
-        case Json::Type::String: return v.as_string();
-        case Json::Type::Bool: return v.as_bool() ? "True" : "False";
-        case Json::Type::Int: return std::to_string(v.as_int());
-        case Json::Type::Float: return py_repr(v.as_double());
-        case Json::Type::Null: return "None";
-        default: return julia_show(v);
-    }
-}
+std::string pb_py_str(const Json& v) { return v.is_string() ? v.as_string() : js_text(v); }
 
 std::optional<std::string> sample_group(const PlanEntry& entry) {
     const Json& spec = entry.spec;

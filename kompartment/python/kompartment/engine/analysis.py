@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 
+from ..io.csv import js_to_number
 from ..stats.categories import categories_of, classify, include_mask, statistic_of
 from ..stats.distribution import describe_sample, histogram, sorted_column
 from ..stats.gsa import average_ranks, delta_moment, easi, gsa_main, gsa_table, mutual_information, normal_scores, rsa
@@ -78,10 +79,7 @@ def spread(v: np.ndarray, times: int) -> np.ndarray:
 def percentiles_for(lst: Optional[Sequence[float]]) -> List[float]:
     want = {0.5}
     for p in lst if isinstance(lst, (list, tuple)) else QUANTILES:
-        try:
-            v = float(p)
-        except (TypeError, ValueError):
-            continue
+        v = js_to_number(p)
         if math.isfinite(v) and 0 < v < 1:
             want.add(v)
     return sorted(want)

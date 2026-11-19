@@ -472,7 +472,6 @@ function run_case(fn, args)
         parts = String[string(K._pd_truthy(v)), K._pd_js_str(v),
                        said(() -> bits(K._pd_to_number(v))), said(() -> string(K._sm_to_uint32(v)))]
         if v !== K._PD_MISSING
-            push!(parts, bits(K.py_float(v)))
             push!(parts, said(() -> (z = K.normal_probit(v); z === nothing ? "none" : bits(z))))
         end
         v isa AbstractString && push!(parts, String(K._pd_js_trim(v)), String(strip(v)))

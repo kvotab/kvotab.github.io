@@ -169,12 +169,11 @@ def shorthand_points(count: Any) -> int:
     for them. The other spacings never ask for it, yet fall back to this grid -- a model with nothing to
     integrate, a probabilistic run on the solver's own points, ``both`` with no series -- and a new list of
     series starts from it. A count no grid could be spread over (a 0 left from a shorthand, a million, no
-    number at all) gives way to the default. Halves round up, as the application rounds.
+    number at all) gives way to the default. Read as the application's comparisons read it, with
+    ``Number()`` (``'0x10'`` is 16, ``'1_000'`` no number); halves round up, as the application rounds.
     """
-    try:
-        v = float(count)
-    except (TypeError, ValueError, OverflowError):
-        return DEFAULTS['output_points']
+    from .io.csv import js_to_number  # pylint: disable=import-outside-toplevel
+    v = js_to_number(count)
     return int(math.floor(v + 0.5)) if 2 <= v <= MAX_OUTPUT_POINTS else DEFAULTS['output_points']
 
 

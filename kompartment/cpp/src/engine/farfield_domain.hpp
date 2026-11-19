@@ -31,9 +31,9 @@ const Json& farf_legacy();
 /// A surface setting's equation when the path gives none.
 std::string farf_surface_default(std::string_view key);
 
-/// Python's `float(v)` where it succeeds, NaN where it raises: what the far-field checks
-/// read a setting as (an empty string is NaN, not 0).
-double py_float_nan(const Json& v);
+/// `Number(v)`, as the application reads a value it is given: null and blank text 0, text by
+/// JavaScript's grammar (`0x10` is 16; `1_000` and `inf` NaN), a list what its text reads as.
+double value_number(const Json& v);
 
 /// Whether a path is worked out on cells, which is what gives it states.
 bool uses_cells(const Json& block);

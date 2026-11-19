@@ -7,9 +7,8 @@
 """Two times are the same time when they are this close, relatively."""
 const SAME_TIME = 1e-9
 
-_ts_number(v::Nothing) = 0.0
-_ts_number(v::AbstractString) = js_number_of(v)      # JavaScript's grammar: blank is 0, `1_000` NaN
-_ts_number(v) = (f = py_float(v); f)
+"""`Number(v)`: null and blank text 0, text by JavaScript's grammar (`1_000` NaN), a list what its text reads as."""
+_ts_number(v) = js_number_of(v)
 
 function series_kind(spec)
     spec !== nothing && get(spec, "times", nothing) isa AbstractVector && return "times"

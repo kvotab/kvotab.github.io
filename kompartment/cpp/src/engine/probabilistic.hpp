@@ -70,9 +70,8 @@ bool can_be_endpoint(const Json& kind);
 /// `design_for` tells a tornado or a sensitivity design asked for.
 bool pb_truthy_opt(const Json& x);
 
-/// Python's `str(v)`, for a name or a group a model file gives (`_pb_py_str`): text as it is,
-/// `True`/`False`, `None`, a float as Python's `repr`; a list or a dictionary as Julia's
-/// `string()` writes it.
+/// `String(v)`, for a name or a group a model file gives (`_pb_py_str`): text as it is, any
+/// other value as JavaScript writes it.
 std::string pb_py_str(const Json& v);
 
 /// Julia's `show` (`repr`) of a value a model file holds, as it shows one inside a list:

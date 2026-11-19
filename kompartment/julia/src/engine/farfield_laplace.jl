@@ -260,9 +260,9 @@ function prepare_path(settings::LPSettings, decay::Union{Nothing,LPDecay}, n::In
     n >= 1 || throw(LaplacePathError("A path needs at least one species to carry."))
     nm = names !== nothing ? String[x for x in names] : ["#$(k)" for k in 1:n]
     function one(key)
-        haskey(settings.single, key) || throw(LaplacePathError("$key must be a number (got None)"))
+        haskey(settings.single, key) || throw(LaplacePathError("$key must be a number (got undefined)"))
         v = settings.single[key]
-        v != v && throw(LaplacePathError("$key must be a number (got $(py_repr(v)))"))
+        v != v && throw(LaplacePathError("$key must be a number (got $(js_text(v)))"))
         return v
     end
     function each(key)
@@ -271,7 +271,7 @@ function prepare_path(settings::LPSettings, decay::Union{Nothing,LPDecay}, n::In
         for k in 1:n
             x = v === nothing ? get(settings.single, key, NaN) : v[k]
             if !isfinite(x) || x < 0
-                throw(LaplacePathError("$key of $(nm[k]) must be zero or a positive number (got $(py_repr(x)))"))
+                throw(LaplacePathError("$key of $(nm[k]) must be zero or a positive number (got $(js_text(x)))"))
             end
             out[k] = x
         end
@@ -281,28 +281,28 @@ function prepare_path(settings::LPSettings, decay::Union{Nothing,LPDecay}, n::In
     rho = one("rho_m")
     Pe = one("pe")
     x0 = one("pen_dep")
-    (tw > 0 && isfinite(tw)) || throw(LaplacePathError("The travel time TW must be a positive number (got $(py_repr(tw)))"))
+    (tw > 0 && isfinite(tw)) || throw(LaplacePathError("The travel time TW must be a positive number (got $(js_text(tw)))"))
     surface = isempty(settings.surface) ? "f" : settings.surface
     if surface == "aw"
         aw = one("aw")
         (aw >= 0 && isfinite(aw)) ||
-            throw(LaplacePathError("The flow-wetted surface a_w must be zero or positive (got $(py_repr(aw)))"))
+            throw(LaplacePathError("The flow-wetted surface a_w must be zero or positive (got $(js_text(aw)))"))
     elseif surface == "aperture"
         delta = one("aperture")
-        delta > 0 || throw(LaplacePathError("The fracture aperture must be a positive length (got $(py_repr(delta)))"))
+        delta > 0 || throw(LaplacePathError("The fracture aperture must be a positive length (got $(js_text(delta)))"))
         aw = 2 / delta
     elseif surface == "f"
         f0 = one("f")
         (f0 >= 0 && isfinite(f0)) ||
-            throw(LaplacePathError("The flow-related transport resistance F must be zero or positive (got $(py_repr(f0)))"))
+            throw(LaplacePathError("The flow-related transport resistance F must be zero or positive (got $(js_text(f0)))"))
         aw = f0 / tw
     else
         throw(LaplacePathError("Unknown way of giving the wetted surface '$surface'"))
     end
     f = aw * tw
-    Pe > 0 || throw(LaplacePathError("The Peclet number must be greater than zero (got $(py_repr(Pe)))"))
-    x0 > 0 || throw(LaplacePathError("The depth into the matrix must be a positive length, or Infinity (got $(py_repr(x0)))"))
-    (rho >= 0 && isfinite(rho)) || throw(LaplacePathError("The rock density must be zero or positive (got $(py_repr(rho)))"))
+    Pe > 0 || throw(LaplacePathError("The Peclet number must be greater than zero (got $(js_text(Pe)))"))
+    x0 > 0 || throw(LaplacePathError("The depth into the matrix must be a positive length, or Infinity (got $(js_text(x0)))"))
+    (rho >= 0 && isfinite(rho)) || throw(LaplacePathError("The rock density must be zero or positive (got $(js_text(rho)))"))
     kd_f = each("kd_f")
     eps = each("eps_m")
     kd_m = each("kd_m")
@@ -326,14 +326,14 @@ function prepare_path(settings::LPSettings, decay::Union{Nothing,LPDecay}, n::In
         for i in 0:n-1
             lam[i+1] = Float64(decay.lam[i+1])
             if !isfinite(lam[i+1]) || lam[i+1] < 0
-                throw(LaplacePathError("The decay constant of $(nm[i+1]) must be zero or positive (got $(py_repr(lam[i+1])))"))
+                throw(LaplacePathError("The decay constant of $(nm[i+1]) must be zero or positive (got $(js_text(lam[i+1])))"))
             end
             o = decay.ioff[i+1]
             for q in 0:decay.icnt[i+1]-1
                 p = decay.ipar[o+q+1]
                 c = Float64(decay.icoef[o+q+1])
                 if !isfinite(c) || c < 0
-                    throw(LaplacePathError("The ingrowth of $(nm[i+1]) from $(nm[p+1]) must be zero or positive (got $(py_repr(c)))"))
+                    throw(LaplacePathError("The ingrowth of $(nm[i+1]) from $(nm[p+1]) must be zero or positive (got $(js_text(c)))"))
                 end
                 c == 0 && continue
                 p == i && throw(LaplacePathError("$(nm[i+1]) is its own parent."))

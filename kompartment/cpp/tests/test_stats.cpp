@@ -178,7 +178,6 @@ std::string run_case(const std::string& fn, const Json& args, const Grids& grids
         std::vector<std::string> parts = {pd_truthy(v) ? "true" : "false", pd_js_str(v), said([&] { return bits(pd_to_number(v)); }),
                                           said([&] { return std::to_string(sm_to_uint32(v)); })};
         if (v != nullptr) {
-            parts.push_back(bits(jl_py_float(*v)));
             parts.push_back(said([&] {
                 auto z = normal_probit(*v);
                 return z ? bits(*z) : std::string("none");

@@ -30,10 +30,10 @@ normal_phi(z::Float64) = 0.5 * kf_erfc((-z) / _NQ_SQRT2)
     normal_probit(p) -> Union{Float64,Nothing}
 
 Acklam's approximation to the standard normal quantile; `nothing` outside
-(0, 1), and for anything Python's `float()` cannot read as a number.
+(0, 1), and for anything `Number()` does not read as a number there.
 """
 function normal_probit(p)
-    q = p isa Float64 ? p : py_float(p)
+    q = p isa Float64 ? p : _pd_to_number(p)   # `Number(p)`
     (0 < q < 1) || return nothing
     a, b, c, d = _NQ_A, _NQ_B, _NQ_C, _NQ_D
     if q < _NQ_LOW

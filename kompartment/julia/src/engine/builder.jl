@@ -1082,7 +1082,7 @@ function index_operation_ast(b::Builder, a::Entry, target)
     args = ENode[ERef(target, Dict{String,String}(over => idx)) for idx in names]
     shown = ["$target[$idx]" for idx in names]
     if op == "percentile"
-        pushfirst!(args, ENum(Float64(a.block["percentile"])))
+        pushfirst!(args, ENum(js_number_of(a.block["percentile"])))   # `Number(...)`: none is the 0th
         pushfirst!(shown, js_str(a.block["percentile"]))
     end
     return (ast=ECall(fn, args), text="$fn($(join(shown, ", ")))", over=over, dropped=nothing)

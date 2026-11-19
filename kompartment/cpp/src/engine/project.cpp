@@ -1458,9 +1458,11 @@ void Project::validate() {
         if (!among(OPERATIONS, o.get("operation")))
             throw ValidationError("'" + js_text(o.get("operation")) + "' is not a reduction (" + join(OPERATIONS, ", ") + ")", q);
         if (o.get("operation") == "percentile") {
+            // `!(p >= 0 && p <= 100)`, where JavaScript compares null as 0: a percentile left out is the
+            // 0th, the least.
             const Json& pc = o.get("percentile");
-            if (!(pc.is_number() && 0 <= pc.as_double() && pc.as_double() <= 100))
-                throw ValidationError("A percentile must be between 0 and 100; '" + py_text(pc) + "' is not", q);
+            const double p = pc.is_null() ? 0.0 : pc.is_number() ? pc.as_double() : std::numeric_limits<double>::quiet_NaN();
+            if (!(0 <= p && p <= 100)) throw ValidationError("A percentile must be between 0 and 100; '" + js_text(pc) + "' is not", q);
         }
         if (!js_truthy(o.get("target"))) throw ValidationError("An index operation needs a block to reduce", q);
     }
@@ -1517,7 +1519,7 @@ void Project::validate() {
         throw ValidationError(js_text(points) + " output points is more than this can report (" + std::to_string(MAX_OUTPUT_POINTS) + ").");
     for (const auto& [key, label] : {std::pair<const char*, const char*>{"rtol", "Relative"}, {"abstol", "Absolute"}}) {
         double v = js_number_of(sim.get(key));
-        if (!(v > 0)) throw ValidationError(std::string(label) + " tolerance must be greater than zero (got " + py_text(sim.get(key)) + ")");
+        if (!(v > 0)) throw ValidationError(std::string(label) + " tolerance must be greater than zero (got " + js_text(sim.get(key)) + ")");
     }
 }
 

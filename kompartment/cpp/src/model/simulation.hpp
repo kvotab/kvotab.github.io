@@ -35,7 +35,5 @@ int shorthand_points(const Json& count);
 /// The label the application gives a solver, or "" for an id it does not have.
 std::string solver_label(std::string_view id);
 
-/// `v` as Python's `float()` reads it: a number, or text that is one; none otherwise.
-std::optional<double> py_float(const Json& v);
 
 }  // namespace kompartment

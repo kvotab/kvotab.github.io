@@ -23,16 +23,9 @@ SAME = 1e-9
 
 
 def _number(v: Any) -> float:
-    if v is None:
-        return 0.0
-    if isinstance(v, bool):
-        return 1.0 if v else 0.0
-    if isinstance(v, str):
-        return js_to_number(v)          # JavaScript's grammar: blank is 0, `1_000` NaN
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return math.nan
+    """``Number(v)``: null and blank text 0, text by JavaScript's grammar
+    (``1_000`` NaN), a list what its text reads as."""
+    return js_to_number(v)
 
 
 def _round(x: float) -> float:

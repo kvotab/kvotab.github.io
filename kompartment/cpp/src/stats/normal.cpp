@@ -49,7 +49,7 @@ std::optional<double> normal_probit(double q) {
 }
 
 std::optional<double> normal_probit(const Json& p) {
-    return normal_probit(p.is_float() ? p.as_double() : jl_py_float(p));
+    return normal_probit(p.is_float() ? p.as_double() : pd_to_number(p));   // `Number(p)`
 }
 
 double normal_quantile(double p) {

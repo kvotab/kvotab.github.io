@@ -21,10 +21,10 @@ bool among(const std::vector<std::string>& v, const Json& x) {
 }
 
 bool farf_empty(const Json& v) { return v.is_null() || (v.is_string() && js_trim(v.as_string()).empty()); }
-bool is_whole(const Json& v) {
-    double f = py_float_nan(v);
-    return std::isfinite(f) && f == std::floor(f);
-}
+/// `Number.isInteger(v)`.
+bool whole_number(double v) { return std::isfinite(v) && v == std::floor(v); }
+/// `Number(block.key)`: null and blank text 0, a setting not there NaN, text by JavaScript's grammar.
+double farf_number(const Json& block, const char* key) { return pd_to_number(pd_prop(block, key)); }
 }  // namespace
 
 const std::vector<std::string>& farf_methods() {
@@ -80,10 +80,7 @@ std::string farf_surface_default(std::string_view key) {
     return "0.002";
 }
 
-double py_float_nan(const Json& v) {
-    // The Julia package's `py_float`, one function for the engine and the statistics.
-    return jl_py_float(v);
-}
+double value_number(const Json& v) { return pd_to_number(v); }
 
 bool uses_cells(const Json& block) {
     const Json& m = block.get("method");
@@ -108,9 +105,9 @@ std::vector<std::string> active_equation_keys(const Json& block) {
 }
 
 int auto_extra_cells(const Json& nf, const Json& pe) {
-    double n = py_float_nan(nf);
-    double p = py_float_nan(pe);
-    if (!((std::isfinite(n) && n == std::floor(n)) && n >= 1)) return 0;
+    double n = pd_to_number(nf);
+    double p = pd_to_number(pe);
+    if (!(whole_number(n) && n >= 1)) return 0;
     if (!(p > 0 && std::isfinite(p))) p = 10.0;
     double rho = (2 * n - p) / (2 * n + p);
     if (!(rho > 0)) return 0;
@@ -126,14 +123,14 @@ int auto_extra_cells(const Json& nf, const Json& pe) {
 int extra_cells(const Json& block) {
     const Json& nb = block.get("n_b");
     if (farf_empty(nb))
-        return py_float_nan(block.get("o_b")) == CONTINUES ? auto_extra_cells(block.get("n_f"), block.get("pe")) : 0;
-    return static_cast<int>(py_float_nan(nb));
+        return farf_number(block, "o_b") == CONTINUES ? auto_extra_cells(block.get("n_f"), block.get("pe")) : 0;
+    return static_cast<int>(pd_to_number(nb));
 }
 
 FarfStructure effective_structure(const Json& block) {
-    double ob = py_float_nan(block.get("o_b"));
-    int nf = static_cast<int>(py_float_nan(block.get("n_f")));
-    int nm = static_cast<int>(py_float_nan(block.get("n_m")));
+    double ob = farf_number(block, "o_b");
+    int nf = static_cast<int>(farf_number(block, "n_f"));
+    int nm = static_cast<int>(farf_number(block, "n_m"));
     int nb = extra_cells(block);
     if (ob == CONTINUES) return {nf, nm, 2, nb, true};
     return {nf, nm, static_cast<int>(ob), nb, js_truthy(block.get("downstream"))};
@@ -171,16 +168,16 @@ std::optional<std::string> structure_problem(const Json& g) {
         return "surface must be one of " + join(farf_surfaces(), ", ");
     }
     auto whole = [&](const char* key, int least) -> std::optional<std::string> {
-        const Json& v = g.get(key);
-        if (!is_whole(v)) return std::string(key) + " must be a whole number";
-        if (py_float_nan(v) < least) return std::string(key) + " must be at least " + std::to_string(least);
+        const double v = farf_number(g, key);
+        if (!whole_number(v)) return std::string(key) + " must be a whole number";
+        if (v < least) return std::string(key) + " must be at least " + std::to_string(least);
         return std::nullopt;
     };
     if (auto p = whole("n_f", 1)) return p;
     if (auto p = whole("n_m", 2)) return p;
     if (!farf_empty(g.get("n_b")))
         if (auto p = whole("n_b", 0)) return p;
-    double obv = py_float_nan(g.get("o_b"));
+    double obv = farf_number(g, "o_b");
     if (!(obv == 0 || obv == 1 || obv == 2 || obv == 3 || obv == 4)) return "o_b must be one of 0, 1, 2, 3, 4";
     struct Choice {
         const char* key;
@@ -199,23 +196,22 @@ std::optional<std::string> structure_problem(const Json& g) {
 }
 
 std::optional<std::string> geometry_problem(const Json& block) {
-    double nm = py_float_nan(block.get("n_m"));
-    double pen_dep = py_float_nan(block.get("pen_dep"));
-    const Json& raw_first = block.get("pen_dep_0");
+    double nm = farf_number(block, "n_m");
+    double pen_dep = farf_number(block, "pen_dep");
+    const Json& raw_first = block.get("pen_dep_0");   // absent or null alike: no first layer given
     bool has_first = !(raw_first == "" || raw_first.is_null());
-    double first = has_first ? py_float_nan(raw_first) : NaN;
+    double first = has_first ? pd_to_number(raw_first) : NaN;
     if (is_semi_analytic(block)) {
         if (std::isfinite(pen_dep) && !(pen_dep > 0)) return "the penetration depth must be a positive length";
         return std::nullopt;
     }
-    if (!std::isfinite(pen_dep) || !(std::isfinite(nm) && nm == std::floor(nm))) return std::nullopt;
+    if (!std::isfinite(pen_dep) || !whole_number(nm)) return std::nullopt;
     if (!(pen_dep > 0)) return "the penetration depth must be a positive length";
     if (!has_first || !std::isfinite(first)) return std::nullopt;
     if (!(first > 0)) return "the first matrix layer must be a positive length";
     if (first * nm > pen_dep * (1 + 1e-12))
-        return std::to_string(static_cast<long>(nm)) + " matrix layers starting at " + py_repr(first) +
-               " m cannot add up to a penetration depth of " + py_repr(pen_dep) +
-               " m: the layers grow with depth, so the first must be smaller than " + py_repr(pen_dep / nm) + " m";
+        return js_number(nm) + " matrix layers starting at " + js_number(first) + " m cannot add up to a penetration depth of " +
+               js_number(pen_dep) + " m: the layers grow with depth, so the first must be smaller than " + js_number(pen_dep / nm) + " m";
     return std::nullopt;
 }
 
@@ -239,8 +235,8 @@ std::optional<std::string> rock_problem(const Json& block) {
         if (!holder.is_object()) continue;
         for (const Term& term : terms) {
             const Json& v = holder.get(term.key);
-            if (v.is_null() || js_trim(js_str(v)).empty()) continue;
-            double n = py_float_nan(v);
+            if (v.is_null() || js_trim(pd_js_str(v)).empty()) continue;
+            double n = pd_to_number(v);
             if (!std::isfinite(n) || n >= 0) continue;
             std::string at;
             if (h > 0) {

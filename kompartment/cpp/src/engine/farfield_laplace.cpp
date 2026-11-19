@@ -174,9 +174,9 @@ std::unique_ptr<LaplacePath> prepare_path(const LPSettings& settings, const LPDe
     }
     auto one = [&](const std::string& key) {
         auto it = settings.single.find(key);
-        if (it == settings.single.end()) throw LaplacePathError(key + " must be a number (got None)");
+        if (it == settings.single.end()) throw LaplacePathError(key + " must be a number (got undefined)");
         double v = it->second;
-        if (v != v) throw LaplacePathError(key + " must be a number (got " + py_repr(v) + ")");
+        if (v != v) throw LaplacePathError(key + " must be a number (got " + js_text(v) + ")");
         return v;
     };
     auto each = [&](const std::string& key) {
@@ -191,7 +191,7 @@ std::unique_ptr<LaplacePath> prepare_path(const LPSettings& settings, const LPDe
                 x = it->second[k];
             }
             if (!std::isfinite(x) || x < 0)
-                throw LaplacePathError(key + " of " + nm[k] + " must be zero or a positive number (got " + py_repr(x) + ")");
+                throw LaplacePathError(key + " of " + nm[k] + " must be zero or a positive number (got " + js_text(x) + ")");
             out[k] = x;
         }
         return out;
@@ -201,31 +201,31 @@ std::unique_ptr<LaplacePath> prepare_path(const LPSettings& settings, const LPDe
     double Pe = one("pe");
     double x0 = one("pen_dep");
     if (!(tw > 0 && std::isfinite(tw)))
-        throw LaplacePathError("The travel time TW must be a positive number (got " + py_repr(tw) + ")");
+        throw LaplacePathError("The travel time TW must be a positive number (got " + js_text(tw) + ")");
     std::string surface = settings.surface.empty() ? "f" : settings.surface;
     double aw;
     if (surface == "aw") {
         aw = one("aw");
         if (!(aw >= 0 && std::isfinite(aw)))
-            throw LaplacePathError("The flow-wetted surface a_w must be zero or positive (got " + py_repr(aw) + ")");
+            throw LaplacePathError("The flow-wetted surface a_w must be zero or positive (got " + js_text(aw) + ")");
     } else if (surface == "aperture") {
         double delta = one("aperture");
-        if (!(delta > 0)) throw LaplacePathError("The fracture aperture must be a positive length (got " + py_repr(delta) + ")");
+        if (!(delta > 0)) throw LaplacePathError("The fracture aperture must be a positive length (got " + js_text(delta) + ")");
         aw = 2 / delta;
     } else if (surface == "f") {
         double f0 = one("f");
         if (!(f0 >= 0 && std::isfinite(f0)))
-            throw LaplacePathError("The flow-related transport resistance F must be zero or positive (got " + py_repr(f0) + ")");
+            throw LaplacePathError("The flow-related transport resistance F must be zero or positive (got " + js_text(f0) + ")");
         aw = f0 / tw;
     } else {
         throw LaplacePathError("Unknown way of giving the wetted surface '" + surface + "'");
     }
     double f = aw * tw;
-    if (!(Pe > 0)) throw LaplacePathError("The Peclet number must be greater than zero (got " + py_repr(Pe) + ")");
+    if (!(Pe > 0)) throw LaplacePathError("The Peclet number must be greater than zero (got " + js_text(Pe) + ")");
     if (!(x0 > 0))
-        throw LaplacePathError("The depth into the matrix must be a positive length, or Infinity (got " + py_repr(x0) + ")");
+        throw LaplacePathError("The depth into the matrix must be a positive length, or Infinity (got " + js_text(x0) + ")");
     if (!(rho >= 0 && std::isfinite(rho)))
-        throw LaplacePathError("The rock density must be zero or positive (got " + py_repr(rho) + ")");
+        throw LaplacePathError("The rock density must be zero or positive (got " + js_text(rho) + ")");
     std::vector<double> kd_f = each("kd_f");
     std::vector<double> eps = each("eps_m");
     std::vector<double> kd_m = each("kd_m");
@@ -247,13 +247,13 @@ std::unique_ptr<LaplacePath> prepare_path(const LPSettings& settings, const LPDe
         for (int i = 0; i < n; i++) {
             lam[i] = decay->lam[i];
             if (!std::isfinite(lam[i]) || lam[i] < 0)
-                throw LaplacePathError("The decay constant of " + nm[i] + " must be zero or positive (got " + py_repr(lam[i]) + ")");
+                throw LaplacePathError("The decay constant of " + nm[i] + " must be zero or positive (got " + js_text(lam[i]) + ")");
             int o = decay->ioff[i];
             for (int q = 0; q < decay->icnt[i]; q++) {
                 int p = decay->ipar[o + q];
                 double c = decay->icoef[o + q];
                 if (!std::isfinite(c) || c < 0)
-                    throw LaplacePathError("The ingrowth of " + nm[i] + " from " + nm[p] + " must be zero or positive (got " + py_repr(c) + ")");
+                    throw LaplacePathError("The ingrowth of " + nm[i] + " from " + nm[p] + " must be zero or positive (got " + js_text(c) + ")");
                 if (c == 0) continue;
                 if (p == i) throw LaplacePathError(nm[i] + " is its own parent.");
                 auto had = std::find_if(parents[i].begin(), parents[i].end(), [&](const auto& e) { return e.first == p; });

@@ -38,12 +38,12 @@ How many points the shorthand grid is spread over (`shorthandPoints` in the appl
 for them. The other spacings never ask for it, yet fall back to this grid -- a model with nothing to
 integrate, a probabilistic run on the solver's own points, `both` with no series -- and a new list of
 series starts from it. A count no grid could be spread over (a 0 left from a shorthand, a million, no
-number at all) gives way to the default. Read as Python's `float()` reads it; halves round up, as the
-application rounds.
+number at all) gives way to the default. Read as the application's comparisons read it, with `Number()`
+(`"0x10"` is 16, `"1_000"` no number); halves round up, as the application rounds.
 """
 function shorthand_points(count)
-    v = _ed_pyfloat(count)
-    v !== nothing && 2 <= v <= MAX_OUTPUT_POINTS && return Int(floor(v + 0.5))
+    v = _pd_to_number(count)
+    2 <= v <= MAX_OUTPUT_POINTS && return Int(floor(v + 0.5))
     return Int(SIMULATION_DEFAULTS["output_points"])
 end
 

@@ -159,7 +159,11 @@ function js_number_of(v::AbstractString)
     end
     return NaN
 end
-js_number_of(v::AbstractVector) = length(v) == 0 ? 0.0 : length(v) == 1 ? js_number_of(v[1]) : NaN
+js_number_of(v::AbstractVector) = length(v) == 0 ? 0.0 : length(v) == 1 ? _js_number_of_item(v[1]) : NaN
+# `Number(String([x]))`: a Boolean's text ("true") is no number, -0 is written "0".
+_js_number_of_item(x::Bool) = NaN
+_js_number_of_item(x::Real) = (f = Float64(x); f == 0 ? 0.0 : f)
+_js_number_of_item(x) = js_number_of(x)
 js_number_of(v) = NaN
 
 """

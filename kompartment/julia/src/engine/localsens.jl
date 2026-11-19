@@ -343,7 +343,7 @@ function sensitivity_problem(m, parameters=nothing; most=nothing, differenced::B
     # it holds were worked out from the parameter as it was, so they are
     # dropped around each difference.
     clock_interval = Ref(0.0)
-    clock_from = Ref(py_float(proj.simulation["start_time"]))
+    clock_from = Ref(js_number_of(proj.simulation["start_time"]))
     on_segment = (frm, interval) -> (clock_from[] = Float64(frm); clock_interval[] = Float64(interval); nothing)
     forget_clock() = clock_interval[] > 0 && use_clock_interpolation!(sys, clock_interval[], clock_from[])
 

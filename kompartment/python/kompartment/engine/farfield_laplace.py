@@ -269,11 +269,30 @@ class LaplacePath:
         self.ws: _Workspace = _Workspace(1)
 
 
+class _Undefined:
+    """JavaScript's ``undefined``: a setting that is not there."""
+
+    def __repr__(self) -> str:
+        return 'undefined'
+
+
+_UNDEFINED = _Undefined()
+
+
+def _said(v: Any) -> str:
+    """``${v}``: a value as a JavaScript template writes it."""
+    if v is _UNDEFINED:
+        return 'undefined'
+    from ..jsonio import js_text  # pylint: disable=import-outside-toplevel
+    return js_text(v)
+
+
 def _num(v: Any) -> float:
-    try:
-        return float(v)
-    except (TypeError, ValueError):
+    """``Number(v)``: null and blank text 0, ``undefined`` NaN, text by JavaScript's grammar."""
+    if v is _UNDEFINED:
         return NAN
+    from ..io.csv import js_to_number  # pylint: disable=import-outside-toplevel
+    return js_to_number(v)
 
 
 def prepare_path(settings: Dict[str, Any], decay: Optional[Dict[str, Any]] = None, n: Optional[int] = None,
@@ -302,19 +321,20 @@ def prepare_path(settings: Dict[str, Any], decay: Optional[Dict[str, Any]] = Non
     nm = list(names) if names is not None else [f'#{k + 1}' for k in range(n)]
 
     def one(key: str) -> float:
-        v = _num(settings.get(key))
+        v = _num(settings.get(key, _UNDEFINED))
         if v != v:
-            raise LaplacePathError(f'{key} must be a number (got {settings.get(key)})')
+            raise LaplacePathError(f'{key} must be a number (got {_said(settings.get(key, _UNDEFINED))})')
         return v
 
     def each(key: str) -> List[float]:
-        v = settings.get(key)
+        v = settings.get(key, _UNDEFINED)
         out = []
         for k in range(n):
-            x = _num(v[k] if _is_list(v) else v)
+            # `isList(v) ? v[k] : v`: past a list's end, undefined.
+            w = (v[k] if k < len(v) else _UNDEFINED) if _is_list(v) else v
+            x = _num(w)
             if not math.isfinite(x) or x < 0:
-                raise LaplacePathError(
-                    f'{key} of {nm[k]} must be zero or a positive number (got {v[k] if _is_list(v) else v})')
+                raise LaplacePathError(f'{key} of {nm[k]} must be zero or a positive number (got {_said(w)})')
             out.append(x)
         return out
 
@@ -323,31 +343,32 @@ def prepare_path(settings: Dict[str, Any], decay: Optional[Dict[str, Any]] = Non
     Pe = one('pe')
     x0 = one('pen_dep')
     if not tw > 0 or not math.isfinite(tw):
-        raise LaplacePathError(f'The travel time TW must be a positive number (got {tw})')
+        raise LaplacePathError(f'The travel time TW must be a positive number (got {_said(tw)})')
     surface = settings.get('surface') or 'f'
     if surface == 'aw':
         aw = one('aw')
         if not aw >= 0 or not math.isfinite(aw):
-            raise LaplacePathError(f'The flow-wetted surface a_w must be zero or positive (got {aw})')
+            raise LaplacePathError(f'The flow-wetted surface a_w must be zero or positive (got {_said(aw)})')
     elif surface == 'aperture':
         delta = one('aperture')
         if not delta > 0:
-            raise LaplacePathError(f'The fracture aperture must be a positive length (got {delta})')
+            raise LaplacePathError(f'The fracture aperture must be a positive length (got {_said(delta)})')
         aw = 2 / delta
     elif surface == 'f':
         f0 = one('f')
         if not f0 >= 0 or not math.isfinite(f0):
-            raise LaplacePathError(f'The flow-related transport resistance F must be zero or positive (got {f0})')
+            raise LaplacePathError(f'The flow-related transport resistance F must be zero or positive '
+                                   f'(got {_said(f0)})')
         aw = f0 / tw
     else:
         raise LaplacePathError(f"Unknown way of giving the wetted surface '{surface}'")
     f = aw * tw
     if not Pe > 0:
-        raise LaplacePathError(f'The Peclet number must be greater than zero (got {Pe})')
+        raise LaplacePathError(f'The Peclet number must be greater than zero (got {_said(Pe)})')
     if not x0 > 0:
-        raise LaplacePathError(f'The depth into the matrix must be a positive length, or Infinity (got {x0})')
+        raise LaplacePathError(f'The depth into the matrix must be a positive length, or Infinity (got {_said(x0)})')
     if not rho >= 0 or not math.isfinite(rho):
-        raise LaplacePathError(f'The rock density must be zero or positive (got {rho})')
+        raise LaplacePathError(f'The rock density must be zero or positive (got {_said(rho)})')
     kd_f = each('kd_f')
     eps = each('eps_m')
     kd_m = each('kd_m')
@@ -372,13 +393,14 @@ def prepare_path(settings: Dict[str, Any], decay: Optional[Dict[str, Any]] = Non
         for i in range(n):
             lam[i] = float(decay['lam'][i])
             if not math.isfinite(lam[i]) or lam[i] < 0:
-                raise LaplacePathError(f'The decay constant of {nm[i]} must be zero or positive (got {lam[i]})')
+                raise LaplacePathError(f'The decay constant of {nm[i]} must be zero or positive (got {_said(lam[i])})')
             o = int(decay['ioff'][i])
             for q in range(int(decay['icnt'][i])):
                 p = int(decay['ipar'][o + q])
                 c = float(decay['icoef'][o + q])
                 if not math.isfinite(c) or c < 0:
-                    raise LaplacePathError(f'The ingrowth of {nm[i]} from {nm[p]} must be zero or positive (got {c})')
+                    raise LaplacePathError(f'The ingrowth of {nm[i]} from {nm[p]} must be zero or positive '
+                                           f'(got {_said(c)})')
                 if c == 0:
                     continue
                 if p == i:
@@ -2897,7 +2919,7 @@ def inflow_series(points: Sequence[Sequence[float]], name: str = 'Inflow') -> Di
         if not math.isfinite(a) or not math.isfinite(b):
             raise LaplacePathError(f'{name}: every point needs a finite time and rate.')
         if t and a < t[-1]:
-            raise LaplacePathError(f'{name}: the times must not decrease ({a} after {t[-1]}).')
+            raise LaplacePathError(f'{name}: the times must not decrease ({_said(a)} after {_said(t[-1])}).')
         if t and a == t[-1] and b == v[-1]:
             continue
         t.append(a)

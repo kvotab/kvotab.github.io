@@ -16,6 +16,7 @@
 #include "engine/switchtimes.hpp"
 #include "model/names.hpp"
 #include "model/simulation.hpp"
+#include "stats/pdf.hpp"
 #include "util/jsnum.hpp"
 #include "util/parity.hpp"
 
@@ -292,7 +293,7 @@ std::vector<double> absolute_tolerance(const Project& project, const System& sys
         for (int off = 0; off < s->width; off++) {
             Json v = value_at(s->block, "abstol", tuple_by_list(*sys.builder->space, s->dims, off));
             if (v.is_null() || v == "") continue;
-            double n = py_float_nan(v);
+            double n = value_number(v);
             if (!(std::isfinite(n) && n > 0)) continue;
             per_state[static_cast<std::size_t>(s->base + off)] = n;
             asked = true;
@@ -490,7 +491,7 @@ Results run_project(std::shared_ptr<const Project> project, std::shared_ptr<Syst
                 }
             return nxt;
         };
-    double min_change = sim.get("min_change_time").is_null() ? 0.0 : py_float_nan(sim.get("min_change_time"));
+    double min_change = sim.get("min_change_time").is_null() ? 0.0 : value_number(sim.get("min_change_time"));
     if (!std::isfinite(min_change)) min_change = 0.0;
     RhsFunction f = equations ? equations->dydt : RhsFunction([&sys](Vec& dy, double t, const Vec& y) { sys.rhs(dy.data(), t, y.data()); });
     // Where the stretch being solved began: a solver that fails at its first instant has
@@ -757,9 +758,10 @@ std::vector<std::vector<double>> Results::series_many(const std::vector<Json>& o
                 std::fill(cols[k].begin(), cols[k].end(), std::numeric_limits<double>::quiet_NaN());
             } else {
                 std::vector<double> src = series_many({index.outputs[from->second]})[0];
-                // `py_float(something(at, NaN))`, as the Julia package reads them: a descriptor read
-                // back from JSON holds null where the time or period was no number.
-                std::vector<double> v = derived_reduce(d.get("kind").as_string(), t, src, py_float_nan(d.get("at")), py_float_nan(d.get("period")));
+                // `Number(d.at)` and `Number(d.period)`, as the application reads them: null is 0,
+                // one not there NaN.
+                std::vector<double> v =
+                    derived_reduce(d.get("kind").as_string(), t, src, pd_to_number(pd_prop(d, "at")), pd_to_number(pd_prop(d, "period")));
                 for (std::size_t i = 0; i < n && i < v.size(); i++) cols[k][i] = v[i];
             }
         } else {

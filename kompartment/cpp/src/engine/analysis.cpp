@@ -203,7 +203,7 @@ std::vector<double> percentiles_for(const Json& list) {
         if (std::isfinite(v) && 0 < v && v < 1) want.insert(v);
     };
     if (list.is_array()) {
-        for (const Json& p : list.arr()) take(jl_py_float(p));   // a number or a Boolean as it is, text as Python reads it
+        for (const Json& p : list.arr()) take(pd_to_number(p));   // a number or a Boolean as it is, text as Python reads it
     } else {
         for (double p : PROB_QUANTILES) take(p);
     }

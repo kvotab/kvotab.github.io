@@ -70,9 +70,7 @@ function _model_js_number(v)
     v === nothing && return NaN
     v isa Bool && return v ? 1.0 : 0.0
     v isa Real && return v
-    s = strip(_norm_str(v))
-    isempty(s) && return 0.0
-    return py_float(s)
+    return js_number_of(v)   # text by JavaScript's grammar, as model.py's `js_to_number` reads it
 end
 
 """What `for x in (v or [])` goes over in Python: a list's items, a dictionary's keys, a text's characters."""

@@ -19,8 +19,8 @@ double normal_phi(double z);
 
 /// Acklam's approximation to the standard normal quantile; none outside (0, 1).
 std::optional<double> normal_probit(double p);
-/// The same of a value as a model file holds it, read first as Python's `float()` reads it
-/// (`jl_py_float`): none for anything that is not a number in (0, 1).
+/// The same of a value as a model file holds it, read first with `Number()`: none for anything
+/// that is not a number in (0, 1).
 std::optional<double> normal_probit(const Json& p);
 
 /// The standard normal's inverse CDF: `normal_probit` and two Newton steps; -Inf at or below

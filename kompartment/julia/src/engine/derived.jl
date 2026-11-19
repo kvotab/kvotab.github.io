@@ -19,12 +19,12 @@ function derived_unit(kind, source_unit, time_unit)
     return String(u)
 end
 
-function derived_reduce(kind, t::AbstractVector{Float64}, values::AbstractVector{Float64}; at=nothing, period=nothing)
+function derived_reduce(kind, t::AbstractVector{Float64}, values::AbstractVector{Float64}; at=_PD_MISSING, period=_PD_MISSING)
     n = min(length(t), length(values))
     kind == "integral" && return derived_integral(t, values, n)
-    kind in PERIOD_KINDS && return by_period(kind, t, values, n, py_float(something(period, NaN)))
+    kind in PERIOD_KINDS && return by_period(kind, t, values, n, _pd_to_number(period))
     n == 0 && return NaN
-    kind == "at_time" && return derived_value_at(t, values, n, py_float(something(at, NaN)))
+    kind == "at_time" && return derived_value_at(t, values, n, _pd_to_number(at))
     best = NaN
     best_at = NaN
     for i in 1:n
@@ -152,8 +152,8 @@ function derived_outputs(project::Project, known_outputs::Vector{JDict})
             src = get(by_label, d["of"], nothing)
             o = JDict("kind" => "derived", "source" => "D", "block" => name, "label" => name,
                       "unit" => derived_unit(d["kind"], src === nothing ? nothing : get(src, "unit", nothing), time_unit),
-                      "derived" => JDict("kind" => d["kind"], "of" => d["of"], "at" => py_float(something(get(d, "at", nothing), NaN)),
-                                         "period" => py_float(something(get(d, "period", nothing), NaN))),
+                      "derived" => JDict("kind" => d["kind"], "of" => d["of"], "at" => _pd_to_number(_pd_prop(d, "at")),
+                                         "period" => _pd_to_number(_pd_prop(d, "period"))),
                       "dims" => Any[], "index" => nothing)
             is_series_kind(d["kind"]) || (o["timeDependent"] = false)
             push!(out, o)

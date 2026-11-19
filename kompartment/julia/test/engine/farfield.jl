@@ -246,4 +246,34 @@ end
     end
 end
 
+@testset "a far-field setting read as the application reads it" begin
+    # With `Number()`, not Python's `float()`: blank is 0, a setting not there NaN, hex a number,
+    # `1_000` none, a list what its text reads as -- and numbers in messages as JavaScript writes them.
+    base() = Dict{String,Any}("n_f" => 20, "n_m" => 12, "o_b" => 4, "n_b" => "", "pe" => "10", "pen_dep" => "12.5",
+                              "pen_dep_0" => "", "de_m" => "1e-4")
+    with(key, v) = (b = base(); v === missing ? delete!(b, key) : (b[key] = v); b)
+    @test K.structure_problem(with("n_f", "")) == "n_f must be at least 1"
+    @test K.structure_problem(with("n_f", missing)) == "n_f must be a whole number"
+    @test K.structure_problem(with("n_f", nothing)) == "n_f must be at least 1"
+    @test K.structure_problem(with("n_f", "0x10")) === nothing
+    @test K.structure_problem(with("n_f", "1_000")) == "n_f must be a whole number"
+    @test K.structure_problem(with("n_f", Any[20])) === nothing
+    @test K.structure_problem(with("o_b", " 4 ")) === nothing
+    @test K.geometry_problem(with("pen_dep_0", "\u00a0")) == "the first matrix layer must be a positive length"
+    @test K.geometry_problem(merge(base(), Dict{String,Any}("pen_dep" => "1", "pen_dep_0" => "1", "n_m" => 5))) ==
+          "5 matrix layers starting at 1 m cannot add up to a penetration depth of 1 m: the layers grow with depth, " *
+          "so the first must be smaller than 0.2 m"
+    @test K.geometry_problem(merge(base(), Dict{String,Any}("pen_dep" => "1e-5", "pen_dep_0" => "0.5", "n_m" => 3))) ==
+          "3 matrix layers starting at 0.5 m cannot add up to a penetration depth of 0.00001 m: the layers grow with " *
+          "depth, so the first must be smaller than 0.0000033333333333333337 m"
+    @test K.rock_problem(with("de_m", "-1e-5")) ==
+          "the effective diffusivity in the rock matrix D_e,m must be zero or positive (got -1e-5)"
+    @test K.rock_problem(with("de_m", "-0x1")) === nothing
+    @test K.auto_extra_cells("0x14", " 10 ") == K.auto_extra_cells(20, 10)
+    # A percentile left out is the 0th; numbers read for a reduction, a table, a series likewise.
+    @test K.shorthand_points("0x10") == 16 && K.shorthand_points("1_000") == 250 && K.shorthand_points(Any["40"]) == 40
+    @test K.js_number_of(Any[true]) |> isnan && K.js_number_of(Any[-0.0]) === 0.0
+    @test K.normal_probit("0.5") == 0.0 && K.normal_probit("0x1") === nothing
+end
+
 end # module

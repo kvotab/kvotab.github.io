@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, Sequence
 import numpy as np
 
 from ..io.csv import JS_WHITESPACE
+from ..stats.pdf import _MISSING, _prop, _to_number
 
 DERIVED_KINDS = ('max', 'min', 'time_of_max', 'at_time', 'integral', 'period_mean', 'period_sum', 'period_change',
                  'period_rate')
@@ -37,13 +38,13 @@ def derived_unit(kind: str, source_unit: Optional[str], time_unit: Optional[str]
 
 
 def _num(v: Any) -> float:
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return math.nan
+    """``Number(v)``: null and blank text 0, a value not given (``_MISSING``) NaN,
+    text by JavaScript's grammar."""
+    return _to_number(v)
 
 
-def reduce(kind: str, t: Sequence[float], values: Sequence[float], at: Any = None, period: Any = None) -> Any:
+def reduce(kind: str, t: Sequence[float], values: Sequence[float], at: Any = _MISSING,
+           period: Any = _MISSING) -> Any:
     n = min(len(t), len(values))
     if kind == 'integral':
         return integral(t, values, n)
@@ -176,8 +177,8 @@ def derived_outputs(project: Any, known_outputs: List[Dict[str, Any]]) -> List[D
             src = by_label.get(d['of'])
             o = {'kind': 'derived', 'source': 'D', 'block': name, 'label': name,
                  'unit': derived_unit(d['kind'], src.get('unit') if src else None, time_unit),
-                 'derived': {'kind': d['kind'], 'of': d['of'], 'at': _num(d.get('at')),
-                             'period': _num(d.get('period'))},
+                 'derived': {'kind': d['kind'], 'of': d['of'], 'at': _num(_prop(d, 'at')),
+                             'period': _num(_prop(d, 'period'))},
                  'dims': [], 'index': None}
             if not is_series(d['kind']):
                 o['timeDependent'] = False

@@ -193,25 +193,6 @@ std::optional<std::pair<std::string_view, int>> other_base(std::string_view t) {
     return std::nullopt;
 }
 
-/// Julia's `lowercase` as far as it can make the words `inf`, `infinity` and `nan`: the ASCII
-/// capitals, and the dotted capital I, which it lowers to a plain `i`.
-std::string jl_lower_ascii(std::string_view s) {
-    std::string out;
-    out.reserve(s.size());
-    for (std::size_t i = 0; i < s.size(); i++) {
-        char c = s[i];
-        if (c >= 'A' && c <= 'Z') {
-            out.push_back(static_cast<char>(c - 'A' + 'a'));
-        } else if (static_cast<unsigned char>(c) == 0xc4 && i + 1 < s.size() && static_cast<unsigned char>(s[i + 1]) == 0xb0) {
-            out.push_back('i');   // U+0130
-            i++;
-        } else {
-            out.push_back(c);
-        }
-    }
-    return out;
-}
-
 const Json* params_of(const Json& spec) {
     if (spec.is_null())
         throw ArgumentError("no distribution: the application cannot read the parameters of null either");
@@ -329,44 +310,6 @@ double pd_jmin(double a, double b) {
 }
 
 double pd_sqrt(double x) { return x >= 0 ? std::sqrt(x) : NaN; }
-
-double jl_py_float(const Json& v) {
-    if (v.is_bool()) return v.as_bool() ? 1.0 : 0.0;
-    if (v.is_number()) return v.as_double();
-    if (!v.is_string()) return NaN;
-    std::string_view s = jl_strip(v.as_string());
-    if (s.empty()) return NaN;
-    std::string low = jl_lower_ascii(s);
-    if (low == "inf" || low == "+inf" || low == "infinity" || low == "+infinity") return Inf;
-    if (low == "-inf" || low == "-infinity") return -Inf;
-    if (low == "nan" || low == "+nan" || low == "-nan") return NaN;
-    std::string clean;
-    clean.reserve(s.size());
-    for (char c : s)
-        if (c != '_') clean.push_back(c);
-    // A decimal and nothing else (`_PY_DECIMAL`): what strtod reads besides -- hexadecimal, the
-    // words -- Python's float() refuses.
-    std::size_t k = 0, n = clean.size(), digits = 0;
-    if (k < n && (clean[k] == '+' || clean[k] == '-')) k++;
-    while (k < n && clean[k] >= '0' && clean[k] <= '9') k++, digits++;
-    if (k < n && clean[k] == '.') {
-        k++;
-        while (k < n && clean[k] >= '0' && clean[k] <= '9') k++, digits++;
-    }
-    if (digits == 0) return NaN;
-    if (k < n && (clean[k] == 'e' || clean[k] == 'E')) {
-        k++;
-        if (k < n && (clean[k] == '+' || clean[k] == '-')) k++;
-        std::size_t ex = 0;
-        while (k < n && clean[k] >= '0' && clean[k] <= '9') k++, ex++;
-        if (ex == 0) return NaN;
-    }
-    if (k != n) return NaN;
-    std::optional<double> x = jl_tryparse_float(clean);
-    // Out of a double's range, where Julia's `tryparse` refuses what Python rounds: to the
-    // infinities, or to zero.
-    return x ? *x : std::strtod(clean.c_str(), nullptr);
-}
 
 // --- the kinds -------------------------------------------------------------------------------------
 

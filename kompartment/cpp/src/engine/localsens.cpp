@@ -643,7 +643,7 @@ std::unique_ptr<SensitivityProblem> sensitivity_problem(std::shared_ptr<const Pr
     const Pattern& pattern = *w.pattern;
     const std::size_t nnz = pattern.nnz();
     w.nnz = nnz;
-    w.clock_from = py_float_nan(project->simulation.get("start_time"));
+    w.clock_from = value_number(project->simulation.get("start_time"));
     w.J.assign(nnz, 0.0);
     w.f0.assign(nn, 0.0);
     w.fp.assign(nn, 0.0);

@@ -256,20 +256,23 @@ FAIL_PYTHON = 7               # the callback into Python raised; the model's cal
 
 def python_error(e: CompiledFailure) -> Exception:
     """The Python path's exception for a :class:`CompiledFailure`."""
+    from ...jsonio import js_number as _js_number
     code = int(e.args[0]) if e.args else 0
     a = float(e.args[1]) if len(e.args) > 1 else 0.0
     if code == FAIL_TRANSPORT_BELOW:
         from ..functions import TransportRangeError
-        return TransportRangeError(f'transport operation: the position {a} is lower than zero')
+        return TransportRangeError(f'transport operation: the position {_js_number(a)} is lower than zero')
     if code == FAIL_TRANSPORT_ABOVE:
         from ..functions import TransportRangeError
-        return TransportRangeError(f'transport operation: the position {a} is higher than one')
+        return TransportRangeError(f'transport operation: the position {_js_number(a)} is higher than one')
     if code == FAIL_RANGE_START:
         from ..functions import TransportRangeError
-        return TransportRangeError(f'transport operation: the range starts at {a}, which is lower than zero')
+        return TransportRangeError(f'transport operation: the range starts at {_js_number(a)}, '
+                                   'which is lower than zero')
     if code == FAIL_RANGE_END:
         from ..functions import TransportRangeError
-        return TransportRangeError(f'transport operation: the range ends at {a}, which is higher than one')
+        return TransportRangeError(f'transport operation: the range ends at {_js_number(a)}, '
+                                   'which is higher than one')
     if code == FAIL_INTERPOLATION_ARGS:
         from ..lookup import LookupError_
         return LookupError_(f'interpolation needs a lookup value and then x, y pairs; got {int(a)} value(s) '

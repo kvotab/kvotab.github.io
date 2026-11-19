@@ -184,7 +184,13 @@ double js_number_of(const Json& v) {
         case Json::Type::String: return js_number_of(std::string_view(v.as_string()));
         case Json::Type::Array:
             if (v.size() == 0) return 0.0;
-            if (v.size() == 1) return js_number_of(v[std::size_t{0}]);
+            if (v.size() == 1) {
+                // `Number(String([x]))`: a Boolean's text ("true") is no number, and -0 is written "0".
+                const Json& x = v[std::size_t{0}];
+                if (x.is_bool()) return std::numeric_limits<double>::quiet_NaN();
+                if (x.is_number()) return x.as_double() == 0 ? 0.0 : x.as_double();
+                return js_number_of(x);
+            }
             return std::numeric_limits<double>::quiet_NaN();
         default: return std::numeric_limits<double>::quiet_NaN();
     }

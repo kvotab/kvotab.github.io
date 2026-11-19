@@ -149,7 +149,7 @@ std::vector<std::pair<double, std::vector<double>>> points(double t0, double t1,
 
 double min_change(const Project& project) {
     const Json& v = project.simulation.get("min_change_time");
-    const double x = v.is_null() ? 0.0 : py_float_nan(v);
+    const double x = v.is_null() ? 0.0 : value_number(v);
     return std::isfinite(x) ? x : 0.0;
 }
 

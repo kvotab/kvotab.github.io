@@ -64,7 +64,7 @@ Json audit(const Budget& budget, const std::vector<double>& t, const std::vector
             }
         return most;
     };
-    double r = rtol.is_null() ? std::nan("") : py_float_nan(rtol);
+    double r = rtol.is_null() ? std::nan("") : value_number(rtol);
     double tolerance = std::max(1e-10, 20 * (std::isfinite(r) && r > 0 ? r : 1e-6));
     Json families = Json::array();
     std::vector<Row> totals(n);

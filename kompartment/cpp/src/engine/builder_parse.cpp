@@ -149,7 +149,7 @@ Builder::IndexOperation Builder::index_operation_ast(const EntryPtr& a, const st
     std::vector<ENodePtr> args;
     std::vector<std::string> shown;
     if (op == "percentile") {
-        args.push_back(std::make_shared<ENum>(a->block.get("percentile").as_double()));
+        args.push_back(std::make_shared<ENum>(js_number_of(a->block.get("percentile"))));   // `Number(...)`: none is the 0th
         shown.push_back(js_str(a->block.get("percentile")));
     }
     for (const auto& idx : names) {

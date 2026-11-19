@@ -182,24 +182,14 @@ double ff_pow(double q, int j) {
     return (odd && q < 0) ? -r : r;
 }
 
-std::string num_text(double f) {
-    if (std::isnan(f)) return "NaN";
-    if (std::isinf(f)) return f > 0 ? "Infinity" : "-Infinity";
-    if (f == std::floor(f) && std::fabs(f) < 1e21) {
-        if (f == 0) return "0";
-        char buf[40];
-        std::snprintf(buf, sizeof buf, "%.0f", f);
-        return buf;
-    }
-    return py_repr(f);
-}
+std::string num_text(double f) { return js_text(f); }
 
 // --- the geometry ------------------------------------------------------------------------------
 
 void layer_depths(double* d, double pen_dep, int nm, double aw, double first) {
-    if (!(pen_dep > 0 && std::isfinite(pen_dep))) throw FarfError("The penetration depth must be a positive length (got " + py_repr(pen_dep) + ")");
+    if (!(pen_dep > 0 && std::isfinite(pen_dep))) throw FarfError("The penetration depth must be a positive length (got " + num_text(pen_dep) + ")");
     if (!(aw > 0 && std::isfinite(aw)))
-        throw FarfError("F/TW must be positive: it is the flow-wetted surface per unit volume of water (got " + py_repr(aw) + ")");
+        throw FarfError("F/TW must be positive: it is the flow-wetted surface per unit volume of water (got " + num_text(aw) + ")");
     double d0 = first;
     if (!std::isfinite(d0) || !(d0 > 0)) {
         const double E = 2.718281828459045;
@@ -212,8 +202,8 @@ void layer_depths(double* d, double pen_dep, int nm, double aw, double first) {
         d0 = zeroin(geo, 1e-12 / E, 2 / aw / E) * E;
     }
     if (d0 * nm > pen_dep * (1 + 1e-12)) {
-        throw FarfError(std::to_string(nm) + " matrix layers starting at " + py_repr(d0) + " m cannot add up to a penetration depth of " +
-                        py_repr(pen_dep) + " m: the layers grow with depth, so the first must be smaller than " + py_repr(pen_dep / nm) +
+        throw FarfError(std::to_string(nm) + " matrix layers starting at " + num_text(d0) + " m cannot add up to a penetration depth of " +
+                        num_text(pen_dep) + " m: the layers grow with depth, so the first must be smaller than " + num_text(pen_dep / nm) +
                         " m. Use a thinner first layer, fewer layers, a greater depth, or leave the first layer empty to have it worked out.");
     }
     // d0 q^j added up, less the depth.
@@ -461,8 +451,8 @@ void FarfPath::slot_rates(const FarfSetting& s, int slot, int o, bool ref_ready)
     if (auto rock = rock_setting_problem(s)) throw FarfError(*rock);
     double r_m = s.eps_m + s.rho_m * s.kd_m;
     if (!(r_m > 0 && std::isfinite(r_m))) {
-        throw FarfError("The matrix capacity eps + rho*Kd must be greater than zero (got " + py_repr(s.eps_m) + " + " + py_repr(s.rho_m) + "*" +
-                        py_repr(s.kd_m) + " = " + py_repr(r_m) + "). A rock with no porosity and no sorption has nothing for the nuclide to diffuse into.");
+        throw FarfError("The matrix capacity eps + rho*Kd must be greater than zero (got " + num_text(s.eps_m) + " + " + num_text(s.rho_m) + "*" +
+                        num_text(s.kd_m) + " = " + num_text(r_m) + "). A rock with no porosity and no sorption has nothing for the nuclide to diffuse into.");
     }
     double f_df = 1 / (1 + s.kd_f * aw);
     double adv_f = (f_df * nf) / s.tw;

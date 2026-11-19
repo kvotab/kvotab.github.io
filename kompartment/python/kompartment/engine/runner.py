@@ -15,6 +15,7 @@ from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Sequ
 
 import numpy as np
 
+from ..io.csv import js_to_number
 from ..jsonio import js_number
 from ..simulation import add_method_steps, describe_method_steps
 from .builder import BuildError, build_system, tuple_by_list
@@ -75,10 +76,8 @@ def absolute_tolerance(project: Project, layout: Any) -> Any:
             v = value_at(s.block, 'abstol', tuple_by_list(layout.index_space, s.dims, off))
             if v is None or v == '':
                 continue
-            try:
-                n = float(v)
-            except (TypeError, ValueError):
-                continue
+            # As the application reads it, with `Number()`.
+            n = js_to_number(v)
             if not math.isfinite(n) or not (n > 0):
                 continue
             per_state[s.base + off] = n
@@ -339,7 +338,8 @@ def run(project: Any, system: Any = None, on_progress: Optional[Callable[[float,
         jumped[0] += len(due)
         return nxt
 
-    min_change = float(sim.get('min_change_time') or 0)
+    # `Number(min_change_time ?? 0)`; one that is no positive number asks for none.
+    min_change = js_to_number(sim.get('min_change_time'))
     f = eq['dydt'] if eq.get('dydt') is not None else system.rhs
     on_segment = eq.get('on_segment')
     # Compiling a model (or loading it from the cache) is timed apart from
@@ -931,6 +931,7 @@ class Results:
             else:
                 live.append(k)
         if derived:
+            from ..stats.pdf import _MISSING
             from .derived import reduce as reduce_derived
             wanted = list(dict.fromkeys(outputs[k]['derived']['of'] for k in derived))
             by_label = self._by_label()
@@ -945,7 +946,7 @@ class Results:
                 if src is None:
                     cols[k][:] = math.nan
                     continue
-                v = reduce_derived(d['kind'], self.t, src, at=d.get('at'), period=d.get('period'))
+                v = reduce_derived(d['kind'], self.t, src, at=d.get('at', _MISSING), period=d.get('period', _MISSING))
                 if isinstance(v, np.ndarray):
                     cols[k][:] = v[:n]
                 else:

@@ -76,11 +76,6 @@ double pd_sqrt(double x);
 /// Julia's `strip`: the white space Julia's `isspace` knows taken from both ends.
 std::string_view jl_strip(std::string_view s);
 
-/// Julia's `py_float` (engine/farfield_domain.jl): Python's `float()` of a value, NaN for
-/// what it cannot read -- text a decimal (underscores dropped) or Python's words for the
-/// infinities and NaN, trimmed as Julia's `strip` trims, past a double's range Infinity or 0.
-double jl_py_float(const Json& v);
-
 // --- the kinds -----------------------------------------------------------------------------------
 
 /// What each kind takes, in the application's order (`PDF_KINDS`).

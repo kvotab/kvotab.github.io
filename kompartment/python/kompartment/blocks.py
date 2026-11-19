@@ -38,7 +38,7 @@ from typing import (TYPE_CHECKING, Any, ClassVar, Dict, Iterator, List, Mapping,
 
 from .distributions import make_pdf, pdf_problems
 from .errors import EditError
-from .io.csv import JS_WHITESPACE
+from .io.csv import JS_WHITESPACE, js_to_number
 from .jsonio import js_number
 from .names import NAME_RE, qualify
 
@@ -113,10 +113,9 @@ FARF_OPTIONAL_KEYS = ('aw', 'aperture')
 
 
 def _count_number(v: Any) -> float:
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return float('nan')
+    """``Number(v)``, as the application reads a count: blank is 0, ``0x10`` is 16,
+    ``1_000`` and ``inf`` are NaN."""
+    return js_to_number(v)
 
 
 def farfield_extra_cells(block: Dict[str, Any]) -> int:
@@ -202,13 +201,9 @@ def equation_text(value: Any) -> str:
 def _written_number(text: str) -> Optional[float]:
     """The number an equation is when it is one written out, as JavaScript's
     ``Number`` reads it; None for anything else."""
-    t = text.strip(JS_WHITESPACE)
-    if not t or '_' in t:
+    if not text.strip(JS_WHITESPACE):
         return None
-    try:
-        v = float(t)
-    except ValueError:
-        return None
+    v = js_to_number(text)
     return v if math.isfinite(v) else None
 
 
