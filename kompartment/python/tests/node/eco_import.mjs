@@ -63,6 +63,7 @@ async function answer(req) {
 				TRANSPORT_XML: fixture.TRANSPORT_XML,
 				GENERAL_VARIABLE_XML: fixture.GENERAL_VARIABLE_XML,
 				TRANSFER_EVENT_XML: fixture.TRANSFER_EVENT_XML,
+				COLOUR_XML: fixture.COLOUR_XML,
 			};
 		case 'xml':
 			return imported(() => eco.importModelXML(req.text, meta(req)));

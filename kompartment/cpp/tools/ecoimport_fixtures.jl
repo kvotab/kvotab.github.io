@@ -510,6 +510,30 @@ xcase("one general variable", model(; blocks=compartment("A", "a"; body="<unit>k
     comp("general-variable", "One", "g"; entries=[entry("expression", tag("equation", "a"))])))
 xcase("unchosen general variables", model(; blocks=join(comp("general-variable", "U$k", "u$k") for k in 1:6)))
 
+# Block colours: Ecolego 6's property and the element before it, the switch beside them, the
+# types' own colours, numbers Java's Integer.valueOf reads and ones it does not, and the blocks a
+# colour goes on to -- both halves of a transfer made in two, the event a discrete transfer becomes.
+colour(v) = "<property name=\"color\" type=\"color\">$v</property>"
+shown(v) = "<property name=\"color-visible\" type=\"boolean\">$v</property>"
+xcase("colours", full_model(; blocks_extra=
+    compartment("Red", "k1"; body=colour("-65536") * shown("true")) *
+    compartment("Own green", "k2"; body=colour("-4128832")) *
+    compartment("Unfilled", "k3"; body=colour("-65536") * shown("false")) *
+    compartment("Old", "k4"; body="<color> -16776961 </color><color-visible>TRUE</color-visible>") *
+    compartment("Empty first", "k5"; body=colour("") * "<color>+16744448</color>") *
+    compartment("Ai", "kai"; lists="il-obj") * compartment("Bi", "kbi"; lists="il-obj") *
+    join(parameter("P$k", "kp$k", "1"; body=colour(v)) for (k, v) in enumerate((
+        "-0", "+0", "0016711680", "-2147483648", "2147483647", "-2147483649", "2147483648", "99999999999999999999999",
+        "1e3", "0x10", "\u0661\u0662", "12 34", "\u00a0-65536\u2028", "-", "+-1", "#ff0000", "-8323200", "-6250336"))) *
+    join(expression("Shown $k", "ks$k", "1"; body=colour("-256") * shown(v)) for (k, v) in enumerate(("yes", " True ", "", "1"))) *
+    transfer("Painted", "kt1", "k1", "k2", "0.1"; donor="true", body=colour("-256")) *
+    transfer("Old green", "kt2", "k1", "k3", "0.1"; type="transfer-coefficient", body="<color>-8323200</color>") *
+    transfer("Halves", "kt3", "kai", "kbi", "0.1"; lists="il-obj", donor="true", body=colour("-16711936"),
+             per=[entry("transfer", "<multiply-with-donor>false</multiply-with-donor>"; index="x-lake")]) *
+    comp("discrete-event", "Go", "kev"; body=colour("-4161408"),
+         entries=[entry("discrete-event", tag("first-expression", "time") * tag("second-expression", "5"))]) *
+    transfer("Jump", "kt4", "k1", "k3", "1"; donor="true", body=colour("-39271"), per=[entry("transfer", tag("transfer-event", "Go"))])))
+
 # Sub-system interfaces.
 iface(type, name, id, objs; sub=nothing, enabled=nothing) =
     comp(type, name, id; sub, body=(enabled === nothing ? "" : "<enabled>$enabled</enabled>") *

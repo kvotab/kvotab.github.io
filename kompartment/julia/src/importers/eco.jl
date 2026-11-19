@@ -255,6 +255,54 @@ const _ECO_INTERFACE_OPERATION = Dict("ADD" => "sum", "MAX" => "max", "MIN" => "
 legacy transfer-coefficient a rate multiplied by its donor."""
 const _ECO_DONOR_DEFAULT = Dict("transfer" => false, "transfer-coefficient" => true)
 
+"""The colours Ecolego gives a new block of each type, as `#rrggbb`: a block
+still in one was never given a colour, and takes this tool's for its kind. A
+transfer has two, since Ecolego 6 keeps the old transfer coefficients' green on
+the transfers it reads them as. `DEFAULT_COLOURS` in `src/io/eco.js`."""
+const _ECO_DEFAULT_COLOURS = Dict{String,Vector{String}}(
+    "compartment" => ["#c0ffc0"],
+    "transport-begin" => ["#c0ffc0"],
+    "transport-end" => ["#c0ffc0"],
+    "expression" => ["#c0c0ff"],
+    "post-processing" => ["#c0c0ff"],
+    "constant" => ["#c0c0ff"],
+    "transport-number" => ["#c0c0ff"],
+    "transport-element-counter" => ["#d0e0a0"],
+    "transport-operation" => ["#e0e0c0"],
+    "parameter" => ["#a0ffa0"],
+    "lookup-table" => ["#c0ff80"],
+    "index-operation" => ["#c0e0c0"],
+    "aggregate" => ["#80e0c0"],
+    "min-max" => ["#c0a280"],
+    "running-mean" => ["#c0a280"],
+    "snapshot" => ["#c0a280"],
+    "delay" => ["#80c0c0"],
+    "discrete-event" => ["#c08080"],
+    "general-variable" => ["#c0e0ff"],
+    "select" => ["#c0e0ff"],
+    "transfer" => ["#c0ffc0", "#80ff80"],
+    "transfer-coefficient" => ["#c0ffc0", "#80ff80"],
+)
+
+# The colour a block was given in Ecolego, as `#rrggbb`, or `nothing` when it
+# was given none: its colour switched off, not a number Java's `Integer.valueOf`
+# reads, or its type's own (`_ECO_DEFAULT_COLOURS`). `blockColour` in
+# `src/io/eco.js`.
+function _eco_block_colour(el::EcoXMLNode, type_)
+    shown = _eco_property_text(el, "color-visible")
+    _eco_truthy(shown) || (shown = _eco_child_text(el, "color-visible"))
+    _eco_truthy(shown) && _eco_py_lower(shown) != "true" && return nothing
+    text = _eco_property_text(el, "color")
+    _eco_truthy(text) || (text = _eco_child_text(el, "color"))
+    (_eco_truthy(text) && occursin(r"\A[+-]?[0-9]+\z", text)) || return nothing
+    # Within Java's int. `typemin(Int32)`, not `-0x80000000`: a hex literal is
+    # unsigned here, and its minus wraps round to itself.
+    value = tryparse(Int64, text)
+    (value === nothing || value < typemin(Int32) || value > typemax(Int32)) && return nothing
+    colour = "#" * string(value & 0xffffff; base=16, pad=6)
+    return colour in get(_ECO_DEFAULT_COLOURS, type_ === nothing ? "" : type_, String[]) ? nothing : colour
+end
+
 # --- small helpers -------------------------------------------------------------------------
 
 # JavaScript's `value ?? fallback` (Python's `_or`): only a missing value falls back.
@@ -976,6 +1024,8 @@ function _eco_settle_transfer_events!(project::JDict, report::EcoImportReport)
         _eco_truthy(get(t, "system", nothing)) && (block["system"] = t["system"])
         _eco_truthy(get(t, "comment", nothing)) && (block["comment"] = t["comment"])
         get(t, "enabled", nothing) === false && (block["enabled"] = false)
+        # The transfer's colour, on the block it became.
+        _eco_truthy(get(t, "color", nothing)) && (block["color"] = t["color"])
         block["timing"] = "trigger"
         block["trigger"] = event
         block["actions"] = Any[JDict("kind" => "move", "from" => t["from"], "to" => get(t, "to", nothing),
@@ -1887,6 +1937,9 @@ function _eco_read_blocks(data_model::EcoXMLNode, project::JDict, names::_EcoNam
     # A transfer made in two, by the qualified name of the file's.
     twins = OrderedDict{String,String}()
     generals = Any[]
+    # The colour each block was given, by the qualified name it ends up with;
+    # put on the blocks once they all exist. See `_eco_block_colour`.
+    colours = Dict{String,String}()
 
     block_name_by_id = OrderedDict{String,String}()
     path_by_id = hierarchy.path_by_id
@@ -1988,6 +2041,8 @@ function _eco_read_blocks(data_model::EcoXMLNode, project::JDict, names::_EcoNam
         # Blocks carry their own local name and the sub-system holding them.
         name = (!isempty(system) && startswith(qualified, "$system.")) ?
                qualified[ncodeunits(system)+2:end] : qualified
+        colour = _eco_block_colour(el, type_)
+        colour === nothing || (colours[isempty(system) ? name : "$system.$name"] = colour)
         # Dimension lists in declared order, for resolving entry ids -- and,
         # where the file names none but says there is one, the list that
         # stands for the intersection of a transfer's two ends.
@@ -2338,6 +2393,22 @@ function _eco_read_blocks(data_model::EcoXMLNode, project::JDict, names::_EcoNam
                 qname in off_names || continue
                 block["enabled"] = false
                 _eco_disable!(report, qname)
+            end
+        end
+    end
+
+    # The colours, by qualified name as the switches are. The second half of a
+    # transfer made in two is the colour of the first.
+    for (whole, twin) in twins
+        haskey(colours, whole) && (colours[twin] = colours[whole])
+    end
+    if !isempty(colours)
+        for collection in ("compartments", "expressions", "transfers", "parameters", "functions",
+                           "lookups", "index_reductions", "block_reductions",
+                           "min_maxes", "running_means", "snapshots", "delays", "triggers")
+            for block in _eco_list(project, collection)
+                colour = get(colours, _eco_qualified(block), nothing)
+                colour === nothing || (block["color"] = colour)
             end
         end
     end

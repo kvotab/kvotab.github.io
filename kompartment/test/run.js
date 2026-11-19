@@ -62,7 +62,7 @@ import { unzip, entryText, ZipError } from '../src/io/zip.js';
 import { importModelXML, importEcoFile, ImportError } from '../src/io/eco.js';
 import {
 	makeZip, MODEL_XML, VIEWS_XML, REAL_SHAPES_XML, SHEET_XML, toUtf16BE, TRANSPORT_XML,
-	GENERAL_VARIABLE_XML, STORED_MODEL_XML, STORED, storedRunFiles, TRANSFER_EVENT_XML,
+	GENERAL_VARIABLE_XML, STORED_MODEL_XML, STORED, storedRunFiles, TRANSFER_EVENT_XML, COLOUR_XML,
 } from './eco-fixture.js';
 import { expandTransports } from '../src/sim/transport.js';
 import {
@@ -16111,6 +16111,49 @@ test('an imported discrete transfer is an event its trigger sets off, or is left
 	assert(both.report.warnings.some((w) => w.startsWith("'Disappearing' and 'Amount' are set off by the same discrete event, "
 		+ "and 'Amount' takes its share of 'Lake_1.Lake' after 'Disappearing' has moved a share out of it.")), JSON.stringify(both.report.warnings));
 	assert(!report.warnings.some((w) => /set off by the same discrete event/.test(w)), 'one transfer per event was said to clash');
+});
+
+test('an imported block keeps the colour it was given in Ecolego, and one in its type’s own colour follows the theme', async () => {
+	// Every Ecolego block carries a colour: its type's own until somebody
+	// picks another. The picked ones come across, on the block that stands
+	// for each -- the event a discrete transfer becomes, both halves of a
+	// transfer made in two -- and the rest are left to this tool's colours,
+	// which follow the theme. So is a colour switched off, a number Java
+	// would not read, and the green Ecolego 4 and 5 gave a transfer
+	// coefficient, which Ecolego 6 keeps on the transfers it reads them as.
+	const { project, report } = importModelXML(COLOUR_XML);
+	const coloured = {};
+	for (const [kind, blocks] of Object.entries(project)) {
+		if (!Array.isArray(blocks)) continue;
+		for (const b of blocks) if (b?.color) coloured[`${kind}:${ed.qualifiedName(b)}`] = b.color;
+	}
+	const want = {
+		'parameters:k': '#0000ff', 'parameters:Spare': '#ff8000', 'compartments:Red': '#ff0000',
+		'compartments:Off': '#404040', 'compartments:Near.Pond': '#ffafaf', 'expressions:Near.Grey': '#c0c0c0',
+		'expressions:Choice': '#ffff00', 'transfers:Flow': '#0000ff', 'transfers:Near.Out': '#ffff00',
+		'transfers:Near.Out_absolute': '#ffff00', 'functions:Twice': '#ff6699', 'events:Dump': '#00ff00',
+	};
+	assert(JSON.stringify(Object.entries(coloured).sort()) === JSON.stringify(Object.entries(want).sort()),
+		JSON.stringify(coloured));
+	// A block switched off keeps its colour as well as its switch.
+	const off = project.compartments.find((c) => c.name === 'Off');
+	assert(off.enabled === false && off.color === '#404040', JSON.stringify(off));
+	// Nothing about colours is a loss, so the report has nothing to say.
+	assert(!JSON.stringify(report.warnings).includes('colo'), JSON.stringify(report.warnings));
+	// Opened, the colours are the ones drawn: a node's fill, and a line's colour
+	// on the diagram and its cell in the matrix.
+	const fx = await import('./eco-export-fixture.js');
+	const opened = fx.openedModel(project);
+	assert(ed.formatOf(opened, 'Red').color === '#ff0000', JSON.stringify(ed.formatOf(opened, 'Red')));
+	assert(ed.formatOf(opened, 'Plain').color === null, JSON.stringify(ed.formatOf(opened, 'Plain')));
+	assert(ed.connectionLook(ed.findBlock(opened, 'Near.Out').block).color === '#ffff00', 'the line');
+	assert(ed.connectionLook(ed.findBlock(opened, 'Leak').block).color === null, 'the old green');
+	// And they change nothing the model does.
+	const r = run(opened);
+	const plain = run(fx.openedModel(importModelXML(COLOUR_XML.replace(/<property name="color" type="color">[^<]*<\/property>|<color>[^<]*<\/color>/g, '')).project));
+	assert(r.t.length > 2 && JSON.stringify(Array.from(r.y ?? [])) === JSON.stringify(Array.from(plain.y ?? []))
+		&& r.outputs().every((o, i) => JSON.stringify(Array.from(r.series(o))) === JSON.stringify(Array.from(plain.series(plain.outputs()[i])))),
+	'a colour moved a number');
 });
 
 test('an assessment’s stored runs come in beside the model, as each Ecolego wrote them', async () => {

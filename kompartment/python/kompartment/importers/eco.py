@@ -147,6 +147,38 @@ INTERFACE_OPERATION = {'ADD': 'sum', 'MAX': 'max', 'MIN': 'min', 'MEAN': 'mean',
 #: ``<multiply-with-donor>`` in an entry overrides both.
 DONOR_DEFAULT = {'transfer': False, 'transfer-coefficient': True}
 
+#: The colours Ecolego gives a new block of each type, as ``#rrggbb``: a block
+#: still in one was never given a colour, and takes this tool's for its kind.
+#: A transfer has two, since Ecolego 6 keeps the old transfer coefficients'
+#: green on the transfers it reads them as. ``DEFAULT_COLOURS`` in
+#: ``src/io/eco.js``.
+DEFAULT_COLOURS = {
+    'compartment': ('#c0ffc0',),
+    'transport-begin': ('#c0ffc0',),
+    'transport-end': ('#c0ffc0',),
+    'expression': ('#c0c0ff',),
+    'post-processing': ('#c0c0ff',),
+    'constant': ('#c0c0ff',),
+    'transport-number': ('#c0c0ff',),
+    'transport-element-counter': ('#d0e0a0',),
+    'transport-operation': ('#e0e0c0',),
+    'parameter': ('#a0ffa0',),
+    'lookup-table': ('#c0ff80',),
+    'index-operation': ('#c0e0c0',),
+    'aggregate': ('#80e0c0',),
+    'min-max': ('#c0a280',),
+    'running-mean': ('#c0a280',),
+    'snapshot': ('#c0a280',),
+    'delay': ('#80c0c0',),
+    'discrete-event': ('#c08080',),
+    'general-variable': ('#c0e0ff',),
+    'select': ('#c0e0ff',),
+    'transfer': ('#c0ffc0', '#80ff80'),
+    'transfer-coefficient': ('#c0ffc0', '#80ff80'),
+}
+
+_JAVA_INT = re.compile('[+-]?[0-9]+')
+
 _SHEET = re.compile('<sheet[' + _S + '>]')
 _DATA_MODEL = re.compile('<data-model[' + _S + '>]')
 _VERSION = re.compile('(^|[' + _S + '])version[' + _S + ']*=[' + _S + ']*([A-Za-z0-9_.-]+)')
@@ -778,6 +810,9 @@ def _settle_transfer_events(project: Dict[str, Any], report: 'ImportReport') -> 
             block['comment'] = t['comment']
         if t.get('enabled') is False:
             block['enabled'] = False
+        # The transfer's colour, on the block it became.
+        if t.get('color'):
+            block['color'] = t['color']
         block['timing'] = 'trigger'
         block['trigger'] = event
         block['actions'] = [{'kind': 'move', 'from': t['from'], 'to': t.get('to'), 'fraction': t['rate']}]
@@ -1757,6 +1792,9 @@ def _read_blocks(data_model: Node, project: Dict[str, Any], names: _NameMapper, 
     # The general variables, for :func:`_settle_general_variables` once every
     # block is in: what each was chosen to read is only known then.
     generals: List[Dict[str, Any]] = []
+    # The colour each block was given, by the qualified name it ends up with;
+    # put on the blocks once they all exist. See :func:`_block_colour`.
+    colours: Dict[str, str] = {}
 
     block_name_by_id: Dict[str, str] = {}
     path_by_id = hierarchy['path_by_id'] if hierarchy is not None else {}
@@ -1859,6 +1897,9 @@ def _read_blocks(data_model: Node, project: Dict[str, Any], names: _NameMapper, 
             qualified = names.map(original, bid if bid is not None else original, system)
         # Blocks carry their own local name and the sub-system holding them.
         name = qualified[len(system) + 1:] if system and qualified.startswith(f'{system}.') else qualified
+        colour = _block_colour(el, type_)
+        if colour:
+            colours[f'{system}.{name}' if system else name] = colour
         # Dimension lists in declared order, for resolving entry ids -- and,
         # where the file names none but says there is one, the list that
         # stands for the intersection of a transfer's two ends.
@@ -2209,6 +2250,20 @@ def _read_blocks(data_model: Node, project: Dict[str, Any], names: _NameMapper, 
                 block['enabled'] = False
                 report.disable(qname)
 
+    # The colours, by qualified name as the switches are. The second half of a
+    # transfer made in two is the colour of the first.
+    for whole, twin in twins.items():
+        if whole in colours:
+            colours[twin] = colours[whole]
+    if colours:
+        for collection in ('compartments', 'expressions', 'transfers', 'parameters', 'functions',
+                           'lookups', 'index_reductions', 'block_reductions',
+                           'min_maxes', 'running_means', 'snapshots', 'delays', 'triggers'):
+            for block in project.get(collection) or []:
+                colour = colours.get(_qualified(block))
+                if colour:
+                    block['color'] = colour
+
     wiring['id_by_guid'] = id_by_guid
     return block_name_by_id, wiring, twins, generals
 
@@ -2394,6 +2449,24 @@ def _property_text(el: Node, name: str) -> Optional[str]:
         if p.attrs.get('name') == name:
             return js_trim(p.text or '')
     return None
+
+
+def _block_colour(el: Node, type_: Optional[str]) -> Optional[str]:
+    """The colour a block was given in Ecolego, as ``#rrggbb``, or ``None``
+    when it was given none: its colour switched off, not a number Java's
+    ``Integer.valueOf`` reads, or its type's own (``DEFAULT_COLOURS``).
+    ``blockColour`` in ``src/io/eco.js``."""
+    shown = _property_text(el, 'color-visible') or child_text(el, 'color-visible')
+    if shown and shown.lower() != 'true':
+        return None
+    text = _property_text(el, 'color') or child_text(el, 'color')
+    if not text or not _JAVA_INT.fullmatch(text):
+        return None
+    value = int(text)
+    if value < -0x80000000 or value > 0x7FFFFFFF:
+        return None
+    colour = '#%06x' % (value & 0xFFFFFF)
+    return None if colour in DEFAULT_COLOURS.get(type_ or '', ()) else colour
 
 
 def _number_list(text: Optional[str]) -> List[float]:

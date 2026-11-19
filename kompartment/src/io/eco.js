@@ -189,6 +189,68 @@ const INTERFACE_OPERATION = lookup({
 const DONOR_DEFAULT = lookup({ transfer: false, 'transfer-coefficient': true });
 
 /**
+ * The colours Ecolego gives a new block of each type, as `#rrggbb`: the
+ * `DEFAULT_COLOR` of the class each type name makes. A block still in one of
+ * these was never given a colour, and takes this tool's for its kind, which
+ * follows the theme. See `blockColour`.
+ *
+ * A transfer has two. Ecolego 4 and 5 made the legacy `transfer-coefficient`
+ * in (128, 255, 128), and Ecolego 6 keeps that colour on the transfer it reads
+ * one as, so a project it has saved again carries both greens on plain
+ * transfers: in the files here, 29 of one assessment's 78 transfers, beside 3
+ * in today's green and 46 in colours their author chose. Neither green was a
+ * choice -- one project has 649 transfer coefficients, every one of them in
+ * the old green.
+ */
+const DEFAULT_COLOURS = lookup({
+	compartment: ['#c0ffc0'],
+	'transport-begin': ['#c0ffc0'],
+	'transport-end': ['#c0ffc0'],
+	expression: ['#c0c0ff'],
+	'post-processing': ['#c0c0ff'],
+	constant: ['#c0c0ff'],
+	'transport-number': ['#c0c0ff'],
+	'transport-element-counter': ['#d0e0a0'],
+	'transport-operation': ['#e0e0c0'],
+	parameter: ['#a0ffa0'],
+	'lookup-table': ['#c0ff80'],
+	'index-operation': ['#c0e0c0'],
+	aggregate: ['#80e0c0'],
+	'min-max': ['#c0a280'],
+	'running-mean': ['#c0a280'],
+	snapshot: ['#c0a280'],
+	delay: ['#80c0c0'],
+	'discrete-event': ['#c08080'],
+	'general-variable': ['#c0e0ff'],
+	select: ['#c0e0ff'],
+	transfer: ['#c0ffc0', '#80ff80'],
+	'transfer-coefficient': ['#c0ffc0', '#80ff80'],
+});
+
+/**
+ * The colour a block was given in Ecolego, or null when it was given none.
+ *
+ * Every block carries one, as Java's packed RGB -- alpha in the top byte, so
+ * usually a negative number: `<property name="color">` in Ecolego 6, a
+ * `<color>` element before it. Beside it is a switch, `color-visible`, that
+ * draws the block with no fill at all. The switch off, a number Java's
+ * `Integer.valueOf` would not read, and the type's own colour
+ * (`DEFAULT_COLOURS`) all give null; anything else is the block's own, written
+ * `#rrggbb` as the colour picker writes one. A transfer's colours its line and
+ * its cell in the matrix, as Ecolego's colours its cell; a node's fills it.
+ */
+function blockColour(el, type) {
+	const shown = propertyText(el, 'color-visible') || childText(el, 'color-visible');
+	if (shown && shown.toLowerCase() !== 'true') return null;
+	const text = propertyText(el, 'color') || childText(el, 'color');
+	if (!text || !/^[+-]?[0-9]+$/.test(text)) return null;
+	const value = Number(text);
+	if (value < -0x80000000 || value > 0x7fffffff) return null;
+	const colour = `#${(value & 0xffffff).toString(16).padStart(6, '0')}`;
+	return (DEFAULT_COLOURS[type] ?? []).includes(colour) ? null : colour;
+}
+
+/**
  * Reads a .eco archive.
  * @param {ArrayBuffer|Uint8Array} data
  * @param {{fileName?: string}} meta what the caller knows and the bytes do not
@@ -876,6 +938,8 @@ function settleTransferEvents(project, report) {
 		if (t.system) block.system = t.system;
 		if (t.comment) block.comment = t.comment;
 		if (t.enabled === false) block.enabled = false;
+		// The transfer's colour, on the block it became.
+		if (t.color) block.color = t.color;
 		block.timing = 'trigger';
 		block.trigger = event;
 		block.actions = [{ kind: 'move', from: t.from, to: t.to ?? null, fraction: t.rate }];
@@ -1873,6 +1937,9 @@ function readBlocks(dataModel, project, names, indexIds, report, hierarchy = nul
 	// The general variables, for `settleGeneralVariables` once every block is
 	// in: what each was chosen to read is only known then.
 	const generals = [];
+	// The colour each block was given, by the qualified name it ends up with;
+	// put on the blocks once they all exist. See `blockColour`.
+	const colours = new Map();
 
 	// Pass one: block id -> mapped name, so connections can resolve endpoints.
 	// Boundary components are recorded separately: a transfer touching one gets
@@ -1991,6 +2058,8 @@ function readBlocks(dataModel, project, names, indexIds, report, hierarchy = nul
 		const name = system && qualified.startsWith(`${system}.`)
 			? qualified.slice(system.length + 1)
 			: qualified;
+		const colour = blockColour(el, type);
+		if (colour) colours.set(system ? `${system}.${name}` : name, colour);
 		// Dimension list objects, in declared order, for resolving entry ids --
 		// and, where the file names none but says there is one, the list that
 		// stands for the intersection of a transfer's two ends.
@@ -2387,6 +2456,22 @@ function readBlocks(dataModel, project, names, indexIds, report, hierarchy = nul
 				if (!offNames.has(qname)) continue;
 				block.enabled = false;
 				report.disable(qname);
+			}
+		}
+	}
+
+	// The colours, by qualified name as the switches are. The second half of a
+	// transfer made in two is the colour of the first.
+	for (const [whole, twin] of twins) if (colours.has(whole)) colours.set(twin, colours.get(whole));
+	if (colours.size) {
+		for (const collection of [
+			'compartments', 'expressions', 'transfers', 'parameters', 'functions',
+			'lookups', 'index_reductions', 'block_reductions',
+			'min_maxes', 'running_means', 'snapshots', 'delays', 'triggers',
+		]) {
+			for (const block of project[collection] ?? []) {
+				const colour = colours.get(block.system ? `${block.system}.${block.name}` : block.name);
+				if (colour) block.color = colour;
 			}
 		}
 	}

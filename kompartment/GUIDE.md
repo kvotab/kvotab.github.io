@@ -4748,6 +4748,19 @@ with whatever operation the input named. Dropping that wiring would not break a
 model; it would leave one that runs and reports zero, which is worse. An input
 connected to nothing is left exactly as it is, which is what the file says.
 
+**Block colours come across.** A block given a colour of its own in Ecolego
+keeps it: it is filled with it on the diagram, and so is a compartment's tile
+on the **Matrix** diagonal, while a transfer's line and its cell in the matrix
+are drawn in it, so a model whose transfers are coloured by what carries them
+reads the same way here. A block still in the colour Ecolego gives every block
+of its type was never given one, and takes this tool's colour for its kind,
+which follows the theme; so does a block whose colour is switched off in
+Ecolego, and a transfer in the green that older versions gave a transfer
+coefficient. A discrete transfer's colour goes onto the event it becomes.
+Sub-systems, sources and sinks have nothing here to carry one. Once imported, a
+colour is the block's own **Appearance** setting, to change or clear like any
+other.
+
 An import always shows a report: what came across, what was renamed (Ecolego
 names may contain spaces, which this tool's identifiers cannot), and above all
 **what was skipped**. This tool implements five block types out of roughly

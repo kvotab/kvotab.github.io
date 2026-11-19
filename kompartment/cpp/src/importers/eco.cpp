@@ -299,6 +299,70 @@ OptStr property_text(const XmlNode& el, std::string_view name) {
     return std::nullopt;
 }
 
+// The colours Ecolego gives a new block of each type, as `#rrggbb`: a block still in one was never
+// given a colour, and takes this tool's for its kind. A transfer has two, since Ecolego 6 keeps the
+// old transfer coefficients' green on the transfers it reads them as. `DEFAULT_COLOURS` in
+// src/io/eco.js.
+const std::vector<std::string>& default_colours(const std::string& type) {
+    static const std::unordered_map<std::string, std::vector<std::string>> colours = {
+        {"compartment", {"#c0ffc0"}},
+        {"transport-begin", {"#c0ffc0"}},
+        {"transport-end", {"#c0ffc0"}},
+        {"expression", {"#c0c0ff"}},
+        {"post-processing", {"#c0c0ff"}},
+        {"constant", {"#c0c0ff"}},
+        {"transport-number", {"#c0c0ff"}},
+        {"transport-element-counter", {"#d0e0a0"}},
+        {"transport-operation", {"#e0e0c0"}},
+        {"parameter", {"#a0ffa0"}},
+        {"lookup-table", {"#c0ff80"}},
+        {"index-operation", {"#c0e0c0"}},
+        {"aggregate", {"#80e0c0"}},
+        {"min-max", {"#c0a280"}},
+        {"running-mean", {"#c0a280"}},
+        {"snapshot", {"#c0a280"}},
+        {"delay", {"#80c0c0"}},
+        {"discrete-event", {"#c08080"}},
+        {"general-variable", {"#c0e0ff"}},
+        {"select", {"#c0e0ff"}},
+        {"transfer", {"#c0ffc0", "#80ff80"}},
+        {"transfer-coefficient", {"#c0ffc0", "#80ff80"}},
+    };
+    static const std::vector<std::string> none;
+    auto it = colours.find(type);
+    return it == colours.end() ? none : it->second;
+}
+
+// The colour a block was given in Ecolego, as `#rrggbb`, or none when it was given none: its colour
+// switched off, not a number Java's `Integer.valueOf` reads -- a sign, ASCII digits, an int's
+// range -- or its type's own. `blockColour` in src/io/eco.js.
+OptStr block_colour(const XmlNode* el, const std::string& type) {
+    OptStr shown = property_text(*el, "color-visible");
+    if (!truthy(shown)) shown = child_text(el, "color-visible");
+    if (truthy(shown) && py_lower(*shown) != "true") return std::nullopt;
+    OptStr text = property_text(*el, "color");
+    if (!truthy(text)) text = child_text(el, "color");
+    if (!truthy(text)) return std::nullopt;
+    const std::string& t = *text;
+    const std::size_t sign = (t[0] == '+' || t[0] == '-') ? 1 : 0;
+    if (sign == t.size()) return std::nullopt;
+    for (std::size_t k = sign; k < t.size(); k++)
+        if (t[k] < '0' || t[k] > '9') return std::nullopt;
+    // The digits past any leading zeros: more than ten of them is past an int, and no overflow here.
+    std::size_t first = sign;
+    while (first + 1 < t.size() && t[first] == '0') first++;
+    if (t.size() - first > 10) return std::nullopt;
+    long long value = std::stoll(t.substr(first));
+    if (t[0] == '-') value = -value;
+    if (value < -2147483648LL || value > 2147483647LL) return std::nullopt;
+    static const char* digits = "0123456789abcdef";
+    const long long rgb = value & 0xffffff;
+    std::string colour = "#";
+    for (int shift = 20; shift >= 0; shift -= 4) colour += digits[(rgb >> shift) & 0xf];
+    if (contains(default_colours(type), colour)) return std::nullopt;
+    return colour;
+}
+
 // The predefined-type an index list declares, upper-cased.
 OptStr predefined_type(const XmlNode& el) {
     const OptStr t = property_text(el, "predefined-type");
@@ -1503,6 +1567,9 @@ private:
         std::unordered_set<std::string> boundary_ids;
         std::unordered_map<std::string, std::string> system_by_id;
         OrderedMap<bool> disabled_ids;
+        // The colour each block was given, by the qualified name it ends up with; put on the blocks
+        // once they all exist. See `block_colour`.
+        std::unordered_map<std::string, std::string> colours;
 
         // Pass one: block id -> qualified name, so connections can resolve their ends and
         // equations their qualified references.
@@ -1578,6 +1645,7 @@ private:
             const std::string name = (!system.empty() && qualified_name.compare(0, system.size() + 1, system + ".") == 0)
                                          ? qualified_name.substr(system.size() + 1)
                                          : qualified_name;
+            if (const OptStr colour = block_colour(el, type_)) colours[system.empty() ? name : system + "." + name] = *colour;
             // Dimension lists in declared order, for resolving entry ids -- and, where the file
             // names none but says there is one, the list that stands for the intersection of a
             // transfer's two ends.
@@ -1978,6 +2046,25 @@ private:
                     if (!off_names.count(qname)) continue;
                     block.set("enabled", Json(false));
                     report.disabled.push_back(qname);
+                }
+            }
+        }
+
+        // The colours, by qualified name as the switches are. The second half of a transfer made in
+        // two is the colour of the first.
+        for (const auto& [whole, twin] : twins_.items) {
+            auto it = colours.find(whole);
+            if (it == colours.end()) continue;
+            const std::string colour = it->second;
+            colours[twin] = colour;
+        }
+        if (!colours.empty()) {
+            for (const char* collection : {"compartments", "expressions", "transfers", "parameters", "functions", "lookups",
+                                           "index_reductions", "block_reductions", "min_maxes", "running_means", "snapshots",
+                                           "delays", "triggers"}) {
+                for (Json block : list_of(project, collection)) {
+                    auto it = colours.find(qualified(block));
+                    if (it != colours.end()) block.set("color", Json(it->second));
                 }
             }
         }
@@ -2731,6 +2818,8 @@ private:
             if (truthy(t.get("system"))) block.set("system", t.get("system"));
             if (truthy(t.get("comment"))) block.set("comment", t.get("comment"));
             if (is_false(t.get("enabled"))) block.set("enabled", Json(false));
+            // The transfer's colour, on the block it became.
+            if (truthy(t.get("color"))) block.set("color", t.get("color"));
             block.set("timing", Json("trigger"));
             block.set("trigger", event);
             Json move = Json::object({{"kind", Json("move")}, {"from", t.get("from")}, {"to", t.get("to")}, {"fraction", t.get("rate")}});

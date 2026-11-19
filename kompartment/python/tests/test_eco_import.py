@@ -627,6 +627,8 @@ def run_js_cases() -> List[Case]:
         *[xml(f'transfer events, the name with {what}', fx('TRANSFER_EVENT_XML').replace('<![CDATA[Gone]]>', ref))
           for what, ref in (('U+001C after it', 'Gone&#28;'), ('U+0085 after it', 'Gone&#x85;'),
                             ('a byte-order mark before it', '&#xFEFF;Gone'), ('a line separator after it', 'Gone&#x2028;'))],
+        # block colours: the one each block was given, and none for a type's own
+        xml('colours', fx('COLOUR_XML')),
         # Ecolego's three material lists
         xml('material lists marked', material_lists(True)),
         xml('material lists unmarked', material_lists(False)),
@@ -1217,6 +1219,24 @@ def made_up_cases() -> List[Case]:
         + ''.join(gv(f'G{k}', f'<available-objects>{offered}</available-objects>'
                                 '<entry type="expression"><equation>P</equation></entry>') for k in range(7))
         + ''.join(gv(f'U{k}', '') for k in range(5)))))
+
+    # Block colours, read as Java's Integer.valueOf reads them: a sign, ASCII
+    # digits and an int's range, white space JavaScript trims; and the switch
+    # beside them, which only `true` in any case leaves on.
+    red = ('<property name="color" type="color">-65536</property>\n\t\t\t'
+           '<property name="color-visible" type="boolean">true</property>')
+    for k, text in enumerate(['-0', '+0', '0016711680', '-2147483648', '2147483647', '-2147483649', '2147483648',
+                              '99999999999999999999999', '1e3', '0x10', '\u0661\u0662', '12 34', '\u00a0-65536\u2028',
+                              '-', '+-1', '-4128832']):
+        out.append(xml(f'colour {k}: {text!r}', replace(fx('COLOUR_XML'), red, red.replace(
+            '>-65536<', f'>{escape(text)}<'))))
+    for k, shown in enumerate(['True', ' TRUE ', 'yes', '', '1', 'false']):
+        out.append(xml(f'colour shown {k}: {shown!r}', replace(fx('COLOUR_XML'), red, red.replace(
+            '>true<', f'>{escape(shown)}<'))))
+    out.append(xml('colour given twice', replace(fx('COLOUR_XML'), red, red.replace(
+        '-65536</property>', '-65536</property><property name="color" type="color">-256</property>'))))
+    out.append(xml('colours on a transfer made in two, switched off', replace(
+        fx('COLOUR_XML'), '<id>Near&#46;Out</id>', '<id>Near&#46;Out</id><enabled>false</enabled>')))
     return out
 
 
@@ -1678,6 +1698,15 @@ class TheApplicationsOwnVariants(ParityCase):
         self.assertIs(by['transfer events, one switched off']['project']['events'][0]['enabled'], False)
         self.assertTrue(any(w.startswith("'Disappearing' and 'Amount' are set off by the same discrete event")
                             for w in by['transfer events, two from one lake']['report']['warnings']))
+        # The colour each block was given comes with it; a type's own, or one switched off, does not.
+        coloured = {f"{kind}:{b.get('system', '')}.{b['name']}".replace(':.', ':'): b['color']
+                    for kind, blocks in by['colours']['project'].items() if isinstance(blocks, list)
+                    for b in blocks if isinstance(b, dict) and 'color' in b}
+        self.assertEqual(coloured, {
+            'parameters:k': '#0000ff', 'parameters:Spare': '#ff8000', 'compartments:Red': '#ff0000',
+            'compartments:Off': '#404040', 'compartments:Near.Pond': '#ffafaf', 'expressions:Near.Grey': '#c0c0c0',
+            'expressions:Choice': '#ffff00', 'transfers:Flow': '#0000ff', 'transfers:Near.Out': '#ffff00',
+            'transfers:Near.Out_absolute': '#ffff00', 'functions:Twice': '#ff6699', 'events:Dump': '#00ff00'})
 
 
 @needs_app
@@ -1775,7 +1804,7 @@ class LoadsAsAModel(unittest.TestCase):
             'interface ADD', 'interface into a transfer', 'interface into a parameter',
             'interface end to end', 'material lists marked', 'output listed', 'AUTO both ends', 'abs-tol',
             'dydt', 'expression with arguments', 'empty discrete times', 'scenarios marked',
-            'transfer events',
+            'transfer events', 'colours',
         }
         cases = [c for c in run_js_cases() if c.label in wanted]
         self.assertEqual(len(cases), len(wanted))

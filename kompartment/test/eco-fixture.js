@@ -749,6 +749,176 @@ export const TRANSFER_EVENT_XML = `<?xml version="1.0" encoding="UTF-8"?>
 	</simulation-settings>
 </data-model>`;
 
+/**
+ * Block colours, as Ecolego writes them: Java's packed RGB, alpha in the top
+ * byte -- a `color` property in Ecolego 6, a `<color>` element before it --
+ * with a `color-visible` switch beside it.
+ *
+ * Kept: Red (#ff0000), Off (#404040, switched off), Near.Pond (#ffafaf, the
+ * element, its switch in capitals), k (#0000ff, the element with white space
+ * round it), Spare (#ff8000: an empty property, so the element, with a plus
+ * sign and no alpha), Near.Grey (#c0c0c0, a block with no id), Twice (#ff6699,
+ * a function), Choice (#ffff00, a general variable), Flow (#0000ff), Near.Out
+ * and the half it is made in two for (#ffff00), and Dump (#00ff00), the
+ * discrete transfer that comes in as an event.
+ *
+ * Not kept: Plain (its type's own green), Unfilled (switched off), Big (past a
+ * Java int), Hex (not a number Java reads), Near.Dim (a switch that is not
+ * `true`), Level and Empty (their types' own), Leak (the green Ecolego 4 and 5
+ * gave a transfer coefficient), and the source and the sink, which are no
+ * blocks here.
+ */
+export const COLOUR_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<data-model>
+	<project-properties name="Colours"/>
+	<index-list-model>
+		<index-list name="Objects">
+			<id>Objects</id>
+			<index name="A" enabled="true"><id>A</id></index>
+			<index name="B" enabled="true"><id>B</id></index>
+		</index-list>
+	</index-list-model>
+	<hierarchy-model>
+		<sub-system-block name="Near"><id>Near</id></sub-system-block>
+	</hierarchy-model>
+	<block-model>
+		<component name="Src" type="source"><id>Src</id>
+			<property name="color" type="color">-16711681</property>
+		</component>
+		<component name="Sink" type="sink"><id>Sink</id>
+			<property name="color" type="color">-16192</property>
+		</component>
+		<component name="Red" type="compartment" dimension="0">
+			<id>Red</id>
+			<property name="color" type="color">-65536</property>
+			<property name="color-visible" type="boolean">true</property>
+			<entry type="compartment"><initial-condition><![CDATA[1]]></initial-condition></entry>
+		</component>
+		<component name="Plain" type="compartment" dimension="0">
+			<id>Plain</id>
+			<property name="color" type="color">-4128832</property>
+			<entry type="compartment"><initial-condition><![CDATA[0]]></initial-condition></entry>
+		</component>
+		<component name="Unfilled" type="compartment" dimension="0">
+			<id>Unfilled</id>
+			<property name="color" type="color">-65536</property>
+			<property name="color-visible" type="boolean">false</property>
+			<entry type="compartment"><initial-condition><![CDATA[0]]></initial-condition></entry>
+		</component>
+		<component name="Off" type="compartment" dimension="0">
+			<id>Off</id><enabled>false</enabled>
+			<property name="color" type="color">-12566464</property>
+			<entry type="compartment"><initial-condition><![CDATA[0]]></initial-condition></entry>
+		</component>
+		<component name="Pond" type="compartment" dimension="1" index-lists="Objects">
+			<id>Near&#46;Pond</id><sub-system>Near</sub-system>
+			<color>-20561</color><color-visible>TRUE</color-visible>
+			<entry type="compartment"><initial-condition><![CDATA[100]]></initial-condition></entry>
+		</component>
+		<component name="k" type="parameter" dimension="0">
+			<id>k</id>
+			<color> -16776961 </color>
+			<entry type="parameter"><value><![CDATA[0.5]]></value></entry>
+		</component>
+		<component name="Spare" type="parameter" dimension="0">
+			<id>Spare</id>
+			<property name="color" type="color"></property>
+			<color>+16744448</color>
+			<entry type="parameter"><value><![CDATA[1.0]]></value></entry>
+		</component>
+		<component name="Big" type="parameter" dimension="0">
+			<id>Big</id>
+			<property name="color" type="color">2147483648</property>
+			<entry type="parameter"><value><![CDATA[2.0]]></value></entry>
+		</component>
+		<component name="Hex" type="parameter" dimension="0">
+			<id>Hex</id>
+			<property name="color" type="color">#ff0000</property>
+			<entry type="parameter"><value><![CDATA[3.0]]></value></entry>
+		</component>
+		<component name="Dim" type="expression" dimension="0">
+			<id>Near&#46;Dim</id><sub-system>Near</sub-system>
+			<property name="color" type="color">-4144960</property>
+			<property name="color-visible" type="boolean">1</property>
+			<entry type="expression"><equation><![CDATA[2]]></equation></entry>
+		</component>
+		<component name="Grey" type="expression" dimension="0">
+			<sub-system>Near</sub-system>
+			<property name="color" type="color">-4144960</property>
+			<entry type="expression"><equation><![CDATA[k * 2]]></equation></entry>
+		</component>
+		<component name="Twice" type="expression" dimension="0">
+			<id>Twice</id>
+			<property name="color" type="color">-39271</property>
+			<argument><argument-key>x</argument-key></argument>
+			<entry type="expression"><equation><![CDATA[2 * x]]></equation></entry>
+		</component>
+		<component name="Level" type="lookup&#45;table" dimension="0">
+			<id>Level</id>
+			<property name="color" type="color">-4128896</property>
+			<lookup-option><![CDATA[Use Input Below]]></lookup-option>
+			<lookup-cyclic>false</lookup-cyclic>
+			<entry type="lookup&#45;table">
+				<lookup-table-time-points><![CDATA[[0.0, 10.0]]]></lookup-table-time-points>
+				<lookup-table-values><![CDATA[[1.0, 2.0]]]></lookup-table-values>
+			</entry>
+		</component>
+		<component name="Choice" type="general&#45;variable" dimension="0">
+			<id>Choice</id>
+			<property name="color" type="color">-256</property>
+			<available-objects><available-object id="k"/></available-objects>
+			<entry type="expression"><equation><![CDATA[k]]></equation></entry>
+		</component>
+		<component name="Empty" type="discrete&#45;event" dimension="0">
+			<id>Empty</id>
+			<property name="color" type="color">-4161408</property>
+			<entry type="discrete&#45;event">
+				<first-expression><![CDATA[time]]></first-expression>
+				<second-expression><![CDATA[5.0]]></second-expression>
+				<direction><![CDATA[RIGHT]]></direction>
+			</entry>
+		</component>
+		<connection name="Flow" type="transfer" source="Red" target="Plain" dimension="0">
+			<id>Flow</id>
+			<property name="color" type="color">-16776961</property>
+			<entry type="transfer">
+				<transfer-equation><![CDATA[k]]></transfer-equation>
+				<multiply-with-donor><![CDATA[true]]></multiply-with-donor>
+			</entry>
+		</connection>
+		<connection name="Leak" type="transfer&#45;coefficient" source="Plain" target="Unfilled" dimension="0">
+			<id>Leak</id>
+			<color>-8323200</color>
+			<entry type="transfer"><transfer-equation><![CDATA[0.1]]></transfer-equation></entry>
+		</connection>
+		<connection name="Out" type="transfer" source="Near&#46;Pond" target="Sink" dimension="1" index-lists="Objects">
+			<id>Near&#46;Out</id><sub-system>Near</sub-system>
+			<property name="color" type="color">-256</property>
+			<entry type="transfer">
+				<transfer-equation><![CDATA[0.1]]></transfer-equation>
+				<multiply-with-donor><![CDATA[true]]></multiply-with-donor>
+			</entry>
+			<entry type="transfer" index="B">
+				<transfer-equation><![CDATA[2.0]]></transfer-equation>
+				<multiply-with-donor><![CDATA[false]]></multiply-with-donor>
+			</entry>
+		</connection>
+		<connection name="Dump" type="transfer" source="Red" target="Unfilled" dimension="0">
+			<id>Dump</id>
+			<property name="color" type="color">-16711936</property>
+			<entry type="transfer">
+				<transfer-equation><![CDATA[1.0]]></transfer-equation>
+				<transfer-event><![CDATA[Empty]]></transfer-event>
+				<multiply-with-donor><![CDATA[true]]></multiply-with-donor>
+			</entry>
+		</connection>
+	</block-model>
+	<simulation-settings>
+		<start-time>0.0</start-time><end-time>10.0</end-time><time-unit>year</time-unit>
+		<java-solver>java&#45;ode15s</java-solver>
+	</simulation-settings>
+</data-model>`;
+
 // ---------------------------------------------------------------------------
 // An assessment's stored runs (../src/io/ecoruns.js)
 

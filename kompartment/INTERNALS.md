@@ -1101,7 +1101,8 @@ reads with the line breaks it had (it reads the other too, joining its lines).
 
 ### Not mapped
 
-The other ~20 block types, and presentation state. Scenarios and
+The other ~20 block types, and presentation state other than a block's
+colour. Scenarios and
 the probabilistic settings are read (see *Scenarios* below, and the Guide);
 sub-systems are read too, transports included -- see
 "Transport sub-systems" -- and the *external* flavour is read as an ordinary
@@ -2109,7 +2110,7 @@ problems, 27 unit warnings. The analytic Jacobian declines on them — more than
 ## Laying the diagram out
 
 Ecolego keeps node positions in `views.xml`, which this tool does not read —
-presentation state is one of the things the importer leaves behind. So an
+the layout is one of the things the importer leaves behind. So an
 imported model arrives with no geometry at all, and what its diagram looks like
 is entirely the automatic layout's doing. That makes it worth more than a
 heuristic.
