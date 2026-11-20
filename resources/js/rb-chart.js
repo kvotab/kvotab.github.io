@@ -1301,6 +1301,32 @@ function accumulateRadionuclideTotal({ totalDataByFile, fileKey, nIter, series, 
   }
 }
 
+/**
+ * The Total a group of statistics carries itself: the _total_ saved with the
+ * radionuclides of a summed (SFR) result file, their sum with the same columns
+ * (mean, sigma, 5 %, 95 %), taken over the sums of each iteration. Without it
+ * the Total adds up the radionuclides' lines, their means, and has no band: a
+ * percentile or a sigma of a sum is not the sum of theirs.
+ *
+ * @returns {Object|null} computeRadionuclideSeries's series of _total_, or null
+ *   when the group has no _total_ with 5 % and 95 % columns
+ */
+function savedTotalSeries({ group, path, effectiveTimeData, nIter, fileKey }) {
+  let dataset = null;
+  try {
+    if (typeof group.keys !== 'function' || !Array.from(group.keys()).includes('_total_')) return null;
+    dataset = group.get('_total_');
+  } catch (e) {
+    ignoreFailure('savedTotalSeries', e);
+    return null;
+  }
+  if (!dataset || String(dataset.type).toLowerCase() !== 'dataset') return null;
+  const series = computeRadionuclideSeries({
+    dataset, datasetKey: '_total_', path, probTimeForFile: null, effectiveTimeData, nIter, fileKey
+  });
+  return series && series.ciFromColumns ? series : null;
+}
+
 /** A dataset's unit attribute (or its group's) as text, or '' when neither has one. */
 function unitAttrOf(node) {
   try {
@@ -1403,16 +1429,23 @@ function insertTotalTraces(ctx) {
     for (const fileKey of Object.keys(totalDataByFile)) {
       const fileData = totalDataByFile[fileKey];
       if (fileData.dataArrays.length > 0) {
-        const timeData = fileData.timeData;
-        const totalY = new Array(timeData.length).fill(0);
-        
-        // Sum all data arrays
-        for (const dataArray of fileData.dataArrays) {
-          for (let i = 0; i < Math.min(dataArray.length, totalY.length); i++) {
-            totalY[i] += dataArray[i];
+        // The total the group carries itself, with its bands (savedTotalSeries),
+        // or else the sum of the radionuclides' lines
+        const saved = fileData.saved || null;
+        const timeData = saved ? saved.trimmedTimeData : fileData.timeData;
+        let totalY;
+        if (saved) {
+          totalY = saved.trimmedYData.slice();
+        } else {
+          totalY = new Array(timeData.length).fill(0);
+          // Sum all data arrays
+          for (const dataArray of fileData.dataArrays) {
+            for (let i = 0; i < Math.min(dataArray.length, totalY.length); i++) {
+              totalY[i] += dataArray[i];
+            }
           }
         }
-        
+
         totalMaxByFile[fileKey] = totalY.reduce((m, v) => v > m ? v : m, -Infinity);
 
         let traceName = 'Total';
@@ -1437,10 +1470,22 @@ function insertTotalTraces(ctx) {
           _datasetKey: '__total__',
           _fileKey: fileKey,
           _unit: fileData.unit || '',
-          _py: pyTotalRecipe({ parts: fileData.pyParts || [], n: timeData.length, nIter: fileData.nIter })
+          _py: saved ? saved.py : pyTotalRecipe({ parts: fileData.pyParts || [], n: timeData.length, nIter: fileData.nIter })
         };
 
-        if (fileData.probabilisticSlices) {
+        if (saved) {
+          // Its CI and SEM bands from its columns, as a radionuclide's (buildRadionuclideTrace)
+          const totalTrace = totalTracesByFile[fileKey];
+          totalTrace._isProbabilistic = true;
+          totalTrace._ciP5 = saved.ciFromColumns.p5.slice(0, saved.minLength);
+          totalTrace._ciP95 = saved.ciFromColumns.p95.slice(0, saved.minLength);
+          totalTrace._timeData = timeData;
+          if (saved.sdomInfo) {
+            totalTrace._sdomLower = saved.sdomInfo.lower.slice(0, saved.minLength);
+            totalTrace._sdomUpper = saved.sdomInfo.upper.slice(0, saved.minLength);
+            sawSDOM = true;
+          }
+        } else if (fileData.probabilisticSlices) {
           totalTracesByFile[fileKey]._isProbabilistic = true;
           totalTracesByFile[fileKey]._rawData = fileData.probabilisticSlices;
           totalTracesByFile[fileKey]._timeData = timeData;
@@ -1647,6 +1692,11 @@ async function collectRadionuclideGroup(path, enabledFiles, shared, { selectedIt
         } catch (e) {
           console.error(`Error creating trace for ${datasetKey} in ${fileKey}:`, e);
         }
+      }
+      // A group of statistics may carry its own total, for the Total trace (savedTotalSeries)
+      if (!probTimeForFile && totalDataByFile[fileKey] && !totalDataByFile[fileKey].probabilisticSlices) {
+        const saved = savedTotalSeries({ group, path, effectiveTimeData, nIter, fileKey });
+        if (saved) totalDataByFile[fileKey].saved = saved;
       }
     } catch (e) {
       console.error(`Error processing group for ${fileKey}:`, e);

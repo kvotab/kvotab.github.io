@@ -141,6 +141,18 @@ BUILD = r"""(async () => {
     h.create_attribute('unit', 'Sv/year');
     put(h, 'Cs-137', Array.from(t, (_, i) => series(i, 1e-6 * scale)), [n], { unit: 'Sv/year', time_dependent: 'TRUE' });
     put(h, 'I-129', Array.from(t, (_, i) => series(i, 3e-7 * scale)), [n], { unit: 'Sv/year', time_dependent: 'TRUE' });
+    // A group of tables of statistics with the _total_ the summed files save with them: the
+    // statistics of the sums of each iteration, which the Total is drawn from.
+    const s = w.create_group('sfr');
+    s.create_attribute('IndexLists', ['Radionuclides']);
+    s.create_attribute('time_dependent', 'TRUE');
+    s.create_attribute('unit', 'Bq/year');
+    s.create_attribute('columns', 'mean, sigma, 5%, 95%');
+    const rows = (f, sigma, p5, p95) => Array.from(t, (_, i) => { const m = series(i, f * scale); return [m, sigma * m, p5 * m, p95 * m]; }).flat();
+    put(s, 'I-129', rows(30, 0.4, 0.3, 2.0), [n, 4]);
+    put(s, 'Cs-137', rows(100, 0.5, 0.2, 2.5), [n, 4]);
+    put(s, '_total_', rows(130, 0.35, 0.45, 1.9), [n, 4],
+        { Name: 'Total', columns: 'mean, sigma, 5%, 95%', time_dependent: 'TRUE', probabilistic: 'FALSE', unit: 'Bq/year' });
     // A background overlay: the phases a data-time index gives.
     w.create_group('geo');
     const geo = w.get('geo');
@@ -610,6 +622,10 @@ async def main():
                 await __tick('showCI', false); await __tick('showSDOM', false); await __tick('showMax', true); await __iter(4); })()""",
                 bytes_of, work)
             await page.ev("(async () => { await __iter(null); await __tick('showMax', false); })()")
+            await case(page, 'a summed group: the Total from its _total_, with its CI and SEM', """(async () => {
+                await __pick('results.h5', '/sfr', { group: true }); await __tick('showTotal', true); await __tick('showCI', true); await __tick('showSDOM', true); })()""",
+                bytes_of, work)
+            await page.ev("(async () => { await __tick('showCI', false); await __tick('showSDOM', false); })()")
             await case(page, 'two files: thin lines, and Show Ratio', """(async () => {
                 await __only('results.h5', 'results_b.h5');
                 document.querySelector('#treeModeContainer button[data-value="intersect"]').click(); await __wait(2500);

@@ -378,6 +378,20 @@ with h5wasm.
 
     python3 test-groups.py
 
+`test-saved-total.py` covers the Total of a group of tables of statistics
+(columns mean, sigma, 5 %, 95 %), as the summed (SFR) result files keep each
+radionuclide. Only means add up, so a Total added up from the radionuclides'
+lines has no band. Since 2026-11-20 the sums carry `_total_`, the sum over the
+radionuclides with the same columns, taken over the sums of each iteration:
+the Total is drawn from it, with its CI band (its 5 % and 95 %) and SEM band
+(its sigma over the root of n_iter), and the Python export reads it from there.
+A group without `_total_` keeps the sum of the lines, with no band, and neither
+`_total_` nor `_total_iterations_` is drawn as a line. Run against the page
+before the change, the five checks of the Total's bands and export fail. The
+file is built in the page with h5wasm. 12 checks.
+
+    python3 test-saved-total.py
+
 `test-lazy.py` covers the two things learnt from the HDF Group's myHDF5
 (H5Web). First, compression: a dataset compressed with a filter h5wasm has no
 decoder for (LZF, h5py's own, and likewise blosc, zstd, lz4, bitshuffle) used
@@ -464,8 +478,9 @@ titles, and on a log axis the labels, as Plotly writes them; the background's
 phases and the panels' labels; and no line given as its numbers. The file is
 built in the page with h5wasm: realisations with a NaN in one, a table of
 statistics, mean and sigma attributes, constants, a radionuclide group with
-a probabilistic member among deterministic ones (Show Total's bands), a
-second file, and a probabilistic /time. Last, a file named and filled to break
+a probabilistic member among deterministic ones (Show Total's bands), a group
+of tables of statistics with the `_total_` of the summed files (the Total and its
+bands from `_total_`), a second file, and a probabilistic /time. Last, a file named and filled to break
 out of a string literal, a comment or the page (quotes, triple quotes, CR, LF,
 U+2028, a bidirectional override, `$…$`, `<img onerror>`): its script must
 parse with no INJECTED name anywhere in its syntax tree and no file text in a
@@ -474,7 +489,7 @@ given a prefix (kyears, mBq/year), the page draws in it and the script draws
 the files' values with its labels divided, so its labels must be the page's
 and its limits the page's range in the files' units. Then the dialog:
 the button, the script shown as text in colour, a line a line, Copy and
-Download. Needs h5py, numpy and matplotlib. 189 checks.
+Download. Needs h5py, numpy and matplotlib. 198 checks.
 
     python3 test-python.py
 
