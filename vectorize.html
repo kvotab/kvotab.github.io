@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="base-uri 'self'; object-src 'none'">
+  <title>Vectorize — kvot ab</title>
+  <meta name="description" content="Turn a drawing, scan or logo into a smooth SVG in the browser: drop, paste or link an image, tune the smoothing, line weight and curves while you watch, and download the vector file. Nothing is uploaded.">
+  <link rel="canonical" href="https://kvotab.se/vectorize.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="kvot ab">
+  <meta property="og:title" content="Vectorize — kvot ab">
+  <meta property="og:description" content="Trace a drawing, scan or logo into a smooth SVG, in the browser.">
+  <meta property="og:url" content="https://kvotab.se/vectorize.html">
+  <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
+  <meta name="twitter:card" content="summary">
+  <script>
+    // Set the theme before first paint so dark-mode visitors get no white flash.
+    (function () {
+      try {
+        var t = localStorage.getItem('kvot-theme');
+        if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* storage unavailable — site.js will apply the default */ }
+    })();
+  </script>
+  <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
+  <link rel="stylesheet" href="./resources/css/vectorize.css?v=20261121">
+  <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
+  <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
+</head>
+<body class="vz-body">
+<header></header>
+
+<div class="content vz-content">
+<main class="vz" id="vz">
+
+  <!-- Getting an image in. Dropping and pasting work anywhere on the page;
+       these are the same things as buttons, and the web address. -->
+  <section class="vz-input" aria-labelledby="vz-input-h">
+    <h2 class="vz-h" id="vz-input-h">Image</h2>
+    <p class="vz-lead">Drop an image anywhere on the page, or paste one<span class="vz-keyhint"> with <kbd class="vz-pastekey">⌘V</kbd></span>.</p>
+    <div class="vz-row">
+      <button type="button" class="vz-btn" data-act="pick">Choose file…</button>
+      <button type="button" class="vz-btn" data-act="paste">Paste</button>
+      <button type="button" class="vz-btn vz-btn-quiet" data-act="sample">Sample</button>
+    </div>
+    <input type="file" id="vz-file" accept="image/*,.svg" hidden>
+    <form class="vz-url" id="vz-url-form" novalidate>
+      <label for="vz-url">Or the web address of an image</label>
+      <div class="vz-row vz-row-fill">
+        <input type="url" id="vz-url" placeholder="https://…/drawing.png" inputmode="url" autocomplete="off" spellcheck="false">
+        <button type="submit" class="vz-btn">Load</button>
+      </div>
+    </form>
+    <p class="vz-source" id="vz-source" hidden></p>
+  </section>
+
+  <!-- The settings. Every change retraces at once; the curve settings only
+       refit, so they answer fastest. -->
+  <section class="vz-settings" aria-labelledby="vz-set-h">
+    <div class="vz-settings-head">
+      <h2 class="vz-h" id="vz-set-h">Settings</h2>
+      <select id="vz-preset" aria-label="Preset">
+        <option value="lineart">Line art / colouring page</option>
+        <option value="logo">Logo / lettering</option>
+        <option value="sketch">Pencil sketch</option>
+        <option value="shape">Silhouette from a photo</option>
+        <option value="custom" disabled>Custom</option>
+      </select>
+    </div>
+
+    <fieldset class="vz-group">
+      <legend>Clean-up</legend>
+      <div class="vz-field">
+        <label for="vz-smooth">Smoothing <output id="vz-smooth-out" for="vz-smooth"></output></label>
+        <input type="range" id="vz-smooth" min="0" max="3" step="0.1">
+        <p class="vz-hint">Softens pixel steps and compression noise before tracing. This is what takes the jagged edges away.</p>
+      </div>
+      <div class="vz-field">
+        <label for="vz-detail">Detail <output id="vz-detail-out" for="vz-detail"></output></label>
+        <input type="range" id="vz-detail" min="1" max="4" step="0.5">
+        <p class="vz-hint">Traces an enlarged copy. Higher follows fine lines more closely, but takes longer.</p>
+      </div>
+      <div class="vz-field">
+        <label for="vz-faint">Faint lines <output id="vz-faint-out" for="vz-faint"></output></label>
+        <input type="range" id="vz-faint" min="0" max="100" step="1">
+        <p class="vz-hint">Brings light grey lines up to full strength so they are kept unbroken, at their own width. Higher reaches fainter lines.</p>
+      </div>
+      <label class="vz-check"><input type="checkbox" id="vz-invert"> Light lines on a dark background</label>
+    </fieldset>
+
+    <fieldset class="vz-group">
+      <legend>Outline</legend>
+      <div class="vz-field">
+        <label for="vz-weight">Line weight <output id="vz-weight-out" for="vz-weight"></output></label>
+        <div class="vz-row vz-row-fill">
+          <input type="range" id="vz-weight" min="5" max="95" step="1">
+          <button type="button" class="vz-btn vz-btn-sm vz-btn-quiet" id="vz-auto" disabled title="Choose the line weight that best separates ink from paper">Auto</button>
+        </div>
+        <p class="vz-hint">Where ink ends and paper begins: lower gives thinner lines, higher bolder ones that close small gaps.</p>
+      </div>
+      <div class="vz-field">
+        <label for="vz-specks">Remove specks <output id="vz-specks-out" for="vz-specks"></output></label>
+        <input type="range" id="vz-specks" min="0" max="100" step="1">
+        <p class="vz-hint">Drops dots, and fills holes, smaller than this area.</p>
+      </div>
+    </fieldset>
+
+    <fieldset class="vz-group">
+      <legend>Curves</legend>
+      <div class="vz-field">
+        <label for="vz-tolerance">Curve fit <output id="vz-tolerance-out" for="vz-tolerance"></output></label>
+        <input type="range" id="vz-tolerance" min="0.1" max="3" step="0.05">
+        <p class="vz-hint">How far a curve may stray from the outline. Higher gives fewer, smoother curves and a smaller file.</p>
+      </div>
+      <div class="vz-field">
+        <label for="vz-corners">Sharp corners <output id="vz-corners-out" for="vz-corners"></output></label>
+        <input type="range" id="vz-corners" min="0" max="100" step="1">
+        <p class="vz-hint">Off rounds every turn; higher keeps more corners crisp, as lettering wants.</p>
+      </div>
+    </fieldset>
+
+    <fieldset class="vz-group">
+      <legend>Output</legend>
+      <div class="vz-row vz-out-row">
+        <label class="vz-inline" for="vz-color">Colour <input type="color" id="vz-color"></label>
+        <label class="vz-inline" for="vz-background">Background
+          <select id="vz-background">
+            <option value="transparent">Transparent</option>
+            <option value="white">White</option>
+          </select>
+        </label>
+      </div>
+    </fieldset>
+
+    <button type="button" class="vz-btn vz-btn-quiet vz-btn-sm" id="vz-reset">Reset to the preset</button>
+  </section>
+
+  <!-- The original and the result side by side, zoomed and moved together:
+       drag to move, scroll or pinch to zoom, double-click to fit. -->
+  <section class="vz-main" aria-label="The original and the result">
+    <div class="vz-bar">
+      <div class="vz-seg" role="group" aria-label="The left pane shows">
+        <button type="button" id="vz-mode-original" aria-pressed="true">Original</button>
+        <button type="button" id="vz-mode-prepared" aria-pressed="false" title="The image as the tracer sees it, after smoothing and the line weight">Black &amp; white</button>
+      </div>
+      <label class="vz-check vz-check-bar"><input type="checkbox" id="vz-under"> Original under the vector</label>
+      <span class="vz-spacer"></span>
+      <div class="vz-zoom" role="group" aria-label="Zoom">
+        <button type="button" class="vz-iconbtn" id="vz-zoom-out" aria-label="Zoom out" title="Zoom out">−</button>
+        <button type="button" class="vz-zoomval" id="vz-zoom-val" title="Actual size">–</button>
+        <button type="button" class="vz-iconbtn" id="vz-zoom-in" aria-label="Zoom in" title="Zoom in">+</button>
+        <button type="button" class="vz-btn vz-btn-sm vz-btn-quiet" id="vz-fit">Fit</button>
+      </div>
+      <div class="vz-row vz-save">
+        <button type="button" class="vz-btn vz-btn-sm" id="vz-copy" disabled>Copy SVG</button>
+        <button type="button" class="vz-btn vz-btn-sm vz-btn-go" id="vz-download" disabled>Download SVG</button>
+      </div>
+    </div>
+
+    <div class="vz-panes" id="vz-panes">
+      <div class="vz-pane" id="vz-pane-src">
+        <canvas id="vz-canvas" aria-label="The original image"></canvas>
+        <span class="vz-pane-label" id="vz-src-label">Original</span>
+      </div>
+      <div class="vz-pane" id="vz-pane-vec">
+        <svg id="vz-svg" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="The vector result">
+          <defs>
+            <pattern id="vz-checker" patternUnits="userSpaceOnUse" width="16" height="16">
+              <rect class="vz-ck-a" width="16" height="16"/>
+              <rect class="vz-ck-b" id="vz-ck-1" width="8" height="8"/>
+              <rect class="vz-ck-b" id="vz-ck-2" x="8" y="8" width="8" height="8"/>
+            </pattern>
+          </defs>
+          <rect id="vz-page" width="0" height="0" fill="url(#vz-checker)"/>
+          <image id="vz-underimg" preserveAspectRatio="none" opacity="0.35" display="none"/>
+          <path id="vz-path" d=""/>
+        </svg>
+        <span class="vz-pane-label">Vector <span class="vz-busy" id="vz-busy" hidden></span></span>
+      </div>
+
+      <div class="vz-empty" id="vz-empty">
+        <svg viewBox="0 0 48 48" width="44" height="44" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="5" y="9" width="38" height="30" rx="3"/><path d="M5 33l10-10 8 8 6-6 14 13"/><circle cx="31" cy="18" r="3"/>
+        </svg>
+        <p class="vz-empty-title">Drop an image here</p>
+        <p>Or paste one<span class="vz-keyhint"> with <kbd class="vz-pastekey">⌘V</kbd></span>, choose a file, or give its web address.
+           The image stays in your browser; nothing is uploaded.</p>
+        <div class="vz-row vz-row-center">
+          <button type="button" class="vz-btn vz-btn-go" data-act="pick">Choose file…</button>
+          <button type="button" class="vz-btn" data-act="paste">Paste</button>
+          <button type="button" class="vz-btn vz-btn-quiet" data-act="sample">Try a sample</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="vz-foot">
+      <span class="vz-status" id="vz-status" role="status" aria-live="polite"></span>
+      <span class="vz-stats" id="vz-stats"></span>
+    </div>
+  </section>
+</main>
+</div>
+
+<div class="vz-dropveil" aria-hidden="true"><div>Drop the image to vectorize it</div></div>
+
+<footer></footer>
+
+<script src="./resources/js/kvot-errors.js?v=20260911"></script>
+<script src="./resources/js/kvot-safe.js?v=20260911"></script>
+<script src="./resources/js/kvot-actions.js?v=20260902"></script>
+<script src="./resources/js/kvot-icons.js?v=20260902"></script>
+<script src="./resources/js/site.js?v=20261121"></script>
+<script>
+  KVOT.renderHeader('Vectorize');
+  KVOT.renderNav('vectorize.html');
+  KVOT.renderFooter();
+</script>
+<script src="./resources/js/vectorize.js?v=20261121"></script>
+</body>
+</html>

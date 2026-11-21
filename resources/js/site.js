@@ -192,6 +192,12 @@ const KVOT = (() => {
       desc: 'Translate English subtitles into Swedish for free, with Chrome’s own translator.',
     },
     {
+      href: './vectorize.html',
+      label: 'Vectorize',
+      group: 'everyday',
+      desc: 'Trace a drawing, scan or logo into a smooth SVG: drop, paste or link an image.',
+    },
+    {
       href: './uppsala.html',
       label: 'Uppsala → Solna',
       group: 'everyday',
