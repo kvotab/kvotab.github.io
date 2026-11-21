@@ -27,8 +27,14 @@
     shape: { detail: 1, smooth: 2, faint: 0, weight: 50, invert: false, specks: 60, tolerance: 1, corners: 25 },
   };
   // preset reads 'custom' once a setting is moved; base keeps the preset it
-  // was moved from, for Reset.
-  const DEFAULTS = Object.assign({ preset: 'lineart', base: 'lineart', color: '#000000', background: 'transparent' }, PRESETS.lineart);
+  // was moved from, for Reset. The poster is posterN sheets across or down
+  // (posterBy), on paper (Letter where that is the usual size) laid orient.
+  const POSTER_MAX = 30;
+  const DEFAULTS = Object.assign({
+    preset: 'lineart', base: 'lineart', color: '#000000', background: 'transparent',
+    posterBy: 'across', posterN: 4, orient: 'portrait',
+    paper: /-(US|CA|MX|PH|CL|CO|VE)$/i.test(navigator.language || '') ? 'letter' : 'a4',
+  }, PRESETS.lineart);
 
   // Each slider: its range (also in the HTML) and how its value reads.
   const SLIDERS = {
@@ -51,7 +57,12 @@
     auto: $('vz-auto'), reset: $('vz-reset'),
     modeOriginal: $('vz-mode-original'), modePrepared: $('vz-mode-prepared'), under: $('vz-under'),
     zoomIn: $('vz-zoom-in'), zoomOut: $('vz-zoom-out'), zoomVal: $('vz-zoom-val'), fit: $('vz-fit'),
-    copy: $('vz-copy'), download: $('vz-download'),
+    copy: $('vz-copy'), download: $('vz-download'), poster: $('vz-poster'),
+    pp: $('vz-pp'), ppView: $('vz-pp-view'), ppSvg: $('vz-pp-svg'), ppBg: $('vz-pp-bg'), ppArt: $('vz-pp-art'),
+    ppImg: $('vz-pp-img'), ppGrid: $('vz-pp-grid'), ppFromRow: $('vz-pp-from-row'), ppFrom: $('vz-pp-from'),
+    ppAcross: $('vz-pp-across'), ppDown: $('vz-pp-down'), ppPaper: $('vz-pp-paper'), ppOrient: $('vz-pp-orient'),
+    ppSize: $('vz-pp-size'), ppCount: $('vz-pp-count'), ppNote: $('vz-pp-note'), ppMsg: $('vz-pp-msg'),
+    ppGo: $('vz-pp-go'), ppClose: $('vz-pp-close'), ppCancel: $('vz-pp-cancel'),
     paneSrc: $('vz-pane-src'), paneVec: $('vz-pane-vec'), canvas: $('vz-canvas'), srcLabel: $('vz-src-label'),
     svg: $('vz-svg'), page: $('vz-page'), underimg: $('vz-underimg'), path: $('vz-path'),
     checker: $('vz-checker'), ck1: $('vz-ck-1'), ck2: $('vz-ck-2'),
@@ -83,6 +94,10 @@
       if (saved.background === 'white' || saved.background === 'transparent') s.background = saved.background;
       if (saved.preset === 'custom' || PRESETS[saved.preset]) s.preset = saved.preset;
       if (PRESETS[saved.base]) s.base = saved.base;
+      if (saved.posterBy === 'across' || saved.posterBy === 'down') s.posterBy = saved.posterBy;
+      if (Number.isInteger(saved.posterN) && saved.posterN >= 1 && saved.posterN <= POSTER_MAX) s.posterN = saved.posterN;
+      if (saved.paper === 'a4' || saved.paper === 'letter') s.paper = saved.paper;
+      if (saved.orient === 'portrait' || saved.orient === 'landscape') s.orient = saved.orient;
     } catch (e) { /* storage unavailable or unreadable: the defaults stand */ }
     return s;
   }
@@ -223,6 +238,8 @@
       previewKey = jobKey;
     }
     el.copy.disabled = el.download.disabled = !m.d;
+    el.poster.disabled = !(m.d || src.svgText) || typeof KVOT_POSTER === 'undefined';
+    if (el.pp.open) showPoster();
     if (!m.d) {
       el.stats.textContent = '';
       setStatus('Nothing came out as ink. Raise Line weight or Faint lines, or, for light lines on a dark background, tick that box.', true);
@@ -299,19 +316,30 @@
     ctx.drawImage(pic.img, 0, 0, w, h);
     pic.done();
 
+    // An SVG is kept as it came too, for the poster to print as it is.
+    let svgText = null;
+    if (blob.size <= 64e6 && (/svg/i.test(blob.type) || /\.svg$/i.test(name || '') || /<svg[\s>]/i.test(await blob.slice(0, 2048).text()))) {
+      try { svgText = await blob.text(); } catch (e) { svgText = null; }
+    }
+
+    if (el.pp.open) el.pp.close();
     if (src && src.url) URL.revokeObjectURL(src.url);
-    src = { name: baseName(name), w, h, natW, natH, canvas, url: URL.createObjectURL(blob) };
+    if (src && src.svgArt && src.svgArt.previewUrl) URL.revokeObjectURL(src.svgArt.previewUrl);
+    src = { name: baseName(name), w, h, natW, natH, canvas, url: URL.createObjectURL(blob), svgText, svgArt: null };
+    posterFrom = svgText ? 'svg' : 'trace';
     result = null; preview = null; previewKey = ''; autoWeight = null;
     el.auto.disabled = true;
     el.path.setAttribute('d', '');
     el.copy.disabled = el.download.disabled = true;
+    el.poster.disabled = !svgText || typeof KVOT_POSTER === 'undefined';
     el.stats.textContent = '';
     el.page.setAttribute('width', w); el.page.setAttribute('height', h);
     el.underimg.setAttribute('width', w); el.underimg.setAttribute('height', h);
     el.underimg.setAttribute('href', src.url);
     el.empty.hidden = true;
     el.source.hidden = false;
-    el.source.textContent = `${src.name} — ${natW} × ${natH} px` + (w !== natW ? ` (traced at ${w} × ${h})` : '');
+    el.source.textContent = `${src.name} — ${natW} × ${natH} px` + (w !== natW ? ` (traced at ${w} × ${h})` : '') +
+      (svgText ? '. An SVG: Poster PDF can print it as it is, in vectors.' : '');
     setStatus('');
 
     if (!worker) startWorker(); else sendSource();
@@ -590,7 +618,7 @@
   el.fit.addEventListener('click', fit);
   document.addEventListener('keydown', (e) => {
     const t = e.target;
-    if (!src || e.metaKey || e.ctrlKey || e.altKey || (t && /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName))) return;
+    if (!src || el.pp.open || e.metaKey || e.ctrlKey || e.altKey || (t && /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName))) return;
     if (e.key === '+' || e.key === '=') zoomAt(0, 0, 1.5);
     else if (e.key === '-') zoomAt(0, 0, 1 / 1.5);
     else if (e.key === '0') fit();
@@ -626,15 +654,20 @@
       `${bg}<path fill="${settings.color}" d="${result.d}"/>\n</svg>\n`;
   }
 
-  el.download.addEventListener('click', () => {
-    if (!result || !result.d) return;
+  function save(blob, filename) {
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([svgText()], { type: 'image/svg+xml' }));
-    a.download = `${src.name}.svg`;
-    document.body.appendChild(a);
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    // Inside the dialog while it is open, as the page behind it is inert.
+    (el.pp.open ? el.pp : document.body).appendChild(a);
     a.click();
     a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  }
+
+  el.download.addEventListener('click', () => {
+    if (!result || !result.d) return;
+    save(new Blob([svgText()], { type: 'image/svg+xml' }), `${src.name}.svg`);
   });
 
   el.copy.addEventListener('click', () => {
@@ -644,6 +677,204 @@
       el.copy.textContent = 'Copied';
       setTimeout(() => { el.copy.textContent = 'Copy SVG'; }, 1500);
     }, () => setStatus('The browser did not let the page copy. Use Download SVG.', true));
+  });
+
+  // ── The poster ────────────────────────────────────────────────────────────
+
+  /* The drawing printed large over many sheets of paper, to cut and glue
+     together. vectorize-poster.js lays the sheets out and writes the PDF;
+     here are its dialog, and the picture of the poster with its sheets. An
+     SVG file can go on the poster as it is, in its own vectors and colours,
+     or as traced. */
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  const LEFT_OUT = {
+    text: 'text', pictures: 'pictures inside it', filters: 'filter effects', masks: 'masks',
+    clipping: 'some clipping', patterns: 'pattern fills', paints: 'some fills',
+  };
+  let posterArt = null;      // KVOT_POSTER.parse of result.d, with that d
+  let posterFrom = 'trace';  // or 'svg': an SVG file as it is
+  let posterBusy = false;
+  let ppArtD = null;         // the path data the dialog's picture has
+
+  function posterOpts() {
+    return { paper: settings.paper, orient: settings.orient, by: settings.posterBy, n: settings.posterN };
+  }
+
+  const svgMode = () => !!(src && src.svgText && posterFrom === 'svg');
+
+  /* The drawing the poster is of, or null while there is none to print. */
+  function posterDrawing() {
+    if (!src) return null;
+    if (svgMode()) {
+      const a = src.svgArt;
+      return a && a.bounds ? a : null;
+    }
+    if (!result || !result.d) return null;
+    if (!posterArt || posterArt.d !== result.d) posterArt = Object.assign(KVOT_POSTER.parse(result.d), { d: result.d });
+    return posterArt.bounds ? posterArt : null;
+  }
+
+  function openPoster() {
+    if (!src || typeof KVOT_POSTER === 'undefined') return;
+    el.ppFromRow.hidden = !src.svgText;
+    el.ppFrom.value = posterFrom;
+    el.ppMsg.textContent = '';
+    el.pp.showModal();
+    showPoster();
+  }
+
+  /* The SVG read for the poster, once a file, when first wanted. */
+  async function readSvg() {
+    const mine = src;
+    mine.svgArt = { pending: true };
+    let art;
+    try {
+      art = await KVOT_POSTER.fromSvg(mine.svgText);
+      if (art.preview) art.previewUrl = URL.createObjectURL(new Blob([art.preview], { type: 'image/svg+xml' }));
+    } catch (e) {
+      art = { error: (e && e.message) || String(e) };
+      if (typeof reportFailure === 'function' && !/could not be read/.test(art.error)) reportFailure('vectorize', e);
+    }
+    if (mine !== src) {
+      if (art.previewUrl) URL.revokeObjectURL(art.previewUrl);
+      return;
+    }
+    mine.svgArt = art;
+    if (el.pp.open) showPoster();
+  }
+
+  const listed = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
+
+  /* What printing the SVG as it is leaves out, or why it cannot. */
+  function svgNote(a) {
+    if (!a || a.pending) return '';
+    if (a.error) return `${a.error} “The traced drawing” can still be printed.`;
+    if (!a.bounds) return 'Nothing in this SVG has a fill or a stroke to print. “The traced drawing” can still be printed.';
+    const out = a.notes.filter(k => LEFT_OUT[k]).map(k => LEFT_OUT[k]);
+    let s = out.length ? `Left out of the poster: ${listed(out)}.` : '';
+    if (a.notes.includes('text')) s += ' To keep text, turn it into outlines (paths) in the program that made the SVG.';
+    if (a.notes.includes('gradients')) s += ' Gradients are printed as one colour each.';
+    return s.trim();
+  }
+
+  /* The dialog as the settings stand; `typing` is the box being typed in,
+     which is left as it is. */
+  function showPoster(typing) {
+    if (svgMode() && !src.svgArt) readSvg();
+    el.ppNote.textContent = svgMode() ? svgNote(src.svgArt) : '';
+    const art = posterDrawing();
+    if (!art) {
+      el.ppView.hidden = true;
+      el.ppGo.disabled = true;
+      el.ppSize.textContent = '';
+      el.ppCount.textContent = svgMode() ? (src.svgArt && src.svgArt.pending ? 'Reading the SVG…' : '')
+        : busy ? 'The drawing is being traced…' : 'There is no traced drawing to print.';
+      return;
+    }
+    el.ppView.hidden = false;
+    const L = KVOT_POSTER.layout(art.bounds, posterOpts());
+    if (typing !== 'across') el.ppAcross.value = L.cols;
+    if (typing !== 'down') el.ppDown.value = L.rows;
+    el.ppPaper.value = settings.paper;
+    el.ppOrient.value = settings.orient;
+    el.ppSize.textContent = `${Math.round(L.FW / 10)} × ${Math.round(L.FH / 10)} cm`;
+    const tooMany = L.sheets > KVOT_POSTER.MAX_SHEETS;
+    el.ppCount.textContent = tooMany
+      ? `${L.sheets.toLocaleString('en')} sheets of ${L.paper}, more than the ${KVOT_POSTER.MAX_SHEETS} a poster can have. Choose fewer.`
+      : `${L.cols} × ${L.rows} = ${L.sheets} ${L.sheets === 1 ? 'sheet' : 'sheets'} of ${L.paper}, ` +
+        `and a first page on putting ${L.sheets === 1 ? 'it' : 'them'} together.`;
+    el.ppGo.disabled = tooMany || posterBusy;
+    drawPoster(L, art);
+  }
+
+  /* The finished poster in millimetres: the paper, the drawing on it, the
+     seams where one sheet's cut edge lies on the next, and the sheets'
+     names where they are large enough to read. */
+  function drawPoster(L, art) {
+    const pad = Math.max(L.FW, L.FH) * 0.02, vw = L.FW + 2 * pad, vh = L.FH + 2 * pad;
+    const set = (node, attrs) => { for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v); };
+    el.ppSvg.setAttribute('viewBox', `${L.fx0 - pad} ${L.fy0 - pad} ${vw} ${vh}`);
+    el.ppSvg.style.aspectRatio = `${vw} / ${vh}`;
+    set(el.ppBg, { x: L.fx0, y: L.fy0, width: L.FW, height: L.FH });
+    if (art.painted) {
+      // The SVG as it will be printed: its shapes as read, not the file.
+      el.ppArt.setAttribute('display', 'none');
+      set(el.ppImg, { href: art.previewUrl || '', x: L.ox, y: L.oy, width: L.dw, height: L.dh });
+      el.ppImg.removeAttribute('display');
+    } else {
+      el.ppImg.setAttribute('display', 'none');
+      if (ppArtD !== art.d) { el.ppArt.setAttribute('d', art.d); ppArtD = art.d; }
+      const b = art.bounds;
+      set(el.ppArt, { fill: settings.color, transform: `translate(${L.ox} ${L.oy}) scale(${L.s}) translate(${-b.x0} ${-b.y0})` });
+      el.ppArt.removeAttribute('display');
+    }
+    const grid = el.ppGrid;
+    grid.textContent = '';
+    const add = (tag, attrs, text) => {
+      const e = document.createElementNS(SVG_NS, tag);
+      set(e, attrs);
+      if (text) e.textContent = text;
+      grid.appendChild(e);
+    };
+    const cut = KVOT_POSTER.CUT_IN;
+    for (let c = 1; c < L.cols; c++) add('line', { class: 'vz-pp-seam', x1: c * L.sx - cut, y1: L.fy0, x2: c * L.sx - cut, y2: L.fy0 + L.FH });
+    for (let r = 1; r < L.rows; r++) add('line', { class: 'vz-pp-seam', x1: L.fx0, y1: r * L.sy - cut, x2: L.fx0 + L.FW, y2: r * L.sy - cut });
+    const box = el.ppSvg.getBoundingClientRect();
+    const pxPerMm = Math.min(box.width / vw, box.height / vh);
+    const fs = Math.min(L.sx, L.sy) * 0.13;
+    if (L.sheets > 1 && fs * pxPerMm >= 9) {
+      for (let r = 0; r < L.rows; r++) {
+        for (let c = 0; c < L.cols; c++) {
+          const x = (c ? c * L.sx - cut : L.fx0) + fs * 0.45, y = (r ? r * L.sy - cut : L.fy0) + fs * 1.2;
+          add('text', { class: 'vz-pp-name', x, y, 'font-size': fs }, KVOT_POSTER.sheetName(r, c));
+        }
+      }
+    }
+  }
+
+  function posterNumber(which) {
+    const input = which === 'across' ? el.ppAcross : el.ppDown;
+    const v = +input.value;
+    if (input.value === '' || !Number.isInteger(v) || v < 1 || v > POSTER_MAX) return;
+    settings.posterBy = which;
+    settings.posterN = v;
+    saveSettings();
+    showPoster(which);
+  }
+
+  el.poster.addEventListener('click', openPoster);
+  el.ppFrom.addEventListener('change', () => { posterFrom = el.ppFrom.value; showPoster(); });
+  el.ppAcross.addEventListener('input', () => posterNumber('across'));
+  el.ppDown.addEventListener('input', () => posterNumber('down'));
+  // Leaving a box puts back the number the poster is made with.
+  el.ppAcross.addEventListener('change', () => showPoster());
+  el.ppDown.addEventListener('change', () => showPoster());
+  el.ppPaper.addEventListener('change', () => { settings.paper = el.ppPaper.value; saveSettings(); showPoster(); });
+  el.ppOrient.addEventListener('change', () => { settings.orient = el.ppOrient.value; saveSettings(); showPoster(); });
+  el.ppClose.addEventListener('click', () => el.pp.close());
+  el.ppCancel.addEventListener('click', () => el.pp.close());
+  // A click on the shade round the dialog closes it too.
+  el.pp.addEventListener('click', (e) => { if (e.target === el.pp) el.pp.close(); });
+
+  el.ppGo.addEventListener('click', async () => {
+    const art = posterDrawing();
+    if (posterBusy || !art) return;
+    posterBusy = true;
+    el.ppGo.disabled = true;
+    el.ppMsg.textContent = 'Making the PDF…';
+    try {
+      const opts = posterOpts();
+      const L = KVOT_POSTER.layout(art.bounds, opts);
+      const blob = await KVOT_POSTER.build(Object.assign({ art, color: settings.color, name: src.name }, opts));
+      save(blob, `${src.name}-poster-${L.cols}x${L.rows}-${L.paper}.pdf`);
+      el.ppMsg.textContent = `Saved: ${L.sheets + 1} pages, ${size(blob.size)}.`;
+    } catch (e) {
+      el.ppMsg.textContent = (e && e.message) || String(e);
+      if (typeof reportFailure === 'function') reportFailure('vectorize', e);
+    } finally {
+      posterBusy = false;
+      if (el.pp.open) showPoster();
+    }
   });
 
   // ── Start ─────────────────────────────────────────────────────────────────

@@ -184,6 +184,64 @@ kbd {
 }
 .vz-dragging .vz-dropveil { display: flex; }
 
+/* ── The poster dialog ───────────────────────────────────────────────────── */
+
+.vz-dialog {
+  width: min(760px, calc(100vw - 24px));
+  max-height: min(92vh, 860px);
+  max-height: min(92dvh, 860px);
+  box-sizing: border-box; padding: 0;
+  border: 1px solid var(--border-color); border-radius: 14px;
+  background: var(--modal-bg); color: var(--text-primary);
+  box-shadow: 0 18px 50px var(--shadow-color);
+  font-family: var(--font-sans); font-size: 14px;
+  overflow: hidden;
+}
+.vz-dialog[open] { display: flex; flex-direction: column; }
+.vz-dialog::backdrop { background: var(--overlay-bg); }
+.vz-dialog-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 14px 10px 20px; border-bottom: 1px solid var(--border-color);
+}
+.vz-dialog-head h2 { margin: 0; font-size: 1.2rem; font-weight: 600; }
+.vz-dialog-body { padding: 14px 20px 6px; overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
+.vz-dialog-body .vz-lead { line-height: 1.5; }
+.vz-dialog-foot {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  padding: 10px 20px 14px; border-top: 1px solid var(--border-color);
+}
+
+.vz-pp { display: grid; grid-template-columns: minmax(0, 1fr) 200px; gap: 18px; align-items: start; margin: 4px 0 12px; }
+.vz-pp-view { padding: 10px; border: 1px solid var(--border-color); border-radius: var(--radius); background: var(--bg-secondary); }
+/* As tall as the poster's shape needs (vectorize.js sets the aspect ratio),
+   up to a limit. */
+.vz-pp-view svg { display: block; width: 100%; height: auto; max-height: min(46vh, 420px); }
+/* The poster is printed on white paper, in either theme. */
+.vz-pp-bg { fill: #ffffff; stroke: #9aa3ad; stroke-width: 1px; vector-effect: non-scaling-stroke; }
+.vz-pp-seam { stroke: #1a6fd9; stroke-width: 1.3px; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
+.vz-pp-name {
+  font-family: var(--font-sans); font-weight: 600; fill: #1a6fd9;
+  paint-order: stroke; stroke: #ffffff; stroke-width: 0.28em; stroke-linejoin: round;
+}
+.vz-pp-opts { display: grid; gap: 12px; }
+.vz-pp-opts label { display: block; margin-bottom: 4px; color: var(--text-secondary); }
+.vz-pp-opts input, .vz-pp-opts select {
+  font: inherit; width: 100%; box-sizing: border-box; height: 34px; padding: 0 8px;
+  border: 1px solid var(--input-border); border-radius: var(--radius);
+  background: var(--input-bg); color: var(--input-text);
+}
+.vz-pp-opts input:focus-visible, .vz-pp-opts select:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 1px; }
+.vz-pp-size { margin: 2px 0 2px; font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.vz-pp-msg { min-height: 1.45em; margin: 8px 0 0; color: var(--text-secondary); }
+.vz-pp-note:empty { display: none; }
+.vz-pp-note { margin: 0 0 8px; padding: 6px 10px; border-left: 3px solid var(--accent-line); background: var(--bg-secondary); }
+
+@media (max-width: 640px) {
+  .vz-pp { grid-template-columns: minmax(0, 1fr); }
+  .vz-pp-view svg { max-height: min(38vh, 300px); }
+  .vz-pp-opts { grid-template-columns: 1fr 1fr; }
+}
+
 /* ── Narrow screens ──────────────────────────────────────────────────────── */
 
 @media (max-width: 880px) {

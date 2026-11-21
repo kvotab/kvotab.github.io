@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="base-uri 'self'; object-src 'none'">
   <title>Vectorize — kvot ab</title>
-  <meta name="description" content="Turn a drawing, scan or logo into a smooth SVG in the browser: drop, paste or link an image, tune the smoothing, line weight and curves while you watch, and download the vector file. Nothing is uploaded.">
+  <meta name="description" content="Turn a drawing, scan or logo into a smooth SVG in the browser: drop, paste or link an image, tune the smoothing, line weight and curves while you watch, and download the vector file, or a poster to print over many sheets of paper. Nothing is uploaded.">
   <link rel="canonical" href="https://kvotab.se/vectorize.html">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="kvot ab">
@@ -25,7 +25,7 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
-  <link rel="stylesheet" href="./resources/css/vectorize.css?v=20261121">
+  <link rel="stylesheet" href="./resources/css/vectorize.css?v=20261121b">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
 </head>
@@ -155,6 +155,7 @@
       </div>
       <div class="vz-row vz-save">
         <button type="button" class="vz-btn vz-btn-sm" id="vz-copy" disabled>Copy SVG</button>
+        <button type="button" class="vz-btn vz-btn-sm" id="vz-poster" disabled title="The drawing printed large over many sheets of paper, to cut and glue together">Poster PDF…</button>
         <button type="button" class="vz-btn vz-btn-sm vz-btn-go" id="vz-download" disabled>Download SVG</button>
       </div>
     </div>
@@ -205,6 +206,72 @@
 
 <div class="vz-dropveil" aria-hidden="true"><div>Drop the image to vectorize it</div></div>
 
+<!-- The poster: the drawing printed large over many sheets of paper, each
+     with its cut line and glue strip. vectorize-poster.js writes the PDF. -->
+<dialog class="vz-dialog" id="vz-pp" aria-labelledby="vz-pp-title">
+  <div class="vz-dialog-head">
+    <h2 id="vz-pp-title">Poster PDF</h2>
+    <button type="button" class="vz-iconbtn" id="vz-pp-close" aria-label="Close" title="Close">×</button>
+  </div>
+  <div class="vz-dialog-body">
+    <p class="vz-lead">The drawing printed large over many sheets of paper, to cut and glue together. Every sheet shows
+       where to cut and where to glue, and the first page how the sheets go together. The lines stay sharp at any size.</p>
+    <div class="vz-pp">
+      <div class="vz-pp-view" id="vz-pp-view">
+        <svg id="vz-pp-svg" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="The poster, with the sheets it is printed on">
+          <rect id="vz-pp-bg" class="vz-pp-bg" width="0" height="0"/>
+          <path id="vz-pp-art" d=""/>
+          <image id="vz-pp-img" preserveAspectRatio="none" display="none"/>
+          <g id="vz-pp-grid"></g>
+        </svg>
+      </div>
+      <div class="vz-pp-opts">
+        <div id="vz-pp-from-row" hidden>
+          <label for="vz-pp-from">Print</label>
+          <select id="vz-pp-from">
+            <option value="svg">The SVG as it is</option>
+            <option value="trace">The traced drawing</option>
+          </select>
+        </div>
+        <div>
+          <label for="vz-pp-across">Sheets across</label>
+          <input type="number" id="vz-pp-across" min="1" max="30" step="1" inputmode="numeric">
+        </div>
+        <div>
+          <label for="vz-pp-down">Sheets down</label>
+          <input type="number" id="vz-pp-down" min="1" max="30" step="1" inputmode="numeric">
+        </div>
+        <div>
+          <label for="vz-pp-paper">Paper</label>
+          <select id="vz-pp-paper">
+            <option value="a4">A4</option>
+            <option value="letter">US Letter</option>
+          </select>
+        </div>
+        <div>
+          <label for="vz-pp-orient">Sheets</label>
+          <select id="vz-pp-orient">
+            <option value="portrait">Upright (portrait)</option>
+            <option value="landscape">Sideways (landscape)</option>
+          </select>
+        </div>
+        <div>
+          <p class="vz-pp-size" id="vz-pp-size"></p>
+          <p class="vz-hint" id="vz-pp-count"></p>
+        </div>
+      </div>
+    </div>
+    <p class="vz-hint vz-pp-note" id="vz-pp-note"></p>
+    <p class="vz-hint">Print it one-sided at 100 % (“Actual size”), not “Fit to page”; the first page has a 10 cm bar to check by.</p>
+    <p class="vz-pp-msg" id="vz-pp-msg" role="status" aria-live="polite"></p>
+  </div>
+  <div class="vz-dialog-foot">
+    <span class="vz-spacer"></span>
+    <button type="button" class="vz-btn" id="vz-pp-cancel">Close</button>
+    <button type="button" class="vz-btn vz-btn-go" id="vz-pp-go">Download PDF</button>
+  </div>
+</dialog>
+
 <footer></footer>
 
 <script src="./resources/js/kvot-errors.js?v=20260911"></script>
@@ -217,6 +284,7 @@
   KVOT.renderNav('vectorize.html');
   KVOT.renderFooter();
 </script>
-<script src="./resources/js/vectorize.js?v=20261121"></script>
+<script src="./resources/js/vectorize-poster.js?v=20261121b"></script>
+<script src="./resources/js/vectorize.js?v=20261121b"></script>
 </body>
 </html>
