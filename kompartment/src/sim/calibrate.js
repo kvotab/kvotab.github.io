@@ -31,6 +31,7 @@ import { parameterSlots, slotLabel } from './localsens.js';
 import {
 	SPACES, METHODS, objectiveOf, OptimiseError, entryOf,
 } from '../domain/optimise.js';
+import { precisionOf } from '../domain/precision.js';
 
 /** Where a target is read: a time, the peak, or the end of the run. */
 export const WHENS = {
@@ -104,6 +105,94 @@ export function variablesOf(project) {
  */
 export function calibrate(input, opts = {}) {
 	const started = Date.now();
+	const c = setUp(input, opts);
+	const { targets, vars } = c;
+
+	const ctx = {
+		start: vars.map((v) => v.start),
+		objective: (x) => c.evaluate(x).objective,
+		residuals: (x) => c.evaluate(x).residuals,
+	};
+
+	const method = entryOf(METHODS, opts.method) ?? METHODS.nelder;
+	const out = method.run(ctx, {
+		lower: vars.map((v) => v.lower),
+		upper: vars.map((v) => v.upper),
+		maxEvals: Math.max(10, Math.round(opts.maxEvals ?? 300)),
+		seed: opts.seed ?? 1,
+		signal: opts.signal,
+		onProgress: null,
+		onStep: opts.onProgress
+			? (p) => opts.onProgress({
+				evals: p.evals,
+				fx: p.fx,
+				best: p.best,
+				// In the values a reader knows, not in the search space.
+				values: p.bestX ? vars.map((v, i) => v.space.from(p.bestX[i])) : null,
+			})
+			: null,
+	});
+
+	// The best point, read once more so the readings reported are the ones
+	// that belong to the values reported -- the last evaluation was whatever
+	// the method tried last, which is usually not the best.
+	let readings = null;
+	let objective = out.fx;
+	let residuals = null;
+	if (out.x) {
+		const got = c.evaluate(out.x, true);
+		readings = c.readings();
+		objective = got.objective;
+		residuals = got.residuals;
+	}
+	const values = out.x ? valuesAt(c, out.x) : [];
+	// How well they are known, from the misfit left and how the endpoints
+	// move with each value there: after the search, so nothing the search
+	// decided depends on it and its count of evaluations is its own. Not for
+	// a search that was stopped -- a Stop is a Stop -- nor one the model could
+	// not finish at its best point.
+	const precision = out.x && opts.precision !== false && out.reason !== 'stopped'
+		&& !opts.signal?.aborted && readings.every(Number.isFinite)
+		? precisionAround(c, out.x, residuals, values)
+		: null;
+	c.restore();
+
+	return {
+		ok: !!out.x && Number.isFinite(objective),
+		// Whether the answer actually *is* one. `ok` only says numbers came
+		// back; a search that ran into a bound and stopped comes back with
+		// numbers too, and calling that solved would be the report lying about
+		// the one thing it is for.
+		matched: !!readings && targets.every((t, i) => {
+			const want = Number(t.value);
+			const got = readings[i];
+			if (!Number.isFinite(got) || !Number.isFinite(want)) return false;
+			if (want === 0) return Math.abs(got) < 1e-12;
+			return Math.abs((got - want) / want) < 0.01;
+		}),
+		method: opts.method ?? 'nelder',
+		reason: out.reason,
+		evals: out.evals,
+		ms: Date.now() - started,
+		objective,
+		values,
+		precision,
+		targets: targets.map((t, i) => ({
+			output: t.output,
+			want: Number(t.value),
+			got: readings ? readings[i] : NaN,
+			scale: t.scale ?? 'relative',
+		})),
+	};
+}
+
+/**
+ * What every evaluation needs, set up once: the targets, the variables in the
+ * space each is searched in, and what one evaluation is -- the parameters
+ * set, the invariants worked out again, a run, the endpoints read -- with the
+ * way back to what the model held before.
+ */
+function setUp(input, opts) {
 	const project = input instanceof Project ? input : new Project(input);
 	const targets = (opts.targets ?? []).filter((t) => t && t.output);
 	if (!targets.length) throw new OptimiseError('No endpoint has been given a target value.');
@@ -163,87 +252,121 @@ export function calibrate(input, opts = {}) {
 		}
 		return objectiveOf(lastReadings, targets);
 	};
-
-	const ctx = {
-		start: vars.map((v) => v.start),
-		objective: (x) => evaluate(x).objective,
-		residuals: (x) => evaluate(x).residuals,
+	const restore = () => {
+		for (let i = 0; i < vars.length; i++) P[vars[i].slot] = before[i];
+		system.evaluateInvariant();
 	};
+	return { project, targets, vars, before, evaluate, restore, readings: () => lastReadings };
+}
 
-	const method = entryOf(METHODS, opts.method) ?? METHODS.nelder;
-	const out = method.run(ctx, {
-		lower: vars.map((v) => v.lower),
-		upper: vars.map((v) => v.upper),
-		maxEvals: Math.max(10, Math.round(opts.maxEvals ?? 300)),
-		seed: opts.seed ?? 1,
-		signal: opts.signal,
-		onProgress: null,
-		onStep: opts.onProgress
-			? (p) => opts.onProgress({
-				evals: p.evals,
-				fx: p.fx,
-				best: p.best,
-				// In the values a reader knows, not in the search space.
-				values: p.bestX ? vars.map((v, i) => v.space.from(p.bestX[i])) : null,
-			})
-			: null,
+/** The values at a point of the search, as the model holds them, and which sit on a bound. */
+function valuesAt(c, x) {
+	return c.vars.map((v, i) => {
+		const value = v.space.from(x[i]);
+		const lo = v.space.from(v.lower);
+		const hi = v.space.from(v.upper);
+		// Within a thousandth of a bound is *on* it: the search wanted to
+		// go further and was not allowed, which is the one thing about an
+		// answer a reader has to be told. A thousandth of the range the
+		// search moved over, in the space it moved in: measured against
+		// the bound itself, a bound of 0 was reached only at exactly 0.
+		const near = (u, bound) => Math.abs(u - bound) <= Math.abs(v.upper - v.lower) * 1e-3;
+		return {
+			key: v.key,
+			was: c.before[i],
+			value,
+			lower: lo,
+			upper: hi,
+			pinned: near(x[i], v.lower) ? 'lower' : (near(x[i], v.upper) ? 'upper' : null),
+		};
 	});
+}
 
-	// The best point, read once more so the readings reported are the ones
-	// that belong to the values reported -- the last evaluation was whatever
-	// the method tried last, which is usually not the best.
-	let readings = null;
-	let objective = out.fx;
-	if (out.x) {
-		const got = evaluate(out.x, true);
-		readings = lastReadings;
-		objective = got.objective;
-	}
-	for (let i = 0; i < vars.length; i++) P[vars[i].slot] = before[i];
-	system.evaluateInvariant();
+/**
+ * How far each value is moved to difference the residuals for the precision:
+ * a thousandth -- of the value itself where it is searched as it is, of its
+ * logarithm's unit where it is searched in the logarithm, which is a tenth of
+ * a per cent of the value either way -- and never more than a quarter of the
+ * range. Large beside the run's own error (its tolerance, about 1e-6 of each
+ * reading), small beside the bend of a model over a per cent.
+ */
+const PRECISION_STEP = 1e-3;
 
-	return {
-		ok: !!out.x && Number.isFinite(objective),
-		// Whether the answer actually *is* one. `ok` only says numbers came
-		// back; a search that ran into a bound and stopped comes back with
-		// numbers too, and calling that solved would be the report lying about
-		// the one thing it is for.
-		matched: !!readings && targets.every((t, i) => {
-			const want = Number(t.value);
-			const got = readings[i];
-			if (!Number.isFinite(got) || !Number.isFinite(want)) return false;
-			if (want === 0) return Math.abs(got) < 1e-12;
-			return Math.abs((got - want) / want) < 0.01;
-		}),
-		method: opts.method ?? 'nelder',
-		reason: out.reason,
-		evals: out.evals,
-		ms: Date.now() - started,
-		objective,
-		values: out.x ? vars.map((v, i) => {
-			const value = v.space.from(out.x[i]);
-			const lo = v.space.from(v.lower);
-			const hi = v.space.from(v.upper);
-			// Within a thousandth of a bound is *on* it: the search wanted to
-			// go further and was not allowed, which is the one thing about an
-			// answer a reader has to be told. A thousandth of the range the
-			// search moved over, in the space it moved in: measured against
-			// the bound itself, a bound of 0 was reached only at exactly 0.
-			const near = (u, bound) => Math.abs(u - bound) <= Math.abs(v.upper - v.lower) * 1e-3;
-			return {
-				key: v.key,
-				was: before[i],
-				value,
-				lower: lo,
-				upper: hi,
-				pinned: near(out.x[i], v.lower) ? 'lower' : (near(out.x[i], v.upper) ? 'upper' : null),
-			};
-		}) : [],
-		targets: targets.map((t, i) => ({
-			output: t.output,
-			want: Number(t.value),
-			got: readings ? readings[i] : NaN,
-			scale: t.scale ?? 'relative',
-		})),
+/**
+ * The precision of the values found: the residuals differenced along each
+ * value about the answer -- central where both sides are inside the bounds,
+ * one-sided against a bound -- and `precisionOf` on what that gives. A value
+ * on a bound is held; one the model would not run around is said so.
+ */
+function precisionAround(c, x, residuals, values) {
+	const { vars } = c;
+	const columns = [];
+	const failed = [];
+	let runs = 0;
+	const at = (k, u) => {
+		const xp = Float64Array.from(x);
+		xp[k] = u;
+		runs++;
+		const got = c.evaluate(xp);
+		return c.readings().every(Number.isFinite) ? got.residuals : null;
 	};
+	for (let k = 0; k < vars.length; k++) {
+		const v = vars[k];
+		if (values[k].pinned) { columns.push(null); failed.push(null); continue; }
+		const span = v.upper - v.lower;
+		const own = v.space === SPACES.log ? 1 : Math.abs(x[k]);
+		const h = Math.min(span / 4, PRECISION_STEP * (own > 0 ? own : span));
+		const up = x[k] + h <= v.upper;
+		const down = x[k] - h >= v.lower;
+		let col = null;
+		if (h > 0 && up && down) {
+			const p = at(k, x[k] + h);
+			const q = p ? at(k, x[k] - h) : null;
+			if (p && q) col = p.map((pi, i) => (pi - q[i]) / (2 * h));
+		} else if (h > 0 && (up || down)) {
+			const step = up ? h : -h;
+			const p = at(k, x[k] + step);
+			if (p) col = p.map((pi, i) => (pi - residuals[i]) / step);
+		}
+		columns.push(col);
+		failed.push(col ? null : 'did not run');
+	}
+	const out = precisionOf({
+		residuals,
+		columns,
+		keys: vars.map((v) => v.key),
+		spaces: vars.map((v) => (v.space === SPACES.log ? 'log' : 'linear')),
+		values: values.map((v) => v.value),
+		pinned: values.map((v) => v.pinned),
+		failed,
+	});
+	out.runs = runs;
+	return out;
+}
+
+/**
+ * The precision of values a calibration found somewhere else -- on an engine
+ * that reports the values and not this -- worked out here as a calibration
+ * here works it out, at the values reported.
+ *
+ * @param {object|Project} input
+ * @param {object} opts
+ * @param {Array} opts.targets     as `calibrate` takes them
+ * @param {Array} opts.variables   as `calibrate` takes them
+ * @param {Array} opts.values      the result's `values`, in the variables' order
+ */
+export function calibrationPrecision(input, opts = {}) {
+	const c = setUp(input, opts);
+	try {
+		const values = opts.values ?? [];
+		if (values.length !== c.vars.length) {
+			throw new OptimiseError('The values do not match the parameters that were varied.');
+		}
+		const x = Float64Array.from(c.vars, (v, i) => v.space.to(Number(values[i].value)));
+		const got = c.evaluate(x, true);
+		if (!c.readings().every(Number.isFinite)) return null;
+		return precisionAround(c, x, got.residuals, valuesAt(c, x));
+	} finally {
+		c.restore();
+	}
 }

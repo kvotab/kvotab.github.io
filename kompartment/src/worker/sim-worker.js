@@ -41,7 +41,7 @@ import {
 import { streamFor, uniforms } from '../domain/sample.js';
 import { pawn, discrepancyShares, rankProbabilities } from '../domain/salib.js';
 import { sortedColumn, describeSample, histogram } from '../domain/distribution.js';
-import { calibrate, variablesOf } from '../sim/calibrate.js';
+import { calibrate, calibrationPrecision, variablesOf } from '../sim/calibrate.js';
 import { runSensitivity, elasticity } from '../sim/localsens.js';
 import { checkJacobian, jacobianPattern } from '../sim/jaccheck.js';
 import { isScipySolver, loadScipy, scipyReady } from '../ode/scipy.js';
@@ -2161,6 +2161,32 @@ self.onmessage = async (ev) => {
 			self.postMessage({
 				type: 'error', id, name: e.name ?? 'Error',
 				message: e.message ?? String(e), blockName: e.blockName ?? null, hint: e.hint ?? null,
+			});
+		}
+		return;
+	}
+
+	// How well the values a calibration on an engine found are known: the
+	// engine reports the values, and the precision is worked out here, at
+	// them, as a calibration here works it out after its search.
+	if (msg.type === 'calibration-precision') {
+		cancelled = false;
+		const { id, project } = msg;
+		try {
+			self.postMessage({ type: 'loading', id, stage: 'building' });
+			const precision = calibrationPrecision(project, {
+				targets: msg.targets,
+				variables: msg.variables,
+				values: msg.values,
+				signal: { get aborted() { return cancelled; } },
+			});
+			if (cancelled) throw Object.assign(new Error('Stopped.'), { name: 'Cancelled' });
+			if (!precision) throw new Error('The model did not run at the values found.');
+			self.postMessage({ type: 'calibration-precision', id, ok: true, precision });
+		} catch (e) {
+			self.postMessage({
+				type: 'calibration-precision', id, ok: false,
+				name: e.name ?? 'Error', message: e.message ?? String(e),
 			});
 		}
 		return;

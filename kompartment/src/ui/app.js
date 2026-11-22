@@ -1160,7 +1160,7 @@ export function messageIsCurrent(m, runId) {
  * above would drop every answer with nothing said -- a dialog that runs for a
  * minute and then waits for ever.
  */
-const OWN_ID_REPLIES = new Set(['optimise', 'optimise-progress', 'variables']);
+const OWN_ID_REPLIES = new Set(['optimise', 'optimise-progress', 'variables', 'calibration-precision']);
 
 const PROB_REPLIES = new Set([
 	'prob-matrix', 'prob-bands', 'prob-categories', 'prob-summary', 'prob-hist',
@@ -1213,6 +1213,10 @@ function ensureWorker() {
 		if (m.type === 'optimise') {
 			if (m.ok) state.optOpen?.finished(m.result);
 			else state.optOpen?.failed(m.message ?? 'It could not be solved.');
+			return;
+		}
+		if (m.type === 'calibration-precision') {
+			if (m.id === state.optId) state.optOpen?.precision(m);
 			return;
 		}
 		if (m.type === 'prob-hist') { acceptHistograms(m); return; }
@@ -12430,6 +12434,19 @@ async function openOptimise() {
 		onStop: () => cancelSimulation(),
 		onTry: (values) => runAtValues(values, { keep: false }),
 		onApply: (values) => runAtValues(values, { keep: true }),
+		// An answer an engine found comes without how well it is known: that
+		// is worked out here, at the values it found.
+		onPrecision: (setup, result) => {
+			state.optId += 1;
+			ensureWorker().postMessage({
+				type: 'calibration-precision',
+				id: state.optId,
+				project: projectNow(),
+				targets: setup.targets,
+				variables: setup.variables,
+				values: result.values,
+			});
+		},
 	});
 }
 

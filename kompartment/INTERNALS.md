@@ -76,6 +76,7 @@ exercise `domain/` and `sim/` directly, which is why they can be plain Node.
 | `src/domain/massbalance.js` | The mass-balance audit, done with budget states the solver integrates |
 | `src/domain/versions.js` | Two models in, the differences out |
 | `src/domain/suggest.js` | The names a mistyped one was probably meant to be, and the fix put into the one equation |
+| `src/domain/precision.js` | How well a calibration's values are known: standard errors, ranges and correlations from the residuals' derivatives; Student's t |
 | `src/domain/runlog.js` | What a run was, written into its results archive |
 | `src/domain/pdf.js`, `src/domain/sample.js` | The distributions and the sampler |
 | `src/domain/unitcheck.js` | The unit algebra, the literal conversion and the clash messages |
@@ -5787,7 +5788,13 @@ the engine as a job of its own kind:
   `optimise-progress`; *dy/dp* a `local-sensitivity` job. Each writes its answer
   as JSON (a number that is not finite as null, as `JSON.stringify` writes it),
   fetched with `engineArchive(…, { raw: true })`; dy/dp sends every state the page
-  shows, and the elasticities are worked out here.
+  shows, and the elasticities are worked out here. A calibration here reports
+  `precision` beside its values (`precisionAround` in `src/sim/calibrate.js`,
+  after the search, its runs not counted among its evaluations, so a
+  calibration's steps and counts are what the engines' are); an engine's result
+  has none, and the dialog's *How well are they known?* sends
+  `calibration-precision`, which `calibrationPrecision` answers here at the
+  values the engine found.
 - What an engine does not do it refuses before anything runs, as
   `NotOnThisEngine`, and the worker then does it here, posting
   `engine-elsewhere` so the bar says so. Both engines now do everything the

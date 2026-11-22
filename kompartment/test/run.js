@@ -41022,6 +41022,129 @@ test('Levenberg–Marquardt differences the point it asked for, and leaves an up
 	assert(big.evals < 30, `${big.evals} evaluations`);
 });
 
+test('a calibration says how well it knows each value: standard errors, ranges and correlations', async () => {
+	const { calibrate, calibrationPrecision } = await import('../src/sim/calibrate.js');
+	const P = await import('../src/domain/precision.js');
+	const { Project } = await import('../src/domain/project.js');
+
+	// Student's t, against SciPy's stats.t.ppf to 1e-10.
+	for (const [p, dof, want] of [
+		[0.975, 1, 12.706204736432095], [0.975, 2, 4.302652729696142], [0.975, 3, 3.182446305284263],
+		[0.975, 10, 2.2281388519649385], [0.995, 4, 4.604094871415897], [0.025, 100, -1.983971518449634],
+	]) close(P.studentQuantile(p, dof), want, 1e-10, `t(${p}, ${dof})`);
+
+	// A decays at k from A0, read on a log scale at five times: the residuals
+	// are ln A0 - k t - ln y, straight in (ln A0, k), so the precision is
+	// ordinary least squares' exactly -- s^2 (X^T X)^-1 with X = [1, -t].
+	const model = () => ({
+		name: 'precision',
+		simulation: {
+			start_time: 0, end_time: 10, output_points: 11, spacing: 'linear',
+			solver: 'ndf', rtol: 1e-11, abstol: 1e-14, time_unit: 'year',
+		},
+		parameters: [
+			{ name: 'k', value: '0.2', unit: '1/year' },
+			{ name: 'A0', value: '3', unit: 'Bq' },
+			{ name: 'unused', value: '1', unit: '' },
+		],
+		compartments: [{ name: 'A', initial: 'A0', unit: 'Bq', dydt: '-k*A' }],
+	});
+	const times = [1, 3, 5, 7, 9];
+	const scatter = [1.05, 0.97, 1.02, 0.96, 1.03];
+	const targets = times.map((time, i) => ({
+		output: 'A', when: 'at', time, scale: 'log', weight: 1,
+		value: 5 * Math.exp(-0.3 * time) * scatter[i],
+	}));
+	const variables = [
+		{ key: 'k', lower: 1e-3, upper: 2, space: 'linear' },
+		{ key: 'A0', lower: 0.1, upper: 100, space: 'log' },
+	];
+	const out = calibrate(model(), { targets, variables, method: 'lm', maxEvals: 400 });
+	assert(out.ok, JSON.stringify(out));
+	const pr = out.precision;
+	assert(pr && !pr.reason && pr.targets === 5 && pr.free === 2 && pr.dof === 3, JSON.stringify(pr));
+
+	// The closed form.
+	const m = times.length;
+	const ly = targets.map((t) => Math.log(t.value));
+	const st = times.reduce((a, b) => a + b, 0);
+	const stt = times.reduce((a, b) => a + b * b, 0);
+	const sy = ly.reduce((a, b) => a + b, 0);
+	const sty = times.reduce((a, t, i) => a + t * ly[i], 0);
+	const det = m * stt - st * st;
+	const slope = (m * sty - st * sy) / det; // = -k
+	const icept = (sy - slope * st) / m; // = ln A0
+	const ssr = ly.reduce((a, y, i) => a + (y - icept - slope * times[i]) ** 2, 0);
+	const s2 = ssr / (m - 2);
+	const seK = Math.sqrt((s2 * m) / det);
+	const seLnA0 = Math.sqrt((s2 * stt) / det);
+	const corr = st / Math.sqrt(m * stt); // of (ln A0, k): X = [1, -t]
+	const got = Object.fromEntries(out.values.map((v) => [v.key, v.value]));
+	close(got.k, -slope, 1e-6, 'the fit is least squares’');
+	close(got.A0, Math.exp(icept), 1e-6, 'and its intercept');
+	close(pr.spread, Math.sqrt(s2), 1e-5, 'the spread of what is left');
+	const byKey = Object.fromEntries(pr.values.map((v) => [v.key, v]));
+	close(byKey.k.se, seK, 1e-4, 'k’s standard error');
+	const t95 = P.studentQuantile(0.975, 3);
+	close(byKey.k.low, got.k - t95 * seK, 1e-4, 'its range, in its own units');
+	close(byKey.k.high, got.k + t95 * seK, 1e-4, 'and above');
+	// Searched in the logarithm: a factor either way.
+	close(byKey.A0.factor, Math.exp(t95 * seLnA0), 1e-4, 'A0’s range is a factor');
+	close(byKey.A0.low * byKey.A0.factor, got.A0, 1e-12, 'below by it');
+	close(byKey.A0.high / byKey.A0.factor, got.A0, 1e-12, 'above by it');
+	close(byKey.A0.se, got.A0 * seLnA0, 1e-4, 'its standard error in its own units');
+	assert(pr.correlations.keys.join() === 'k,A0', pr.correlations.keys.join());
+	close(pr.correlations.matrix[0][1], corr, 1e-4, 'k and A0 move together');
+	assert(pr.correlations.matrix[0][1] === pr.correlations.matrix[1][0] && pr.correlations.matrix[0][0] === 1);
+	// The runs it took are its own, not the search's.
+	assert(pr.runs === 4, `${pr.runs} runs`);
+
+	// Worked out again at the reported values, as for a calibration on an
+	// engine: the same answer.
+	const again = calibrationPrecision(model(), { targets, variables, values: out.values });
+	close(again.values[0].se, byKey.k.se, 1e-9, 'worked out at the reported values');
+
+	// No more targets than values: the correlations, not the ranges.
+	const two = calibrate(model(), { targets: targets.slice(0, 2), variables, method: 'lm', maxEvals: 400 });
+	assert(two.precision.reason === 'no spare targets' && two.precision.correlations
+		&& two.precision.values.every((v) => v.se === null), JSON.stringify(two.precision));
+	// A value on a bound is held there and has no range; one nothing reads has no effect.
+	const held = calibrate(model(), {
+		targets,
+		variables: [
+			{ key: 'k', lower: 0.5, upper: 2, space: 'linear' },
+			{ key: 'A0', lower: 0.1, upper: 100, space: 'log' },
+			{ key: 'unused', lower: 0.5, upper: 2, space: 'linear' },
+		],
+		method: 'lm',
+		maxEvals: 400,
+	});
+	const h = Object.fromEntries(held.precision.values.map((v) => [v.key, v]));
+	assert(h.k.held === 'lower' && h.k.se === null, JSON.stringify(h.k));
+	assert(h.unused.held === 'no effect' && h.unused.se === null, JSON.stringify(h.unused));
+	assert(h.A0.se > 0 && held.precision.free === 1 && held.precision.dof === 4, JSON.stringify(held.precision));
+	// A stopped search says nothing about precision.
+	const stopped = calibrate(model(), {
+		targets, variables, method: 'lm', maxEvals: 400, signal: { aborted: true },
+	});
+	assert(stopped.precision === null, JSON.stringify(stopped.precision));
+	// And the model is left as it was.
+	const raw = model();
+	calibrate(raw, { targets, variables, method: 'lm', maxEvals: 400 });
+	assert(new Project(raw).parameters.find((p) => p.name === 'k').value === 0.2
+		|| raw.parameters[0].value === '0.2', 'the precision runs left a value behind');
+
+	// The dialog shows it, and asks the worker for it where an engine's answer came without.
+	const { readFileSync } = await import('node:fs');
+	const worker = readFileSync(new URL('../src/worker/sim-worker.js', import.meta.url), 'utf8');
+	assert(/if \(msg\.type === 'calibration-precision'\) \{[\s\S]*?calibrationPrecision\(project, \{/.test(worker),
+		'the worker does not work it out for an engine’s answer');
+	const dialog = readFileSync(new URL('../src/ui/optdialog.js', import.meta.url), 'utf8');
+	assert(/if \(pr\.dof > 0 && !pr\.reason\) box\.append\(rangesTable\(pr\)\);/.test(dialog), 'no ranges');
+	assert(/'How well are they known\?'/.test(dialog) && /if \(pr === undefined\) \{/.test(dialog),
+		'an engine’s answer is not offered its precision');
+});
+
 test('an optimiser option given as null takes its default', async () => {
 	const O = await import('../src/domain/optimise.js');
 	const rosen = (x) => 100 * (x[1] - x[0] * x[0]) ** 2 + (1 - x[0]) ** 2;
@@ -41192,7 +41315,7 @@ test('an optimised answer can be tried without being taken', async () => {
 
 	// The replies carry their own counter, not the run's — the trap that
 	// leaves a dialog waiting for ever.
-	assert(/const OWN_ID_REPLIES = new Set\(\['optimise', 'optimise-progress', 'variables'\]\)/.test(app),
+	assert(/const OWN_ID_REPLIES = new Set\(\['optimise', 'optimise-progress', 'variables', 'calibration-precision'\]\)/.test(app),
 		'the optimiser’s replies are dropped by messageIsCurrent');
 
 	// **The model it optimises is the model that is open**, built now.

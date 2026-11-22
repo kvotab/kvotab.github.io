@@ -255,6 +255,10 @@ const TOPICS = {
 				'**Method** — how the search goes.',
 			],
 		}, {
+			text: 'Under the answer, **how well each value is known**: its standard error and a range of about '
+				+ '95 %, from the misfit left and how the endpoints move with each value there, and the '
+				+ 'correlations between the values found. It needs more endpoints than values.',
+		}, {
 			text: 'Nothing in the model changes until you ask: the answer can be previewed on the chart first.',
 		}],
 		more: 'Solving for the inputs',

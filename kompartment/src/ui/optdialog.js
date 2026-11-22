@@ -90,10 +90,12 @@ function addFrom(items, { title, noun, chosen, onDone }) {
  * @param {() => void} opts.onStop
  * @param {(values) => void} opts.onApply     write the values into the model
  * @param {(values) => void} opts.onTry       run the model at them, no edit
+ * @param {(setup, result) => void} [opts.onPrecision]  work out how well an
+ *   answer that came without it is known -- one from an engine
  */
 export function openOptimiseDialog({
 	outputs = [], variables = [], times = [], setup = null,
-	onRun, onStop, onApply, onTry, onChange = null,
+	onRun, onStop, onApply, onTry, onChange = null, onPrecision = null,
 }) {
 	const byVar = new Map(variables.map((v) => [v.key, v]));
 	const state = {
@@ -105,6 +107,10 @@ export function openOptimiseDialog({
 		running: null,
 		result: null,
 		error: null,
+		// Working out how well an answer from an engine is known, and why
+		// that could not be done.
+		precisionRunning: false,
+		precisionError: null,
 		// The setup the answer on screen is an answer *to*. Changing a bound
 		// or a target makes it an answer to a different question, and the one
 		// thing worse than no answer is one that quietly belongs to the
@@ -292,7 +298,20 @@ export function openOptimiseDialog({
 					`${p.evals.toLocaleString()} evaluations · best ${fmt(p.best)}`
 					+ (p.values ? ` · ${p.values.map(fmt).join(', ')}` : '')));
 			}
-			if (state.result) body.append(resultBox(state.result, stale));
+			if (state.result) {
+				body.append(resultBox(state.result, stale, {
+					// An answer that came without its precision -- one an engine
+					// found -- is offered it, worked out here at the values found.
+					onPrecision: onPrecision && !stale ? () => {
+						state.precisionRunning = true;
+						state.precisionError = null;
+						redraw();
+						onPrecision(snapshot(), state.result);
+					} : null,
+					precisionRunning: state.precisionRunning,
+					precisionError: state.precisionError,
+				}));
+			}
 
 			// ------------------------------------------------------ the buttons
 			const foot = el('div', { className: 'pdf-foot' });
@@ -352,13 +371,27 @@ export function openOptimiseDialog({
 	return {
 		handle,
 		progress(p) { state.running = p; state.result = null; redraw(); },
-		finished(result) { state.running = null; state.result = result; state.error = null; redraw(); },
+		finished(result) {
+			state.running = null;
+			state.result = result;
+			state.error = null;
+			state.precisionRunning = false;
+			state.precisionError = null;
+			redraw();
+		},
 		failed(message) { state.running = null; state.error = message; redraw(); },
+		/** How well the answer on screen is known, worked out after it. */
+		precision(m) {
+			state.precisionRunning = false;
+			if (m.ok && state.result) state.result = { ...state.result, precision: m.precision };
+			else state.precisionError = m.message ?? 'It could not be worked out.';
+			redraw();
+		},
 	};
 }
 
 /** What the answer was, in the words a reader can check it in. */
-function resultBox(r, stale = false) {
+function resultBox(r, stale = false, { onPrecision = null, precisionRunning = false, precisionError = null } = {}) {
 	const box = el('div', { className: `opt-result${stale ? ' is-stale' : ''}` });
 	if (stale) {
 		box.append(el('p', { className: 'prob-warn' },
@@ -429,5 +462,115 @@ function resultBox(r, stale = false) {
 	}
 	vt.append(vb);
 	box.append(vt);
+	if (r.ok) box.append(precisionBox(r, { onPrecision, precisionRunning, precisionError }));
+	return box;
+}
+
+/** What a held value is said to be, in a cell or a sentence. */
+const HELD = {
+	lower: 'on its lower bound',
+	upper: 'on its upper bound',
+	'no effect': 'moves no endpoint',
+	'did not run': 'the model did not run around it',
+};
+
+/**
+ * How well each value is known, a row each: its standard error and its range,
+ * in the space it was searched in -- a factor either way for a value searched
+ * in its logarithm, `\u00d7 1.84`, and a plus-or-minus otherwise.
+ */
+function rangesTable(pr) {
+	const table = el('table', { className: 'opt-table opt-ranges' });
+	table.append(el('thead', {}, el('tr', {},
+		el('th', {}, 'Known to'), el('th', {}, 'Standard error'), el('th', {}, 'Either way'),
+		el('th', {}, `About ${Math.round(pr.level * 100)} % between`))));
+	const tb = el('tbody');
+	for (const p of pr.values) {
+		if (p.held) {
+			tb.append(el('tr', { className: 'is-held' },
+				el('td', { title: p.key }, p.key),
+				el('td', { colSpan: 3, className: 'opt-held' }, HELD[p.held] ?? p.held)));
+			continue;
+		}
+		const either = p.factor != null
+			? `\u00d7 ${p.factor.toPrecision(3)}`
+			: `\u00b1 ${fmt((p.high - p.low) / 2)}`;
+		tb.append(el('tr', {},
+			el('td', { title: p.key }, p.key),
+			el('td', { className: 'mono' }, fmt(p.se)),
+			el('td', { className: 'mono' }, either),
+			el('td', { className: 'mono' }, `${fmt(p.low)} to ${fmt(p.high)}`)));
+	}
+	table.append(tb);
+	return table;
+}
+
+/**
+ * How well the answer is known, under it: the correlations between the values
+ * found, a sentence on what the ranges rest on, or why there are none -- and,
+ * for an answer that came without any, the way to have them worked out.
+ */
+function precisionBox(r, { onPrecision, precisionRunning, precisionError }) {
+	const box = el('div', { className: 'opt-precision' });
+	const pr = r.precision;
+	if (pr === undefined) {
+		// From an engine, which reports the values and not how well they are
+		// known: worked out here, at the values it found, on request.
+		const free = r.values.filter((v) => !v.pinned).length;
+		if (precisionRunning) {
+			box.append(el('p', { className: 'hint' }, 'Working out how well they are known\u2026'));
+		} else if (onPrecision) {
+			const go = el('button', { type: 'button', className: 'ghost' }, 'How well are they known?');
+			go.addEventListener('click', () => onPrecision());
+			box.append(el('p', { className: 'hint' },
+				'The engine found the values and not how well they are known. ', go,
+				` runs the model ${(2 * free + 1).toLocaleString()} times more, in this tab.`));
+		}
+		if (precisionError) box.append(el('p', { className: 'prob-warn' }, precisionError));
+		return box;
+	}
+	if (pr === null) return box;
+	const n = pr.targets;
+	if (pr.reason === 'no spare targets') {
+		box.append(el('p', { className: 'hint' },
+			`With ${n} endpoint${n === 1 ? '' : 's'} and ${pr.free} value${pr.free === 1 ? '' : 's'} found, `
+			+ 'no misfit is left over to judge how well they are known. More endpoints \u2014 another '
+			+ 'time, the peak \u2014 give each value a range.'));
+	} else if (pr.reason === 'cannot tell apart') {
+		box.append(el('p', { className: 'prob-warn' },
+			'The endpoints do not tell these values apart: they move the endpoints in the same '
+			+ 'proportions, so only a combination of them is fixed. Hold one of them, or give an '
+			+ 'endpoint that answers to one and not the other.'));
+	} else if (pr.reason === 'nothing free') {
+		box.append(el('p', { className: 'hint' },
+			'Every value came out on a bound or moves no endpoint, so none of them has a range.'));
+	}
+	if (pr.dof > 0 && !pr.reason) box.append(rangesTable(pr));
+	const c = pr.correlations;
+	if (c && c.keys.length > 1) {
+		const table = el('table', { className: 'opt-table opt-corr' });
+		table.append(el('thead', {}, el('tr', {}, el('th', {}, 'Correlation'),
+			...c.keys.map((k) => el('th', { title: k }, k)))));
+		const tb = el('tbody');
+		c.matrix.forEach((row, a) => {
+			tb.append(el('tr', {}, el('td', { title: c.keys[a] }, c.keys[a]),
+				...row.map((v, b) => el('td', {
+					className: `mono${a !== b && Math.abs(v) >= 0.9 ? ' is-strong' : ''}`,
+				}, a === b ? '1' : v.toFixed(2)))));
+		});
+		table.append(tb);
+		box.append(table);
+	}
+	if (pr.dof > 0 && !pr.reason) {
+		const strong = c ? c.matrix.some((row, a) => row.some((v, b) => a !== b && Math.abs(v) >= 0.9)) : false;
+		box.append(el('p', { className: 'hint' },
+			`About ${Math.round(pr.level * 100)} %, from the misfit left at the answer \u2014 a spread of `
+			+ `${fmt(pr.spread)} in the endpoints\u2019 own terms over ${pr.dof} degree${pr.dof === 1 ? '' : 's'} `
+			+ 'of freedom \u2014 and how each endpoint moves with each value there. They hold as far as the '
+			+ 'model is straight in the values over each range and the misfit is scatter of one size; '
+			+ 'a value searched in its logarithm has a factor either way.'
+			+ (strong ? ' Values correlated by 0.9 or more move together: the endpoints fix their '
+				+ 'combination better than either of them.' : '')));
+	}
 	return box;
 }

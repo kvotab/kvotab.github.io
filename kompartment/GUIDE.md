@@ -1903,6 +1903,35 @@ A search can leave a bound it starts on: Levenberg–Marquardt takes its
 difference backwards where a forward step would leave the box. And **Stop**
 reports the best point found so far with its own readings, whatever the model.
 
+**How well each value is known** comes under the answer, worked out after the
+search from two things it has there: how much misfit is left, and how the
+endpoints move when each value moves. Near the answer the misfit is close to
+straight in the values, and then each value has a **standard error** — the
+leftover misfit spread over the degrees of freedom the fit did not spend (the
+endpoints less the values found), carried to the value by how strongly the
+endpoints pin it — and a range of about 95 %, the standard error times
+Student's *t* on those degrees of freedom. A value searched logarithmically has
+its range as a factor either way, ×1.8, rather than a plus-or-minus that could
+run below nought. The **correlations** between the values found say which move
+together: two near +1 or −1 are fixed as a combination by the endpoints rather
+than each on its own, and are marked. It costs one or two runs per value —
+central differences, a thousandth of the value either way, one-sided against a
+bound — and nothing the search decided depends on it.
+
+What it cannot say, it says. With no more endpoints than values there is no
+misfit left to judge by: the correlations are given and the ranges are not, and
+another endpoint — the same one at another time, or its peak — gives each value
+one. A value on a bound is held there and has no range, and the others' are
+worked out with it held; a value no endpoint moves is said to move none; and
+two values the endpoints cannot tell apart are named as that rather than given
+ranges of infinity. The whole is a linearisation that treats the misfit as
+scatter of one size: as good as the model is straight in the values over each
+range, and a calibration to a handful of exact numbers is not scatter at all —
+the ranges then say how far the values could move before the misfit grew, not
+how far the truth may be from them. A calibration on an engine on this machine
+reports the values without their precision; **How well are they known?** works
+it out in the tab, at the values found, and says how many runs that takes.
+
 Then two buttons, which do two different things:
 
 - **Run at these values** runs the model against a *copy* with them in it and
