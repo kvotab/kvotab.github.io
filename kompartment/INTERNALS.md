@@ -5791,22 +5791,28 @@ the engine as a job of its own kind:
   `optimise-progress`; *dy/dp* a `local-sensitivity` job. Each writes its answer
   as JSON (a number that is not finite as null, as `JSON.stringify` writes it),
   fetched with `engineArchive(…, { raw: true })`; dy/dp sends every state the page
-  shows, and the elasticities are worked out here. A calibration here reports
+  shows, and the elasticities are worked out here. A calibration reports
   `precision` beside its values (`precisionAround` in `src/sim/calibrate.js`,
   after the search, its runs not counted among its evaluations, so a
-  calibration's steps and counts are what the engines' are); an engine's result
-  has none, and the dialog's *How well are they known?* sends
-  `calibration-precision`, which `calibrationPrecision` answers here at the
-  values the engine found.
+  calibration's steps and counts are what the engines' are), and so does each
+  engine's, worked out there by the same arithmetic: the Python package's
+  `kompartment/stats/precision.py`, which agrees with the page's to round-off as
+  its runs do, and the Julia package's `stats/precision.jl` and the C++ engine's
+  `stats/precision.cpp`, the first the Python package's to the bit and the
+  second Julia's. A result without it -- from an engine that does not work it
+  out -- gets the dialog's *How well are they known?*, which sends
+  `calibration-precision`, answered here by `calibrationPrecision` at the values
+  the engine found.
 - What an engine does not do it refuses before anything runs, as
   `NotOnThisEngine`, and the worker then does it here, posting
   `engine-elsewhere` so the bar says so. Both engines now do everything the
   page sends; the refusal stays for an engine that does not.
 - Julia's ports (`julia/src/stats/gsa_design.jl`, `stats/optimise.jl`,
-  `engine/calibrate.jl`, `engine/localsens.jl`, `engine/paramtangent.jl`) are
-  the Python package's step for step, checked against it bit for bit by
-  `julia/tools/analysis_fixtures.py` and `julia/test/engine/analyses.jl`: every
-  design's points, every step of a calibration, and dy/dp on the examples whose
+  `stats/precision.jl`, `engine/calibrate.jl`, `engine/localsens.jl`,
+  `engine/paramtangent.jl`) are the Python package's step for step, checked
+  against it bit for bit by `julia/tools/analysis_fixtures.py` and
+  `julia/test/engine/analyses.jl`: every design's points, every step of a
+  calibration and how well its values are known, and dy/dp on the examples whose
   augmented system is factorised dense. From 24 states one may be factorised
   sparse, by the application's sparse LUs in both engines, to the bit as well; a
   dense one above 200 states is each engine's own LAPACK, and the two then

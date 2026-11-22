@@ -3981,7 +3981,7 @@ class Model:
     def calibrate(self, targets: Sequence[Mapping[str, Any]], variables: Sequence[Mapping[str, Any]], *,
                   method: Optional[str] = None, max_evals: Optional[int] = None, seed: Optional[int] = None,
                   on_progress: Optional[Callable[[Dict[str, Any]], Any]] = None,
-                  apply: bool = False) -> Dict[str, Any]:
+                  apply: bool = False, precision: bool = True) -> Dict[str, Any]:
         """Searches for the parameter values that put endpoints where they are
         asked to be (see :func:`kompartment.engine.calibrate.calibrate`).
 
@@ -3991,11 +3991,13 @@ class Model:
         'nelder' (the default), 'lm' or 'de'. ``apply=True`` writes the values
         found into this model, as :meth:`put_values` does. Returns the search's
         result, ``result['values']`` holding each variable's ``was`` and
-        ``value`` and ``result['matched']`` whether every target was met.
+        ``value``, ``result['matched']`` whether every target was met and
+        ``result['precision']`` how well the values are known (standard
+        errors, ranges, correlations; ``precision=False`` leaves it out).
         """
         from .engine.calibrate import calibrate
         result = calibrate(self, targets=targets, variables=variables, method=method, max_evals=max_evals,
-                           seed=seed, on_progress=on_progress)
+                           seed=seed, on_progress=on_progress, precision=precision)
         if apply:
             self.put_values(result.get('values') or [])
         return result

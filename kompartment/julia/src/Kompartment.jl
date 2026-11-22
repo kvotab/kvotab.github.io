@@ -119,6 +119,7 @@ include("engine/analysis.jl")
 include("engine/paramtangent.jl")
 include("engine/localsens.jl")
 include("stats/optimise.jl")
+include("stats/precision.jl")
 include("engine/calibrate.jl")
 
 # --- the local server's engine: a probabilistic run as the archive holds one, and the service --
@@ -141,8 +142,8 @@ export Model, Results, System, Project, from_json, to_json, save, simulation, se
        load_results, DatasetError,
        run_probabilistic, run_tornado, run_gsa, run_realisation, ProbabilisticResults, realisations,
        quantiles, realisations_mean, median_spread, bands, what_drove, tornado_table, probabilistic_tree,
-       write_probabilistic_hdf5, run_sensitivity, elasticity, SensitivityError, calibrate, variables_of,
-       OptimiseError
+       write_probabilistic_hdf5, run_sensitivity, elasticity, SensitivityError, calibrate, calibration_precision,
+       variables_of, OptimiseError
 
 # The editing API. Left unexported for their generic names, reached as `Kompartment.name`
 # or as properties (`m.parameters`, `m.systems`, ...): check, update!, combinations,

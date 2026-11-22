@@ -20,6 +20,11 @@
 // between evaluations. What this engine cannot run at all -- a solver it does not have
 // (`NotSupported`) -- is no fact about the model, and stops the calibration so that it is
 // done where it can be.
+//
+// **How well the values are known** comes after the search: the residuals differenced along
+// each value about the answer, and `precision_of` (stats/precision) on what that gives --
+// standard errors, ranges and correlations. Its runs are not counted among the search's
+// evaluations.
 
 #pragma once
 
@@ -72,14 +77,20 @@ struct CalibrateOptions {
     std::function<void(const CalibrateStep&)> on_progress;
     /// Answering true stops the search before the next evaluation.
     std::function<bool()> signal;
+    /// False leaves out how well the values are known, and the runs it takes.
+    bool precision = true;
 };
 
 /// Solves for the parameter values that put the endpoints where they are asked to be
 /// (`calibrate`). Returns `{"ok", "matched", "method", "reason", "evals", "ms",
-/// "objective", "values", "targets"}`: `values[i]` = `{"key", "was", "value", "lower",
-/// "upper", "pinned"}` and `targets[i]` = `{"output", "want", "got", "scale"}`. `matched`
-/// says whether every target is met to 1%, which `ok` -- numbers came back -- does not.
-/// Refuses as the Julia package refuses (`OptimiseError`).
+/// "objective", "values", "precision", "targets"}`: `values[i]` = `{"key", "was", "value",
+/// "lower", "upper", "pinned"}` and `targets[i]` = `{"output", "want", "got", "scale"}`.
+/// `matched` says whether every target is met to 1%, which `ok` -- numbers came back -- does
+/// not. `precision` is `precision_of`'s answer with `"runs"`, the runs it took, beside it:
+/// worked out after the search, its runs not among `evals`; null for a search that was
+/// stopped (or a stop while it was worked out), for one whose best point the model could not
+/// finish, and when the options say not to. Refuses as the Julia package refuses
+/// (`OptimiseError`).
 Json calibrate(std::shared_ptr<const Project> project, const CalibrateOptions& options);
 
 }  // namespace kompartment

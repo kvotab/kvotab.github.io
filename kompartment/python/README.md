@@ -426,8 +426,18 @@ cal = m.calibrate(
     targets=[{'output': 'Dose [I-129]', 'when': 'max', 'value': 1e-5}],
     variables=[{'key': 'Kd[I-129]', 'lower': 1e-3, 'upper': 10, 'space': 'log'}],
     method='nelder', apply=True)                           # apply=True writes the values found
+cal['precision']                                           # how well they are known: standard errors,
+                                                           # ~95 % ranges, correlations
 m.put_values([{'key': 'Kd[I-129]', 'value': 0.5}])         # the same by hand
 ```
+
+A calibration says how well it knows the values it found, as the application
+does: from the misfit left at the answer and the endpoints differenced along
+each value there, a standard error and a range of about 95 % per value (a
+factor either way for one searched in its logarithm) and the correlations
+between them -- or why it cannot, with no more endpoints than values, a value
+on its bound or one no endpoint moves. `precision=False` leaves it out, and the
+runs it takes.
 
 ### Result files and data files
 

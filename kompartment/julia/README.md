@@ -321,7 +321,12 @@ elasticity(r.y[3], r.sens[1][3], r.chosen[1]["value"])
 labels the page uses) for the values that put the endpoints at their targets:
 Nelder-Mead, Levenberg-Marquardt or differential evolution, each step the
 Python package's and the application's, `on_progress` hearing every
-evaluation and `signal` stopping the search. `run_sensitivity` integrates the
+evaluation and `signal` stopping the search. Its answer says how well it knows
+each value as well (`"precision"`: a standard error and a range of about 95 %,
+a factor either way in the logarithm, and the correlations), from the misfit
+left and the endpoints differenced along each value about the answer -- the
+Python package's to the bit; `calibration_precision` works the same out at
+values found elsewhere. `run_sensitivity` integrates the
 forward sensitivity equations beside the model -- df/dp differentiated where
 the model allows it, differenced otherwise -- and refuses, in words, what they
 cannot carry: a jump in the state, a block that remembers the path of the run

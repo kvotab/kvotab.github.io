@@ -25,8 +25,11 @@ tries to 1e-9 (the same decisions give the same points), and
 Levenberg-Marquardt's answer -- whose Jacobian is a difference over 1e-6 of a
 variable's range, and so turns round-off in the runs into differences in the
 points it tries -- to 1e-4, on a valley flat enough that its own objective
-cannot tell those points apart. The largest difference seen in each area is
-printed at the end.
+cannot tell those points apart. How well a calibration's values are known is
+compared to the readings' margin over its differencing step, a thousandth: a
+column of its Jacobian is two runs' difference over that, so it carries their
+disagreement a thousand times over. The largest difference seen in each area
+is printed at the end.
 
 The tests in :class:`Standalone` need nothing but this package.
 """
@@ -50,6 +53,7 @@ from kompartment.engine.project import Project
 from kompartment.engine.runner import run
 from kompartment.engine.solvers import SolverError
 from kompartment.stats import optimise as O
+from kompartment.stats import precision as PR
 from kompartment.stats.pdf import _exp, _to_precision
 
 # By module name: `kompartment.engine` exports functions called `calibrate`
@@ -161,6 +165,11 @@ def same(a: Any, b: Any) -> bool:
     if isinstance(a, dict) and isinstance(b, dict):
         return list(a) == list(b) and all(same(a[k], b[k]) for k in a)
     return type(a) is type(b) and a == b
+
+
+def variables_values(model: Any) -> Dict[str, float]:
+    """Every parameter slot's value, as a calibration would start from it."""
+    return {v['key']: v['value'] for v in C.variables_of(model)}
 
 
 def relative(a: Any, b: Any) -> float:
@@ -873,6 +882,147 @@ class Standalone(unittest.TestCase):
         with self.assertRaisesRegex(O.OptimiseError, 'searched in the logarithm'):
             C.calibrate(model, targets=[tgt], variables=[{**var, 'lower': 0, 'space': 'log'}])
 
+    def test_students_t_and_ln_gamma(self) -> None:
+        # Student's t against SciPy's stats.t.ppf (the application's test's
+        # values), ln Gamma against the C library's lgamma.
+        for p, dof, want in [(0.975, 1, 12.706204736432095), (0.975, 2, 4.302652729696142),
+                             (0.975, 3, 3.182446305284263), (0.975, 10, 2.2281388519649385),
+                             (0.995, 4, 4.604094871415897), (0.025, 100, -1.983971518449634)]:
+            self.assertLess(abs(PR.student_quantile(p, dof) / want - 1), 1e-10, (p, dof))
+        self.assertEqual(PR.student_quantile(0.5, 7), 0.0)
+        self.assertTrue(all(math.isnan(PR.student_quantile(p, d))
+                            for p, d in ((0, 3), (1, 3), (0.9, 0), (math.nan, 3))))
+        self.assertAlmostEqual(PR.student_cdf(PR.student_quantile(0.9, 6), 6), 0.9, delta=1e-14)
+        for x in (0.5, 1, 1.5, 2.5, 7, 50.5, 1e3, 0.25, -1.5):
+            self.assertLess(abs(PR.ln_gamma(x) - math.lgamma(x)), 1e-13 * max(1.0, abs(math.lgamma(x))), x)
+        self.assertEqual((PR.incomplete_beta(0, 2, 3), PR.incomplete_beta(1, 2, 3)), (0.0, 1.0))
+        # I_x(1, b) = 1 - (1 - x)^b, and the symmetry I_x(a, b) = 1 - I_{1-x}(b, a).
+        self.assertAlmostEqual(PR.incomplete_beta(0.3, 1.0, 2.5), 1 - 0.7 ** 2.5, delta=1e-14)
+        self.assertAlmostEqual(PR.incomplete_beta(0.8, 3.5, 1.5), 1 - PR.incomplete_beta(0.2, 1.5, 3.5), delta=1e-14)
+
+    def test_the_precision_of_a_straight_line(self) -> None:
+        """Ordinary least squares in closed form: residuals y - a - b t at the
+        fit and J = -[1, t], so cov = s^2 (X^T X)^-1."""
+        t = [1.0, 2.0, 4.0, 5.0, 8.0]
+        y = [2.9, 5.2, 8.8, 11.1, 17.2]
+        m = len(t)
+        st, stt = sum(t), sum(x * x for x in t)
+        sy, sty = sum(y), sum(a * b for a, b in zip(t, y))
+        det = m * stt - st * st
+        b = (m * sty - st * sy) / det
+        a = (sy - b * st) / m
+        r = [yi - a - b * ti for ti, yi in zip(t, y)]
+        cols = [[-1.0] * m, [-x for x in t]]
+        out = PR.precision_of(residuals=r, columns=cols, keys=['a', 'b'], spaces=['linear', 'linear'], values=[a, b])
+        s2 = sum(x * x for x in r) / (m - 2)
+        tq = PR.student_quantile(0.975, 3)
+        self.assertEqual((out['targets'], out['free'], out['dof'], out['reason'], out['level']), (5, 2, 3, None, 0.95))
+        self.assertAlmostEqual(out['spread'], math.sqrt(s2), delta=1e-15)
+        self.assertEqual(out['t'], tq)
+        va, vb = out['values']
+        self.assertLess(abs(va['se'] / math.sqrt(s2 * stt / det) - 1), 1e-13)
+        self.assertLess(abs(vb['se'] / math.sqrt(s2 * m / det) - 1), 1e-13)
+        self.assertEqual((va['low'], va['high'], va['factor'], va['held']),
+                         (a - tq * va['se'], a + tq * va['se'], None, None))
+        self.assertEqual(out['correlations']['keys'], ['a', 'b'])
+        matrix = out['correlations']['matrix']
+        self.assertEqual((matrix[0][0], matrix[1][1], matrix[0][1]), (1.0, 1.0, matrix[1][0]))
+        self.assertLess(abs(matrix[0][1] / (-st / math.sqrt(m * stt)) - 1), 1e-13)
+        # Searched in its logarithm: the standard error in the logarithm, a factor either way.
+        lg = PR.precision_of(residuals=r, columns=cols, keys=['a', 'b'], spaces=['linear', 'log'], values=[a, 3.0])
+        f = lg['values'][1]
+        se_u = math.sqrt(s2 * m / det)
+        self.assertEqual(f['factor'], math.exp(tq * se_u))
+        self.assertEqual((f['low'], f['high'], f['se']), (3.0 / f['factor'], 3.0 * f['factor'], 3.0 * se_u))
+        # What it cannot say, it says.
+        two = PR.precision_of(residuals=r[:2], columns=[c[:2] for c in cols], keys=['a', 'b'],
+                              spaces=['linear', 'linear'], values=[a, b])
+        self.assertEqual((two['reason'], two['dof'], two['spread'], two['t']), ('no spare targets', 0, None, None))
+        self.assertTrue(two['correlations'] and all(v['se'] is None for v in two['values']))
+        held = PR.precision_of(residuals=r, columns=[None, cols[1], [0.0] * m], keys=['a', 'b', 'c'],
+                               spaces=['linear'] * 3, values=[a, b, 1.0], pinned=['lower', None, None])
+        self.assertEqual([v['held'] for v in held['values']], ['lower', None, 'no effect'])
+        self.assertEqual((held['free'], held['dof'], held['correlations']['keys']), (1, 4, ['b']))
+        apart = PR.precision_of(residuals=r, columns=[cols[1], [2 * x for x in cols[1]]], keys=['b', 'c'],
+                                spaces=['linear'] * 2, values=[b, 1.0])
+        self.assertEqual((apart['reason'], apart['correlations']), ('cannot tell apart', None))
+        none = PR.precision_of(residuals=r, columns=[None, None], keys=['a', 'b'], spaces=['linear'] * 2,
+                               values=[a, b], pinned=['upper', None], failed=[None, 'did not run'])
+        self.assertEqual((none['reason'], [v['held'] for v in none['values']]),
+                         ('nothing free', ['upper', 'did not run']))
+
+    def test_a_calibration_says_how_well_it_knows_its_values(self) -> None:
+        """A decays at k from A0, read on a log scale at five times: the residuals
+        are ln A0 - k t - ln y, straight in (k, ln A0), so the precision is
+        ordinary least squares' (the application's test)."""
+        def model() -> Dict[str, Any]:
+            return {'name': 'precision',
+                    'simulation': {'start_time': 0, 'end_time': 10, 'output_points': 11, 'spacing': 'linear',
+                                   'solver': 'ndf', 'rtol': 1e-11, 'abstol': 1e-14, 'time_unit': 'year'},
+                    'parameters': [{'name': 'k', 'value': '0.2', 'unit': '1/year'},
+                                   {'name': 'A0', 'value': '3', 'unit': 'Bq'},
+                                   {'name': 'unused', 'value': '1', 'unit': ''}],
+                    'compartments': [{'name': 'A', 'initial': 'A0', 'unit': 'Bq', 'dydt': '-k*A'}]}
+        times = [1, 3, 5, 7, 9]
+        scatter = [1.05, 0.97, 1.02, 0.96, 1.03]
+        targets = [{'output': 'A', 'when': 'at', 'time': t, 'scale': 'log', 'weight': 1,
+                    'value': 5 * math.exp(-0.3 * t) * f} for t, f in zip(times, scatter)]
+        variables = [{'key': 'k', 'lower': 1e-3, 'upper': 2, 'space': 'linear'},
+                     {'key': 'A0', 'lower': 0.1, 'upper': 100, 'space': 'log'}]
+        raw = model()
+        out = C.calibrate(raw, targets=targets, variables=variables, method='lm', max_evals=400)
+        pr = out['precision']
+        self.assertEqual((pr['targets'], pr['free'], pr['dof'], pr['reason'], pr['runs']), (5, 2, 3, None, 4))
+        m = len(times)
+        ly = [math.log(t['value']) for t in targets]
+        st, stt = sum(times), sum(t * t for t in times)
+        sy, sty = sum(ly), sum(t * v for t, v in zip(times, ly))
+        det = m * stt - st * st
+        slope = (m * sty - st * sy) / det
+        icept = (sy - slope * st) / m
+        s2 = sum((v - icept - slope * t) ** 2 for t, v in zip(times, ly)) / (m - 2)
+        got = {v['key']: v['value'] for v in out['values']}
+        self.assertLess(abs(got['k'] / -slope - 1), 1e-6)
+        self.assertLess(abs(pr['spread'] / math.sqrt(s2) - 1), 1e-5)
+        by = {v['key']: v for v in pr['values']}
+        tq = PR.student_quantile(0.975, 3)
+        self.assertLess(abs(by['k']['se'] / math.sqrt(s2 * m / det) - 1), 1e-4)
+        self.assertLess(abs(by['A0']['factor'] / math.exp(tq * math.sqrt(s2 * stt / det)) - 1), 1e-4)
+        self.assertLess(abs(pr['correlations']['matrix'][0][1] / (st / math.sqrt(m * stt)) - 1), 1e-4)
+        # Worked out again at the values found: the same.
+        again = C.calibration_precision(model(), targets=targets, variables=variables, values=out['values'])
+        self.assertLess(abs(again['values'][0]['se'] / by['k']['se'] - 1), 1e-9)
+        with self.assertRaisesRegex(O.OptimiseError, 'do not match the parameters'):
+            C.calibration_precision(model(), targets=targets, variables=variables, values=out['values'][:1])
+        # The model is left as it was.
+        self.assertEqual(variables_values(raw), {'k': 0.2, 'A0': 3.0, 'unused': 1.0})
+        # On a bound, held; read by nothing, no effect; stopped or not asked for, none.
+        held = C.calibrate(model(), targets=targets, method='lm', max_evals=400,
+                           variables=[{'key': 'k', 'lower': 0.5, 'upper': 2}, variables[1],
+                                      {'key': 'unused', 'lower': 0.5, 'upper': 2}])['precision']
+        self.assertEqual([v['held'] for v in held['values']], ['lower', None, 'no effect'])
+        self.assertEqual((held['free'], held['dof']), (1, 4))
+        stopped = C.calibrate(model(), targets=targets, variables=variables, method='lm', max_evals=400,
+                              signal={'aborted': True})
+        self.assertIsNone(stopped['precision'])
+        self.assertIsNone(C.calibrate(model(), targets=targets, variables=variables, method='lm', max_evals=400,
+                                      precision=False)['precision'])
+        # A stop that comes while it is worked out drops it. Once the search is
+        # done the signal is asked once before the precision and once before each
+        # value is differenced: this one says stop at the second value.
+        done: List[bool] = []
+        after: List[int] = []
+
+        def later() -> bool:
+            if not (done and done[-1]):
+                return False
+            after.append(1)
+            return len(after) > 2
+
+        late = C.calibrate(model(), targets=targets, variables=variables, method='nelder', max_evals=30,
+                           on_progress=lambda p: done.append(p['evals'] >= 30), signal=later)
+        self.assertEqual((late['reason'], late['precision'], len(after)), ('budget', None, 3))
+
     def test_readings(self) -> None:
         res = run(Project(example('four-compartment')), on_grid=True)
         v = res.series('C2 [Fo-42]')
@@ -1343,6 +1493,7 @@ class CalibrationParity(unittest.TestCase):
                     d = relative(u['value'], v['value'])
                     _note('calibration: final values' + (' (lm)' if lm else ''), d)
                     self.assertLess(d, 1e-4 if lm else 1e-9)
+                self._same_precision(a['precision'], b['precision'], allow / C.PRECISION_STEP, lm)
                 if lm:
                     continue
                 # Every point the search tried, and its value.
@@ -1355,6 +1506,74 @@ class CalibrationParity(unittest.TestCase):
                     d = max(relative(p['fx'], q['fx']), relative(p['best'], q['best']))
                     _note('calibration: every evaluation\'s objective, in rtol', d / rtol)
                     self.assertLess(d, allow)
+
+    def _same_precision(self, a: Any, b: Any, margin: float, lm: bool) -> None:
+        """How well the values are known: what it says exactly -- the counts,
+        the reason, which values are held and why, which are correlated -- and
+        its numbers to the readings' margin over the differencing step (a
+        column is two runs' difference over a thousandth of the value, so it
+        carries their disagreement a thousand times over); Student's t, which
+        follows from the counts alone, to round-off."""
+        self.assertEqual(a is None, b is None)
+        if a is None:
+            return
+        for key in ('targets', 'free', 'dof', 'level', 'reason', 'runs'):
+            self.assertEqual(a.get(key), b.get(key), key)
+        self.assertEqual([(v['key'], v['held']) for v in a['values']], [(v['key'], v['held']) for v in b['values']])
+        self.assertEqual(a['t'] is None, b['t'] is None)
+        if a['t'] is not None:
+            self.assertLess(relative(a['t'], b['t']), 1e-14)
+            d = relative(a['spread'], b['spread'])
+            _note('calibration: precision, in its margin' + (' (lm)' if lm else ''), d / margin)
+            self.assertLess(d, margin)
+        for u, v in zip(a['values'], b['values']):
+            for key in ('se', 'low', 'high', 'factor'):
+                self.assertEqual(u[key] is None, v[key] is None, key)
+                if u[key] is not None:
+                    d = relative(u[key], v[key])
+                    _note('calibration: precision, in its margin' + (' (lm)' if lm else ''), d / margin)
+                    self.assertLess(d, margin, key)
+        self.assertEqual(a['correlations'] is None, b['correlations'] is None)
+        if a['correlations'] is not None:
+            self.assertEqual(a['correlations']['keys'], b['correlations']['keys'])
+            for ra, rb in zip(a['correlations']['matrix'], b['correlations']['matrix']):
+                d = max(abs(x - y) for x, y in zip(ra, rb))
+                _note('calibration: correlations, in their margin', d / margin)
+                self.assertLess(d, margin)
+
+    def test_precision_of_the_same_numbers(self) -> None:
+        """``precision_of`` on the inputs ``precisionOf`` is given: no run, so to
+        round-off -- the only difference is the C library's exp and log beside
+        V8's -- and every count, reason and verdict exactly."""
+        rng = np.random.default_rng(5)
+        line_t = [1.0, 2.0, 4.0, 5.0, 8.0]
+        r5 = [0.11, -0.07, 0.02, -0.12, 0.06]
+        cols = [[-1.0] * 5, [-x for x in line_t]]
+        wide = [rng.normal(size=12).tolist() for _ in range(4)]
+        cases = [
+            dict(residuals=r5, columns=cols, keys=['a', 'b'], spaces=['linear', 'log'], values=[2.5, 0.3]),
+            dict(residuals=r5[:2], columns=[c[:2] for c in cols], keys=['a', 'b'], spaces=['linear', 'linear'],
+                 values=[2.5, 0.3]),
+            dict(residuals=r5, columns=[None, cols[1], [0.0] * 5], keys=['a', 'b', 'c'],
+                 spaces=['linear', 'log', 'log'], values=[2.5, 0.3, 4.0], pinned=['lower', None, None]),
+            dict(residuals=r5, columns=[cols[1], [3 * x for x in cols[1]]], keys=['b', 'c'], spaces=['log', 'log'],
+                 values=[0.3, 1.0]),
+            dict(residuals=r5, columns=[None, None], keys=['a', 'b'], spaces=['linear', 'linear'], values=[1.0, 2.0],
+                 pinned=['upper', None], failed=[None, 'did not run']),
+            dict(residuals=rng.normal(size=12).tolist(), columns=wide, keys=['w', 'x', 'y', 'z'],
+                 spaces=['log', 'linear', 'log', 'linear'], values=[1e-6, -3.0, 2e4, 0.0], level=0.9),
+            dict(residuals=[1e-3] * 30, columns=[[float(i) for i in range(30)]], keys=['k'], spaces=['log'],
+                 values=[5.0], level=0.99),
+        ]
+        theirs = app('precisionOf', cases=cases)['results']
+        for case, b in zip(cases, theirs):
+            with self.subTest(keys=case['keys']):
+                a = PR.precision_of(**case)
+                self.assertNotIn('error', b)
+                self._same_precision(a, b, 1e-12, False)
+        quantiles = [[0.975, d] for d in (1, 2, 3, 4, 5, 7, 10, 30, 100, 1000, 10 ** 6)] + [[0.025, 9], [0.995, 2]]
+        for (p, dof), want in zip(quantiles, app('student', cases=quantiles)['quantiles']):
+            self.assertLess(relative(PR.student_quantile(p, dof), want), 1e-14, (p, dof))
 
     def test_readings(self) -> None:
         model = example('four-compartment')

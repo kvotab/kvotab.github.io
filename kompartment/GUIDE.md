@@ -1929,8 +1929,10 @@ scatter of one size: as good as the model is straight in the values over each
 range, and a calibration to a handful of exact numbers is not scatter at all —
 the ranges then say how far the values could move before the misfit grew, not
 how far the truth may be from them. A calibration on an engine on this machine
-reports the values without their precision; **How well are they known?** works
-it out in the tab, at the values found, and says how many runs that takes.
+works this out there, the same way, and sends it back with the values. An
+engine that reports the values alone gets **How well are they known?**, which
+works it out in the tab, at the values found, and says how many runs that
+takes.
 
 Then two buttons, which do two different things:
 

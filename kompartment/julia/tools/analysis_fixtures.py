@@ -13,7 +13,8 @@ Julia ports of the sensitivity designs (``kompartment/stats/gsa.py`` and
   factor's probability at every run, every value drawn and the statistics the
   page reads;
 - ``calibrations/<case>.json``: a calibration of a bundled example by each
-  method -- every step the search took, and the result -- and the refusals;
+  method -- every step the search took, and the result with how well its
+  values are known -- and the refusals;
 - ``sensitivity/<case>.json``: dy/dp of the bundled examples, with df/dp
   differentiated and differenced: the
   times, every state and every sensitivity; and the refusals, the words of a
@@ -189,6 +190,41 @@ CALIBRATIONS = [
      'variables': [{'key': 'p13[Fo-42]', 'lower': 1e-7, 'upper': 1e-3, 'space': 'nonsense'}],
      'targets': [{'output': 'nothere', 'when': 'peak', 'value': 2}, {'output': 'C4 [Fo-42]', 'when': 'peak',
                                                                      'value': 1e9}]},
+    # How well the values are known, with endpoints to spare: ranges in the value
+    # and in its logarithm, a value held on its bound, one no endpoint reads, and
+    # two the endpoints cannot tell apart (Conc is Fraction over Dilution).
+    {'case': 'exp-ranges-held', 'file': 'exponential-decay.json', 'method': 'nelder', 'maxEvals': 80,
+     'variables': [{'key': 'k', 'lower': 0.9, 'upper': 3}, {'key': 'y0', 'lower': 0.5, 'upper': 2}],
+     'targets': [{'output': 'y', 'when': 'at', 'time': 1, 'value': 0.66},
+                 {'output': 'y', 'when': 'at', 'time': 2, 'value': 0.31},
+                 {'output': 'y', 'when': 'at', 'time': 4, 'value': 0.081}]},
+    {'case': 'mm-lm-ranges', 'file': 'michaelis-menten.json', 'method': 'lm', 'maxEvals': 60,
+     'variables': [{'key': 'kf', 'lower': 0.1, 'upper': 10, 'space': 'log'},
+                   {'key': 'kcat', 'lower': 0.05, 'upper': 5, 'space': 'log'}],
+     'targets': [{'output': 'P', 'when': 'at', 'time': 50, 'value': 1.43},
+                 {'output': 'P', 'when': 'at', 'time': 100, 'value': 2.70},
+                 {'output': 'P', 'when': 'at', 'time': 200, 'value': 5.52},
+                 {'output': 'S', 'when': 'at', 'time': 300, 'value': 1.93, 'scale': 'log'}]},
+    {'case': 'four-lm-ranges', 'file': 'four-compartment.json', 'method': 'lm', 'maxEvals': 40,
+     'variables': [{'key': 'p12[Fo-42]', 'lower': 1e-7, 'upper': 1e-3, 'space': 'log'},
+                   {'key': 'p23[Fo-42]', 'lower': 1e-7, 'upper': 1e-3, 'space': 'log'},
+                   {'key': 'p13[Fo-42]', 'lower': 1e-6, 'upper': 1e-4}],
+     'targets': [{'output': 'C2 [Fo-42]', 'when': 'at', 'time': 1e4, 'value': 1.6e9},
+                 {'output': 'C2 [Fo-42]', 'when': 'at', 'time': 1e5, 'value': 2.2e9},
+                 {'output': 'C2 [Fo-42]', 'when': 'peak', 'value': 3.2e9, 'scale': 'log'},
+                 {'output': 'C2 [Fo-42]', 'when': 'at', 'time': 3e5, 'value': 2.3e8}]},
+    {'case': 'post-lm-no-effect', 'file': 'post-processing.json', 'method': 'lm', 'maxEvals': 40,
+     'variables': [{'key': 'Dilution', 'lower': 1e5, 'upper': 1e7, 'space': 'log'},
+                   {'key': 'DC[I-129]', 'lower': 1e-9, 'upper': 1e-6, 'space': 'log'}],
+     'targets': [{'output': 'Conc [Ni-59]', 'when': 'at', 'time': 2000, 'value': 0.235},
+                 {'output': 'Conc [Ni-59]', 'when': 'at', 'time': 6000, 'value': 1.70},
+                 {'output': 'Conc [Ni-59]', 'when': 'peak', 'value': 1.78}]},
+    {'case': 'post-lm-apart', 'file': 'post-processing.json', 'method': 'lm', 'maxEvals': 40,
+     'variables': [{'key': 'Dilution', 'lower': 1e5, 'upper': 1e7, 'space': 'log'},
+                   {'key': 'Fraction[Ni-59]', 'lower': 0.05, 'upper': 3, 'space': 'log'}],
+     'targets': [{'output': 'Conc [Ni-59]', 'when': 'at', 'time': 2000, 'value': 0.235},
+                 {'output': 'Conc [Ni-59]', 'when': 'at', 'time': 6000, 'value': 1.70},
+                 {'output': 'Conc [Ni-59]', 'when': 'peak', 'value': 1.78}]},
     {'case': 'err-no-targets', 'file': 'exponential-decay.json', 'method': 'nelder',
      'variables': [{'key': 'k', 'lower': 0.1, 'upper': 3}], 'targets': [{'output': '', 'value': 1}]},
     {'case': 'err-no-variables', 'file': 'exponential-decay.json', 'variables': [],

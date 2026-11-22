@@ -25,6 +25,8 @@
 //   variables   { model }                                -> variablesOf
 //   reading     { model, targets }                       -> readingOf each, on one run on the grid
 //   calibrate   { model, opts, stopAfter }               -> calibrate, and every onProgress report
+//   student     { cases: [[p, dof]] }                    -> studentQuantile each
+//   precisionOf { cases: [input] }                       -> precisionOf each, on the inputs given
 //
 // JSON has no NaN, infinities, -0 or undefined, and they matter here, so both
 // directions spell them { "$": "NaN" | "Infinity" | "-Infinity" | "-0" |
@@ -42,6 +44,7 @@ const { buildSystem } = await load('sim/builder.js');
 const { run } = await load('sim/runner.js');
 const { parameterSlots, slotLabel, runSensitivity, elasticity } = await load('sim/localsens.js');
 const { calibrate, variablesOf, readingOf } = await load('sim/calibrate.js');
+const { precisionOf, studentQuantile } = await load('domain/precision.js');
 
 const SPECIAL = { NaN: NaN, Infinity: Infinity, '-Infinity': -Infinity, '-0': -0, undefined };
 
@@ -258,6 +261,12 @@ switch (req.task) {
 			delete result.ms;
 			return { result, progress };
 		});
+		break;
+	case 'student':
+		out = { quantiles: req.cases.map(([p, dof]) => studentQuantile(p, dof)) };
+		break;
+	case 'precisionOf':
+		out = { results: req.cases.map((c) => guarded(() => precisionOf(c))) };
 		break;
 	default:
 		throw new Error(`No task '${req.task}'`);

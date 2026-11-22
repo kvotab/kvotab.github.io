@@ -183,6 +183,63 @@ end
     @test [v["key"] for v in K.variables_of(m)] == ["k", "y0"]
 end
 
+@testset "how well a calibration knows its values" begin
+    # Student's t against SciPy's stats.t.ppf (the application's test's values).
+    for (p, dof, want) in ((0.975, 1, 12.706204736432095), (0.975, 2, 4.302652729696142), (0.975, 3, 3.182446305284263),
+                           (0.975, 10, 2.2281388519649385), (0.995, 4, 4.604094871415897), (0.025, 100, -1.983971518449634))
+        @test isapprox(K.student_quantile(p, dof), want; rtol=1e-10)
+    end
+    @test isnan(K.student_quantile(0.9, 0)) && K.student_quantile(0.5, 3) == 0.0
+    @test isapprox(K.ln_gamma(0.5), log(sqrt(pi)); rtol=1e-14) && isapprox(K.ln_gamma(7.0), log(720.0); rtol=1e-14)
+
+    # A decays at k from A0, read on a log scale at five times: the residuals are
+    # ln A0 - k t - ln y, straight in (k, ln A0), so the precision is ordinary least
+    # squares' exactly -- s^2 (X^T X)^-1 with X = [-t, 1] (the application's test).
+    model() = K.Model(K.parse_json("""{"name": "precision",
+        "simulation": {"start_time": 0, "end_time": 10, "output_points": 11, "spacing": "linear", "solver": "ndf",
+                       "rtol": 1e-11, "abstol": 1e-14, "time_unit": "year"},
+        "parameters": [{"name": "k", "value": "0.2", "unit": "1/year"}, {"name": "A0", "value": "3", "unit": "Bq"},
+                       {"name": "unused", "value": "1", "unit": ""}],
+        "compartments": [{"name": "A", "initial": "A0", "unit": "Bq", "dydt": "-k*A"}]}"""))
+    times = [1, 3, 5, 7, 9]
+    scatter = [1.05, 0.97, 1.02, 0.96, 1.03]
+    targets = [Dict("output" => "A", "when" => "at", "time" => t, "scale" => "log", "weight" => 1,
+                    "value" => 5 * exp(-0.3 * t) * f) for (t, f) in zip(times, scatter)]
+    variables = [Dict("key" => "k", "lower" => 1e-3, "upper" => 2, "space" => "linear"),
+                 Dict("key" => "A0", "lower" => 0.1, "upper" => 100, "space" => "log")]
+    r = K.calibrate(model(); targets, variables, method="lm", max_evals=400)
+    pr = r["precision"]
+    @test (pr["targets"], pr["free"], pr["dof"], pr["reason"], pr["runs"], pr["level"]) == (5, 2, 3, nothing, 4, 0.95)
+    n = length(times)
+    ly = [log(t["value"]) for t in targets]
+    st, stt, sy, sty = sum(times), sum(times .^ 2), sum(ly), sum(times .* ly)
+    det = n * stt - st^2
+    slope = (n * sty - st * sy) / det
+    icept = (sy - slope * st) / n
+    s2 = sum((ly .- icept .- slope .* times) .^ 2) / (n - 2)
+    @test isapprox(r["values"][1]["value"], -slope; rtol=1e-6)
+    @test isapprox(pr["spread"], sqrt(s2); rtol=1e-5)
+    @test isapprox(pr["values"][1]["se"], sqrt(s2 * n / det); rtol=1e-4)
+    @test pr["values"][1]["low"] == r["values"][1]["value"] - pr["t"] * pr["values"][1]["se"]
+    @test isapprox(pr["values"][2]["factor"], exp(K.student_quantile(0.975, 3) * sqrt(s2 * stt / det)); rtol=1e-4)
+    @test pr["correlations"]["keys"] == ["k", "A0"]
+    @test isapprox(pr["correlations"]["matrix"][1][2], st / sqrt(n * stt); rtol=1e-4)
+    # At the values found, worked out again: the same.
+    again = K.calibration_precision(model(); targets, variables, values=r["values"])
+    @test isapprox(again["values"][1]["se"], pr["values"][1]["se"]; rtol=1e-9)
+    @test_throws K.OptimiseError K.calibration_precision(model(); targets, variables, values=r["values"][1:1])
+    # Two endpoints for two values: the correlations, no ranges. A value on its bound is
+    # held, one nothing reads has no effect; not asked for, or stopped, there is none.
+    two = K.calibrate(model(); targets=targets[1:2], variables, method="lm", max_evals=400)["precision"]
+    @test two["reason"] == "no spare targets" && two["correlations"] !== nothing && all(v["se"] === nothing for v in two["values"])
+    held = K.calibrate(model(); targets, method="lm", max_evals=400,
+                       variables=[Dict("key" => "k", "lower" => 0.5, "upper" => 2), variables[2],
+                                  Dict("key" => "unused", "lower" => 0.5, "upper" => 2)])["precision"]
+    @test [v["held"] for v in held["values"]] == ["lower", nothing, "no effect"] && (held["free"], held["dof"]) == (1, 4)
+    @test K.calibrate(model(); targets, variables, method="lm", precision=false)["precision"] === nothing
+    @test K.calibrate(model(); targets, variables, signal=Ref(true))["precision"] === nothing
+end
+
 @testset "a search answered only from memory stops" begin
     # A remembered point costs nothing from the budget, so a search whose every new point
     # was one it had tried went round for ever. It stops, and says it stalled.

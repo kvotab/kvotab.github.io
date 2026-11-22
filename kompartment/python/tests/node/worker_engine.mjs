@@ -150,6 +150,15 @@ out.calibrate = {
 	k: fit(cThere).k ?? null,
 	same: !!cThere?.ok && close(fit(cThere).k, fit(cHere).k, 1e-6) && close(fit(cThere).A0, fit(cHere).A0, 1e-6)
 		&& cThere.result.evals === cHere.result.evals,
+	// How well the values are known comes back from the engine too, worked out
+	// there as here: two endpoints for two values, so no ranges -- the reason,
+	// the runs it took and the correlation, which is two runs' difference over a
+	// thousandth of each value (the runs' margin, 10 x rtol, a thousand times over).
+	precise: !!cThere?.ok && !!cThere.result.precision && !!cHere.result.precision
+		&& cThere.result.precision.reason === 'no spare targets'
+		&& cThere.result.precision.reason === cHere.result.precision.reason
+		&& cThere.result.precision.runs === cHere.result.precision.runs
+		&& close(cThere.result.precision.correlations.matrix[0][1], cHere.result.precision.correlations.matrix[0][1], 1e-4),
 };
 
 // dy/dp for two of the model's parameters.

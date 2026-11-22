@@ -302,6 +302,8 @@ class Analyses(unittest.TestCase):
             self.assertTrue(result['ok'] and result['matched'], result)
             got = {v['key']: v['value'] for v in result['values']}
             self.assertAlmostEqual(got['k'], 0.03, delta=1e-5)
+            # How well the values are known, beside them.
+            self.assertTrue(result['precision'] and result['precision']['runs'] > 0, result.get('precision'))
             steps = [e['detail'] for e in events if e.get('id') == 'c1' and 'detail' in e]
             self.assertTrue(steps and all(set(x) == {'evals', 'fx', 'best', 'values'} for x in steps), steps[:2])
             # dy/dp: every state the page shows, with a derivative per parameter.
@@ -540,8 +542,8 @@ class Server(unittest.TestCase):
         self.assertTrue(got['gsa']['onEngine'] and got['gsa']['same'], got['gsa'])
         self.assertTrue(got['replay']['inputs'] and got['replay']['index'] == 5, got['replay'])
         self.assertLessEqual(got['replay']['worst'], 1e-9)
-        self.assertTrue(got['calibrate']['onEngine'] and got['calibrate']['matched'] and got['calibrate']['same'],
-                        got['calibrate'])
+        self.assertTrue(got['calibrate']['onEngine'] and got['calibrate']['matched'] and got['calibrate']['same']
+                        and got['calibrate']['precise'], got['calibrate'])
         self.assertTrue(got['sensitivity']['onEngine'] and got['sensitivity']['same'], got['sensitivity'])
         self.assertLessEqual(got['sensitivity']['worst'], 1e-9)
         # A sample the engine holds: its bands the page's own formulas over its

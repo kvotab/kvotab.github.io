@@ -3,6 +3,7 @@
 
 #include "engine/calibrate.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <limits>
@@ -16,6 +17,7 @@
 #include "stats/gsa_design.hpp"
 #include "stats/optimise.hpp"
 #include "stats/pdf.hpp"
+#include "stats/precision.hpp"
 
 namespace kompartment {
 
@@ -42,6 +44,17 @@ struct Variable {
     OptimiseSpace space = OptimiseSpace::Linear;
     double lower = 0.0, upper = 0.0, start = 0.0;
 };
+
+/// How far each value is moved to difference the residuals for the precision: a thousandth --
+/// of the value itself where it is searched as it is, of its logarithm's unit where it is
+/// searched in the logarithm -- and never more than a quarter of the range.
+constexpr double PRECISION_STEP = 1e-3;
+
+bool all_finite(const std::vector<double>& v) {
+    for (double x : v)
+        if (!std::isfinite(x)) return false;
+    return true;
+}
 
 }  // namespace
 
@@ -212,14 +225,17 @@ Json calibrate(std::shared_ptr<const Project> project, const CalibrateOptions& o
     // the values reported.
     std::optional<std::vector<double>> readings;
     double objective = out.fx;
+    std::vector<double> residuals;
     if (out.x) {
         const Objective got = evaluate(*out.x);
         readings = last;
         objective = got.objective;
+        residuals = got.residuals;
     }
-    for (std::size_t i = 0; i < vars.size(); i++) P[vars[i].slot] = before[i];
-    sys->evaluate_invariant();
+    // A stop asked for, as the Julia package's `_op_aborted` asks it.
+    auto stopped = [&] { return o.signal ? o.signal() : false; };
 
+    // The values at a point of the search, as the model holds them, and which sit on a bound.
     Json values = Json::array();
     if (out.x) {
         for (std::size_t i = 0; i < vars.size(); i++) {
@@ -237,6 +253,76 @@ Json calibrate(std::shared_ptr<const Project> project, const CalibrateOptions& o
                                       {"pinned", pinned}}));
         }
     }
+
+    // The precision of the values found: the residuals differenced along each value about the
+    // answer -- central where both sides are inside the bounds, one-sided against a bound --
+    // and `precision_of` on what that gives. A value on a bound is held; one the model would
+    // not run around is said so. Null when the signal stops it part way.
+    auto precision_around = [&](const std::vector<double>& x) -> Json {
+        PrecisionInput in;
+        in.residuals = residuals;
+        long long runs = 0;
+        auto at = [&](std::size_t k, double u) -> std::optional<std::vector<double>> {
+            std::vector<double> xp = x;
+            xp[k] = u;
+            runs++;
+            Objective got = evaluate(xp);
+            if (!all_finite(*last)) return std::nullopt;
+            return std::move(got.residuals);
+        };
+        for (std::size_t k = 0; k < vars.size(); k++) {
+            if (stopped()) return Json();
+            const Variable& v = vars[k];
+            if (!values[k].get("pinned").is_null()) {
+                in.columns.emplace_back(std::nullopt);
+                in.failed.emplace_back(std::nullopt);
+                continue;
+            }
+            const double span = v.upper - v.lower;
+            const double own = v.space == OptimiseSpace::Log ? 1.0 : std::fabs(x[k]);
+            const double h = std::min(span / 4, PRECISION_STEP * (own > 0 ? own : span));
+            const bool up = x[k] + h <= v.upper;
+            const bool down = x[k] - h >= v.lower;
+            std::optional<std::vector<double>> col;
+            if (h > 0 && up && down) {
+                const auto p = at(k, x[k] + h);
+                const auto q = p ? at(k, x[k] - h) : std::nullopt;
+                if (p && q) {
+                    std::vector<double> c;
+                    for (std::size_t i = 0; i < p->size(); i++) c.push_back(((*p)[i] - (*q)[i]) / (2 * h));
+                    col = std::move(c);
+                }
+            } else if (h > 0 && (up || down)) {
+                const double step = up ? h : -h;
+                const auto p = at(k, x[k] + step);
+                if (p) {
+                    std::vector<double> c;
+                    for (std::size_t i = 0; i < p->size(); i++) c.push_back(((*p)[i] - residuals[i]) / step);
+                    col = std::move(c);
+                }
+            }
+            in.failed.push_back(col ? std::nullopt : std::optional<std::string>("did not run"));
+            in.columns.push_back(std::move(col));
+        }
+        for (std::size_t k = 0; k < vars.size(); k++) {
+            in.keys.push_back(vars[k].key);
+            in.log.push_back(vars[k].space == OptimiseSpace::Log);
+            in.values.push_back(values[k].get("value").as_double());
+            const Json& pinned = values[k].get("pinned");
+            in.pinned.push_back(pinned.is_null() ? std::nullopt : std::optional<std::string>(pinned.as_string()));
+        }
+        Json found = precision_of(in);
+        found.set("runs", Json(runs));
+        return found;
+    };
+    // How well they are known: after the search, so nothing the search decided depends on it
+    // and its count of evaluations is its own. Not for a search that was stopped -- a stop is
+    // a stop -- nor one the model could not finish at its best point.
+    Json precision;
+    if (out.x && o.precision && out.reason != "stopped" && !stopped() && all_finite(*readings)) precision = precision_around(*out.x);
+    for (std::size_t i = 0; i < vars.size(); i++) P[vars[i].slot] = before[i];
+    sys->evaluate_invariant();
+
     bool matched = readings.has_value();
     for (std::size_t i = 0; matched && i < targets.size(); i++) matched = within(pd_to_number(pd_prop(targets[i], "value")), (*readings)[i]);
     Json said = Json::array();
@@ -256,6 +342,7 @@ Json calibrate(std::shared_ptr<const Project> project, const CalibrateOptions& o
                          {"ms", Json(static_cast<long long>(std::nearbyint(1000 * (now_s() - started))))},
                          {"objective", Json(objective)},
                          {"values", values},
+                         {"precision", precision},
                          {"targets", said}});
 }
 
