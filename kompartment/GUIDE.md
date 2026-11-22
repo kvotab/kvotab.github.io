@@ -2506,6 +2506,42 @@ do it: the variable-order solver and the six vendored methods beside it. Choose
 `ros23` or `dp45` and the switch greys out and says so, rather than doing
 nothing quietly.
 
+## Is the run resolved?
+
+A run is solved to the two tolerances the Simulation section gives, and nothing
+in it says whether they were tight enough for this model: a run made too loosely
+draws a believable curve that is out — a peak a little low and a little early —
+and looks exactly like one that is right. The way to know is to run again with
+the tolerances tighter and see whether anything moves. **Check the run…**, under
+the tolerances, does that for every state at once.
+
+It solves the run on show again with both tolerances a hundred times tighter —
+a compartment's own absolute tolerance too, and the relative one no lower than
+10⁻¹², as tight as the formulas gain from — with the step budget ten times larger
+where the model sets one, the method and everything else the run's own, and
+reports at the run's own output times, whatever it chose them by. Each state's
+largest difference over the run is then taken as a share of its size: the most
+it reaches in either run, or the absolute tolerance over the relative where that
+is more, since a state smaller than the run was asked to resolve is not judged
+on its last digits.
+
+| | |
+|---|---|
+| **holds** | no state moved by 0.1 % of its size |
+| **nearly holds** | none moved by 1 % |
+| **does not hold** | something moved by more: what is read off its curves is out by about that much |
+
+The states that moved most are listed, with how far, when, and what each run
+has there, under what each run was solved at and how long the careful one took.
+**Run with the careful setting** writes the tighter tolerances into the model,
+as one edit that one undo takes back, and runs it.
+
+The careful run is solved in a worker of its own, from the run as a save writes
+it, so the run on show is not touched and **Stop** stops only the check. It is a
+check of the run in front of you: a model edited since its run is run first, and
+a replayed realisation is checked as the run it came from. A run an engine on
+this machine made is brought into the tab, and its careful run is solved here.
+
 ## The mass-balance audit
 
 **Mass balance**, under SIMULATION in Advanced settings, is a check to run, not a way to run. Switch it

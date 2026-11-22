@@ -243,6 +243,24 @@ const TOPICS = {
 		}],
 		more: 'Choosing endpoints',
 	},
+	'check-run': {
+		title: 'Check the run',
+		lead: 'The run on show solved again with both tolerances a hundred times tighter, and set against '
+			+ 'itself state by state at its own output times.',
+		sections: [{
+			list: [
+				'**Holds** — no state moved by 0.1 % of its size.',
+				'**Nearly holds** — none moved by 1 %.',
+				'**Does not hold** — what is read off its curves is out by about as much as the state '
+				+ 'that moved most.',
+			],
+		}, {
+			text: 'A state’s size is the most it reaches in either run, or the absolute tolerance over the '
+				+ 'relative where that is more. **Run with the careful setting** writes the tighter tolerances '
+				+ 'into the model, as one edit, and runs it.',
+		}],
+		more: 'Is the run resolved?',
+	},
 	optimise: {
 		title: 'Optimise',
 		lead: 'Solve for the parameter values that put chosen endpoints at chosen values, between bounds '

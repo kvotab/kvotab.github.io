@@ -58,7 +58,7 @@ import { describeEntry } from './runner.js';
  * Nothing here may throw: a check that cannot label one block should still
  * check the matrix.
  */
-function stateLabels(layout) {
+export function stateLabels(layout) {
 	const labels = new Array(layout.nstate);
 	for (const entry of layout.states ?? []) {
 		try {

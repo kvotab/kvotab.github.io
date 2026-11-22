@@ -239,8 +239,9 @@ export function simTopic(key, ctx) {
 				text: [
 					'Tighter is slower and more accurate. It controls each step’s error, not the '
 					+ 'error at the end, which can be several times larger after many steps.',
-					'The way to know a result is resolved: run again with it ten times tighter. If what you '
-					+ 'read off the chart does not move, it is.',
+					'The way to know a result is resolved: run again with it tighter. If what you read off '
+					+ 'the chart does not move, it is. **Check the run**, under the tolerances, does that for '
+					+ 'every state at once, a hundred times tighter.',
 				],
 			}],
 		};
@@ -322,6 +323,20 @@ export function simTopic(key, ctx) {
 				text: 'Exact, and needs no distributions: it is the derivative at the values the model '
 					+ 'holds, carried through the solve with it. Choose the parameters and the outputs in the '
 					+ 'dialog; the answer is a curve per pair, absolute or relative.',
+			}],
+		};
+		case 'check_run': return {
+			kicker: 'Analysis',
+			title: 'Check the run',
+			lead: 'Whether the tolerances were tight enough for this model: the run on show solved again '
+				+ 'with both a hundred times tighter, and set against itself.',
+			sections: [{
+				text: 'Every state at every output time. A run **holds** when no state moved by 0.1 % of its '
+					+ 'size, **nearly holds** when none moved by 1 %, and the states that moved most are named. '
+					+ '**Run with the careful setting** writes the tighter tolerances into the model and runs it.',
+			}, {
+				text: 'The careful run is solved in a worker of its own, so the run on show stays as it is, and '
+					+ 'Stop stops only the check.',
 			}],
 		};
 		case 'calibration': return {

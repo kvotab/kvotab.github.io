@@ -77,6 +77,7 @@ exercise `domain/` and `sim/` directly, which is why they can be plain Node.
 | `src/domain/versions.js` | Two models in, the differences out |
 | `src/domain/suggest.js` | The names a mistyped one was probably meant to be, and the fix put into the one equation |
 | `src/domain/precision.js` | How well a calibration's values are known: standard errors, ranges and correlations from the residuals' derivatives; Student's t |
+| `src/sim/checkrun.js`, `src/ui/checkdialog.js` | Check the run: the run on show solved again with its tolerances a hundred times tighter, in a worker of its own, and set against itself |
 | `src/domain/runlog.js` | What a run was, written into its results archive |
 | `src/domain/pdf.js`, `src/domain/sample.js` | The distributions and the sampler |
 | `src/domain/unitcheck.js` | The unit algebra, the literal conversion and the clash messages |

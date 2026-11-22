@@ -84,9 +84,11 @@ import { openSaveDialog } from './savedialog.js';
 import { exportReportNodes } from './ecoreport.js';
 import { openImportChooser } from './importchooser.js';
 import { openOptimiseDialog } from './optdialog.js';
+import { openCheckRunDialog } from './checkdialog.js';
+import { tightenTolerances } from '../sim/checkrun.js';
 import { findBlock } from '../domain/blocks.js';
 import {
-	describeDataset, describeSampleMeta, sampleBytes, sampleBuffers, MOST_SAMPLE_BYTES,
+	describeDataset, describeSampleMeta, sampleBytes, sampleBuffers, MOST_SAMPLE_BYTES, readDataset,
 } from '../io/dataset.js';
 import { blocksOf, indicesFor } from './endpoints.js';
 import {
@@ -7615,6 +7617,15 @@ function renderSidebar() {
 		// Advanced settings, below: switches on how any solve behaves, set
 		// once and left.
 	);
+	// Whether these tolerances were tight enough: the run on show solved again
+	// a hundred times more carefully and set against itself. Under the two
+	// boxes it is about.
+	{
+		const check = el('button', { type: 'button', className: 'ghost sb-action sb-check' },
+			'Check the run\u2026');
+		check.addEventListener('click', openCheckRun);
+		group.append(infoRow('field', el('label', {}, 'Tolerances'), check, 'check_run'));
+	}
 	// dy/dp needs no distributions -- it is a derivative at the values the
 	// model holds -- so it is offered whatever the model carries.
 	{
@@ -12472,6 +12483,109 @@ async function openOptimise() {
 			});
 		},
 	});
+}
+
+/**
+ * The worker the careful run of *Check the run* is solved in, while it goes:
+ * one of its own, so that Stop terminates it and leaves the worker that holds
+ * the run on show -- and every series still to be asked of it -- alone.
+ */
+let checkWorker = null;
+let checkId = 0;
+
+/**
+ * Check the run: the run on show, written out as a save writes it, handed to
+ * a worker of its own, solved again a hundred times more carefully and set
+ * against itself. See ../sim/checkrun.js and ./checkdialog.js.
+ */
+async function openCheckRun() {
+	const r = state.results;
+	if (!r) { flash('There is no run to check yet: run the model, then check it.', 'warn'); return; }
+	if (r.replayed) {
+		flash('A replayed realisation is checked as the run it came from: run the model at its own '
+			+ 'values, then check that.', 'warn');
+		return;
+	}
+	// A run at other values -- an optimised answer tried, or an app's controls
+	// -- is not of the model as it is written, which is what the check solves.
+	if (r.preview != null) {
+		flash('This run is at other values than the model\u2019s own, so it is not the model the check '
+			+ 'would solve again. Run the model, then check that.', 'warn');
+		return;
+	}
+	if (resultsAreStale()) {
+		flash('The model has changed since this run, so the run is not of the model in front of you. '
+			+ 'Run it, then check it.', 'warn');
+		return;
+	}
+	checkWorker?.terminate();
+	checkWorker = null;
+	const id = ++checkId;
+	const runId = r.runId;
+	// The model the run was made of -- current, as just checked -- taken now:
+	// the editor may move on while the run is being written out.
+	const project = structuredClone(state.raw);
+	const dialog = openCheckRunDialog({
+		timeUnit: state.raw?.simulation?.time_unit ?? 'year',
+		onStop: () => {
+			// Also before the worker exists: the run is still being written
+			// out, and the answer to that must not start one after the Stop.
+			checkId += 1;
+			checkWorker?.terminate();
+			checkWorker = null;
+			dialog.failed('Stopped. The run on show is as it was.');
+		},
+		onCareful: () => runCareful(),
+		isAboutShownRun: () => state.results?.runId === runId,
+	});
+	let entries;
+	try {
+		entries = await requestDataset('model.json');
+	} catch (e) {
+		dialog.failed(e.message);
+		return;
+	}
+	if (id !== checkId) return;
+	let data;
+	try {
+		data = readDataset(new Map(entries.map((e) => [e.name, e.bytes])));
+	} catch (e) {
+		dialog.failed(e.message);
+		return;
+	}
+	if (!data?.flat) {
+		dialog.failed('The run came back without its states, so there is nothing to set against.');
+		return;
+	}
+	if (id !== checkId) return;
+	const w = new Worker(new URL('../worker/sim-worker.js', import.meta.url), { type: 'module' });
+	checkWorker = w;
+	const done = () => { w.terminate(); if (checkWorker === w) checkWorker = null; };
+	w.onmessage = (ev) => {
+		const m = ev.data;
+		if (m?.id !== id) return;
+		if (m.type === 'check-run-progress') { dialog.progress(m); return; }
+		if (m.type === 'check-run') {
+			if (m.ok) dialog.finished(m.report);
+			else dialog.failed(m.message ?? 'The careful run could not be made.');
+			done();
+		}
+	};
+	w.onerror = () => {
+		dialog.failed('The worker for the careful run could not start.');
+		done();
+	};
+	w.postMessage({ type: 'check-run', id, project, data }, [data.flat.buffer]);
+}
+
+/**
+ * *Run with the careful setting*: the tolerances the check was made at,
+ * written into the model as one edit, and run.
+ */
+function runCareful() {
+	tightenTolerances(state.raw);
+	modelChanged({ label: 'Tolerances a hundred times tighter' });
+	runSimulation({ manual: true });
 }
 
 /**

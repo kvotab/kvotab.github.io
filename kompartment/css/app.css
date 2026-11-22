@@ -9269,6 +9269,13 @@ input.ix-unit { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 .opt-ranges td.opt-held { text-align: left; color: var(--text-muted); }
 .opt-corr td.is-strong { color: var(--warn); font-weight: 600; }
 
+/* Check the run: while the careful run goes, then what it found -- the verdict
+   in the Jacobian check's own boxes, and the states that moved most, those past
+   0.1 % in the warning ink. */
+.check-run-busy { margin: 4px 0 6px; }
+.check-run-verdict { margin: 4px 0 8px; }
+.check-run-table tr.is-moved td:nth-child(2) { color: var(--warn); font-weight: 600; }
+
 /* The import chooser: one row per thing the file holds. */
 .imp-row {
 	display: flex;

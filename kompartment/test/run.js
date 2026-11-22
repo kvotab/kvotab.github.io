@@ -18232,6 +18232,106 @@ test('the Jacobian check differences a disagreement again at smaller steps befor
 	close(d.relative, 1 / 3, 1e-4, 'and the entry is a third out of the derivative');
 });
 
+test('Check the run solves the run again a hundred times more carefully and says whether it holds', async () => {
+	const C = await import('../src/sim/checkrun.js');
+	const { readFileSync } = await import('node:fs');
+	const load = (name) => JSON.parse(readFileSync(new URL(`../examples/${name}.json`, import.meta.url), 'utf8'));
+
+	// The careful model: both tolerances a hundred times tighter, a
+	// compartment's own and an index's too, the relative one no lower than
+	// the floor, a step budget the model sets ten times larger, and the run's
+	// own output times whatever it chose them by.
+	const raw = {
+		simulation: { rtol: 1e-6, abstol: 1e-9, max_steps: 5000, spacing: 'solver' },
+		compartments: [
+			{ name: 'A', abstol: 1e-3, entries: [{ index: { Nuc: 'x' }, abstol: '1e-5' }, { index: { Nuc: 'y' } }] },
+			{ name: 'B' },
+		],
+		waste_packages: [{ name: 'W', abstol: 2e-4 }],
+	};
+	const { model, rtol, abstol, floor } = C.carefulModel(raw, [0, 1, 2.5, 10]);
+	close(rtol, 1e-8, 1e-12, 'the relative tolerance');
+	close(abstol, 1e-11, 1e-12, 'the absolute tolerance');
+	assert(!floor, 'a tolerance well above the floor was said to be at it');
+	assert(model.simulation.max_steps === 50000, model.simulation.max_steps);
+	close(model.compartments[0].abstol, 1e-5, 1e-12, 'a compartment\u2019s own');
+	close(model.compartments[0].entries[0].abstol, 1e-7, 1e-12, 'an index\u2019s own, written as text');
+	assert(!('abstol' in model.compartments[0].entries[1]) && !('abstol' in model.compartments[1]),
+		JSON.stringify(model.compartments));
+	close(model.waste_packages[0].abstol, 2e-6, 1e-12, 'a waste package’s own');
+	assert(model.simulation.spacing === 'series' && model.simulation.output_times[0].times.join() === '0,1,2.5,10',
+		JSON.stringify(model.simulation));
+	assert(raw.simulation.rtol === 1e-6 && raw.simulation.spacing === 'solver', 'the run’s own model was changed');
+	const tight = C.carefulModel({ simulation: { rtol: 1e-11, abstol: 1e-14 } }, [0, 1]);
+	assert(tight.rtol === C.RTOL_FLOOR && tight.floor, JSON.stringify(tight));
+	assert(!('max_steps' in C.carefulModel({ simulation: { rtol: 1e-6, abstol: 1e-9 } }, [0]).model.simulation),
+		'a step budget the model leaves to the solver was set');
+
+	// What a difference is measured against: the most a state reaches in
+	// either run, or the absolute tolerance over the relative where that is
+	// more. Two states: one that moves 0.5 % of its peak, one far below what
+	// the run was asked to resolve that moves by all of itself.
+	const fake = (rows, t = [0, 1, 2]) => ({
+		project: { simulation: { rtol: 1e-6, abstol: 1e-9 } },
+		system: { layout: { nstate: 2 } }, t, y: rows.map((r) => Float64Array.from(r)),
+	});
+	const held = fake([[0, 1e-6], [100, 2e-6], [50, 1e-6]]);
+	const careful = fake([[0, 0], [100.5, 0], [50.1, 0]]);
+	const r = C.compareRuns(held, careful, { abstol: 1e-9, labels: ['Big', 'Tiny'] });
+	assert(r.verdict === 'nearly' && Math.abs(r.worst - 0.5 / 100.5) < 1e-12, JSON.stringify(r));
+	assert(r.moved[0].label === 'Big' && r.moved[0].at === 1 && r.moved[0].held === 100 && r.moved[0].careful === 100.5,
+		JSON.stringify(r.moved[0]));
+	// The tiny state moved by all of itself, but against 1e-9/1e-6 = 1e-3.
+	close(r.moved[1].share, 2e-6 / 1e-3, 1e-9, 'judged against the tolerance it was asked to meet');
+	assert(C.compareRuns(held, fake([[0, 1e-6], [100.05, 2e-6], [50, 1e-6]]), { abstol: 1e-9 }).verdict === 'holds');
+	assert(C.compareRuns(held, fake([[0, 1e-6], [103, 2e-6], [50, 1e-6]]), { abstol: 1e-9 }).verdict === 'does not');
+	// A careful run at other times is read at the nearest, and a state that
+	// is not a number in one run is as far apart as runs can be.
+	const shifted = C.compareRuns(held, fake([[0, 1e-6], [100, 2e-6], [50, 1e-6], [50, 1e-6]], [0, 1, 1.9999999, 2]), { abstol: 1e-9 });
+	assert(shifted.worst === 0 && !shifted.sameTimes, JSON.stringify(shifted));
+	const broken = C.compareRuns(held, fake([[0, 1e-6], [NaN, 2e-6], [50, 1e-6]]), { abstol: 1e-9 });
+	assert(broken.verdict === 'does not' && broken.worst === Infinity, JSON.stringify(broken));
+
+	// On real models: a decay chain at a loose tolerance moves; at a tight
+	// one it holds, and the careful run took more steps than the run.
+	const check = (name, sim) => {
+		const m = load(name);
+		Object.assign(m.simulation, sim);
+		return C.checkRun(run(m), (p) => run(p));
+	};
+	const loose = check('decay-chain', { rtol: 1e-3, abstol: 1e-6 });
+	assert(loose.verdict !== 'holds' && loose.worst > 1e-3 && /Waste \[/.test(loose.moved[0].label),
+		JSON.stringify({ v: loose.verdict, w: loose.worst, m: loose.moved[0] }));
+	assert(loose.careful.rtol === 1e-5 && loose.careful.steps > loose.run.steps, JSON.stringify(loose.careful));
+	const fine = check('decay-chain', { rtol: 1e-9, abstol: 1e-12 });
+	assert(fine.verdict === 'holds' && fine.worst < 1e-5, JSON.stringify({ v: fine.verdict, w: fine.worst }));
+	assert(fine.times === run(load('decay-chain')).t.length && fine.sameTimes, 'not at the run’s own times');
+	// The solver's own steps as the output: compared at them all the same.
+	const steps = check('biosphere', { spacing: 'solver' });
+	assert(steps.sameTimes && steps.verdict === 'holds', JSON.stringify({ v: steps.verdict, s: steps.sameTimes }));
+
+	// What Run with the careful setting writes: the same tightening, in place.
+	const edit = load('decay-chain');
+	const before = edit.simulation.rtol;
+	C.tightenTolerances(edit);
+	close(edit.simulation.rtol, Math.max(C.RTOL_FLOOR, before / 100), 1e-12, 'in place');
+
+	// The page: the run as a save writes it, handed to a worker of its own,
+	// which Stop terminates -- the worker holding the run on show untouched.
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	assert(/entries = await requestDataset\('model\.json'\);/.test(app), 'the run is not written out for the check');
+	assert(/const w = new Worker\(new URL\('\.\.\/worker\/sim-worker\.js', import\.meta\.url\), \{ type: 'module' \}\);\n\tcheckWorker = w;/.test(app),
+		'the careful run is not given a worker of its own');
+	assert(/onStop: \(\) => \{\n(\t\t\t\/\/.*\n)*\t\t\tcheckId \+= 1;\n\t\t\tcheckWorker\?\.terminate\(\);/.test(app)
+		&& !/onStop: \(\) => cancelSimulation\(\),\n\t\tonCareful/.test(app),
+		'Stop reaches the worker that holds the run on show, or a check it stops can still start');
+	assert(/function runCareful\(\) \{\n\ttightenTolerances\(state\.raw\);\n\tmodelChanged\(/.test(app), 'the careful setting is not an edit');
+	assert(/if \(resultsAreStale\(\)\) \{/.test(app), 'an out-of-date run is checked');
+	const worker = readFileSync(new URL('../src/worker/sim-worker.js', import.meta.url), 'utf8');
+	assert(/if \(msg\.type === 'check-run'\) \{[\s\S]*?const held = restoreRun\(msg\.project, msg\.data\);[\s\S]*?checkRun\(held,/.test(worker),
+		'the worker does not restore the run it is handed');
+});
+
 test('the Jacobian check says what it could not judge, and stays affordable', async () => {
 	const { checkJacobian, MANY_COLUMNS } = await import('../src/sim/jaccheck.js');
 	const { readFileSync } = await import('node:fs');

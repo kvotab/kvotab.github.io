@@ -42,6 +42,7 @@ import { streamFor, uniforms } from '../domain/sample.js';
 import { pawn, discrepancyShares, rankProbabilities } from '../domain/salib.js';
 import { sortedColumn, describeSample, histogram } from '../domain/distribution.js';
 import { calibrate, calibrationPrecision, variablesOf } from '../sim/calibrate.js';
+import { checkRun } from '../sim/checkrun.js';
 import { runSensitivity, elasticity } from '../sim/localsens.js';
 import { checkJacobian, jacobianPattern } from '../sim/jaccheck.js';
 import { isScipySolver, loadScipy, scipyReady } from '../ode/scipy.js';
@@ -2161,6 +2162,45 @@ self.onmessage = async (ev) => {
 			self.postMessage({
 				type: 'error', id, name: e.name ?? 'Error',
 				message: e.message ?? String(e), blockName: e.blockName ?? null, hint: e.hint ?? null,
+			});
+		}
+		return;
+	}
+
+	// Is the run on show resolved? The run, handed here as the archive a save
+	// writes of it, solved again with its tolerances a hundred times tighter
+	// at its own output times and set against itself state by state: see
+	// ../sim/checkrun.js. In a worker of its own, which Stop terminates
+	// without touching the one that holds the run on show.
+	if (msg.type === 'check-run') {
+		cancelled = false;
+		const { id } = msg;
+		try {
+			self.postMessage({ type: 'check-run-progress', id, stage: 'building', fraction: 0 });
+			const held = restoreRun(msg.project, msg.data);
+			msg.data = null;
+			if (isScipySolver(held.project.simulation.solver) && !scipyReady()) {
+				await loadScipy({
+					onProgress: (stage) => self.postMessage({ type: 'check-run-progress', id, stage, fraction: 0 }),
+				});
+			}
+			let lastPost = 0;
+			const report = checkRun(held, (model) => run(model, {
+				signal: { get aborted() { return cancelled; } },
+				onStage: (stage) => self.postMessage({ type: 'check-run-progress', id, stage, fraction: 0 }),
+				onProgress: (fraction, at) => {
+					const now = Date.now();
+					if (now - lastPost > 80) {
+						lastPost = now;
+						self.postMessage({ type: 'check-run-progress', id, stage: 'solving', fraction, at });
+					}
+				},
+			}));
+			self.postMessage({ type: 'check-run', id, ok: true, report });
+		} catch (e) {
+			self.postMessage({
+				type: 'check-run', id, ok: false,
+				name: e.name ?? 'Error', message: e.message ?? String(e),
 			});
 		}
 		return;
