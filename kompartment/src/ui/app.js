@@ -85,6 +85,8 @@ import { exportReportNodes } from './ecoreport.js';
 import { openImportChooser } from './importchooser.js';
 import { openOptimiseDialog } from './optdialog.js';
 import { openCheckRunDialog } from './checkdialog.js';
+import { openFlowsDialog } from './flowsdialog.js';
+import { flowAccount } from '../sim/flows.js';
 import { tightenTolerances } from '../sim/checkrun.js';
 import { findBlock } from '../domain/blocks.js';
 import {
@@ -1240,6 +1242,13 @@ function ensureWorker() {
 		}
 		if (m.type === 'calibration-precision') {
 			if (m.id === state.optId) state.optOpen?.precision(m);
+			return;
+		}
+		if (m.type === 'flows') {
+			if (m.seq === flowsSeq) {
+				if (m.ok) flowsOpen?.show(m.account);
+				else flowsOpen?.failed(m.message ?? 'The account could not be worked out.');
+			}
 			return;
 		}
 		if (m.type === 'prob-hist') { acceptHistograms(m); return; }
@@ -7626,6 +7635,14 @@ function renderSidebar() {
 		check.addEventListener('click', openCheckRun);
 		group.append(infoRow('field', el('label', {}, 'Tolerances'), check, 'check_run'));
 	}
+	// Where the inventory went over the run on show: what each compartment
+	// held and what each route carried, one nuclide at a time.
+	{
+		const flows = el('button', { type: 'button', className: 'ghost sb-action sb-flows' },
+			'Where it goes\u2026');
+		flows.addEventListener('click', openFlows);
+		group.append(infoRow('field', el('label', {}, 'Inventory'), flows, 'flows'));
+	}
 	// dy/dp needs no distributions -- it is a derivative at the values the
 	// model holds -- so it is offered whatever the model carries.
 	{
@@ -12576,6 +12593,44 @@ async function openCheckRun() {
 		done();
 	};
 	w.postMessage({ type: 'check-run', id, project, data }, [data.flat.buffer]);
+}
+
+/** The window of *Where it goes*, and which of its questions is the latest. */
+let flowsOpen = null;
+let flowsSeq = 0;
+
+/**
+ * Where it goes: one nuclide's account over the run on show, worked out by the
+ * worker that holds the run. See ../sim/flows.js and ./flowsdialog.js.
+ */
+function openFlows() {
+	const r = state.results;
+	if (!r) { flash('There is no run to account for yet: run the model, then look.', 'warn'); return; }
+	if (!r.local && (!worker || r.detached)) {
+		flash('The run on show is no longer held: run the model again, then look.', 'warn');
+		return;
+	}
+	const runId = r.runId;
+	flowsOpen = openFlowsDialog({
+		timeUnit: state.raw?.simulation?.time_unit ?? 'year',
+		stale: resultsAreStale(),
+		onFamily: (family) => askFlows(runId, family),
+	});
+	askFlows(runId, null);
+}
+
+function askFlows(runId, family) {
+	const seq = ++flowsSeq;
+	// No worker in this run: the results are right here.
+	if (state.results?.local) {
+		try {
+			flowsOpen?.show(flowAccount(state.results.local.results, { family }));
+		} catch (e) {
+			flowsOpen?.failed(e.message);
+		}
+		return;
+	}
+	ensureWorker().postMessage({ type: 'flows', id: runId, seq, family });
 }
 
 /**

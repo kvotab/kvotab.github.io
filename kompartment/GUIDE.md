@@ -2597,6 +2597,48 @@ whole. A radionuclide's rows reach every compartment it is in, so each matrix
 they form takes more evaluations of the model. The Generated code tab says
 which a run had.
 
+## Where the inventory goes
+
+The audit says whether the books close; **Where it goes…**, under the
+tolerances in the Simulation section, says *by which route*. For one nuclide at
+a time — chosen at the top, the one with the most at the start to begin with —
+it draws the run on show as an account, at the time the slider names:
+
+- **a flow diagram**: the compartments in columns, in the order the inventory
+  reaches them, with what came in from outside and what grew in from parents on
+  the left, what left the model and what decayed on the right, and a band for
+  every route as wide as the amount it has carried. A route back to a column
+  already passed — a back-flow, a loop — is drawn dashed. Each compartment says
+  what it holds at that time;
+- **where it is**: what each compartment holds over the whole run, stacked, with
+  what has left and what has decayed on top, so that the height of the whole is
+  what there has been to account for, and a line at the slider's time; and
+- **every route**: a row each, the largest first — a transfer, a source, decay,
+  ingrowth from the parents — with how much it carried and its share of all
+  there was.
+
+A line above them says it in a sentence: of so much at the start and so much
+that came in, how much is held, how much has decayed and how much has left.
+
+Each route's amount is worked out from the run as it stands, by the run's own
+arithmetic: a transfer carries its value — its rate times its availability —
+times what its donor holds, or its value alone where it is an absolute flux; a
+source delivers its value; a compartment loses its decay constant times what it
+holds and gains its parents' share of theirs. Each is worked out at every output
+time and added up between them by the trapezium rule, as an
+[Integral](#numbers-read-off-a-finished-curve) is, so a route is as good as the
+output grid is fine. A waste package's two inventories are in the account too:
+what fails moves from the intact packages to the exposed inventory, and the
+release leaves that. Nothing is solved again and nothing in the model or the run
+changes.
+
+What no route here accounts for — an explicit dy/dt term, a far-field path's
+return, an event's jump, and the summing between the output times — is each
+compartment's change less every route. It is drawn and listed as **Not accounted
+for** rather than spread over the routes, and the line above says how much of
+the whole it is. On the bundled examples it is a few parts in ten thousand,
+which is also how closely each total agrees with the audit's.
+
 ## Solving a model in parts
 
 **Split into parts**, under SIMULATION in Advanced settings, decides whether a model that falls apart

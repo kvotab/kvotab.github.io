@@ -339,6 +339,17 @@ export function simTopic(key, ctx) {
 					+ 'Stop stops only the check.',
 			}],
 		};
+		case 'flows': return {
+			kicker: 'Analysis',
+			title: 'Where it goes',
+			lead: 'One nuclide\u2019s account over the run on show: what each compartment held, and what each '
+				+ 'transfer carried, decayed and grew in, from the start to any output time.',
+			sections: [{
+				text: 'A flow diagram with a band per route as wide as what it carried, a chart of where the '
+					+ 'inventory is over the run, and a row per route. Worked out from the run as it stands: '
+					+ 'nothing is solved again.',
+			}],
+		};
 		case 'calibration': return {
 			kicker: 'Analysis',
 			title: 'Optimise',

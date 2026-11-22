@@ -3049,6 +3049,9 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 			wastes: wasteLayout.map((W) => ({
 				name: W.q, intact: W.intact.base, exposed: W.exposed.base, width: W.width,
 				release: W.releaseSlot.base, failure: W.failure,
+				// The slot the failure rate is read from, for an account of
+				// what moved between the two inventories (../sim/flows.js).
+				hazard: W.hazardSlot?.base ?? null,
 			})),
 			budget: budgetLayout,
 			// The points of a lookup table that carry their own distribution.
@@ -3231,7 +3234,7 @@ function pinIndices(space, target, indices, name, ownerName, context = null) {
  * One entry per index of the list: its decay constant, and a run of
  * (parent, coefficient) pairs for the ingrowth term.
  */
-function decayTables(model, size) {
+export function decayTables(model, size) {
 	const n = Math.max(1, size);
 	const ioff = new Int32Array(n);
 	const icnt = new Int32Array(n);

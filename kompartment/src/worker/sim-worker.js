@@ -43,6 +43,7 @@ import { pawn, discrepancyShares, rankProbabilities } from '../domain/salib.js';
 import { sortedColumn, describeSample, histogram } from '../domain/distribution.js';
 import { calibrate, calibrationPrecision, variablesOf } from '../sim/calibrate.js';
 import { checkRun } from '../sim/checkrun.js';
+import { flowAccount } from '../sim/flows.js';
 import { runSensitivity, elasticity } from '../sim/localsens.js';
 import { checkJacobian, jacobianPattern } from '../sim/jaccheck.js';
 import { isScipySolver, loadScipy, scipyReady } from '../ode/scipy.js';
@@ -2163,6 +2164,22 @@ self.onmessage = async (ev) => {
 				type: 'error', id, name: e.name ?? 'Error',
 				message: e.message ?? String(e), blockName: e.blockName ?? null, hint: e.hint ?? null,
 			});
+		}
+		return;
+	}
+
+	// Where the inventory went: one nuclide's account over the run this worker
+	// holds -- what each compartment held and what each route carried -- worked
+	// out from its states by the derivative's own arithmetic. See
+	// ../sim/flows.js. For the run on show and no other, as `columns` is.
+	if (msg.type === 'flows') {
+		try {
+			if (!last || last.id !== msg.id) throw new Error('The run on show is no longer held here: run it again.');
+			const held = await materialize(last);
+			const account = flowAccount(held, { family: msg.family ?? null });
+			self.postMessage({ type: 'flows', id: msg.id, seq: msg.seq ?? null, ok: true, account });
+		} catch (e) {
+			self.postMessage({ type: 'flows', id: msg.id, seq: msg.seq ?? null, ok: false, message: e.message ?? String(e) });
 		}
 		return;
 	}

@@ -243,6 +243,26 @@ const TOPICS = {
 		}],
 		more: 'Choosing endpoints',
 	},
+	flows: {
+		title: 'Where it goes',
+		lead: 'One nuclide\u2019s account over the run on show, at the time the slider names.',
+		sections: [{
+			list: [
+				'**The flow diagram** \u2014 the compartments in columns by the order the inventory reaches '
+				+ 'them, what came in and grew in on the left, what left the model and decayed on the right, and '
+				+ 'a band per route as wide as the amount it carried. A route back to a column already passed is '
+				+ 'dashed.',
+				'**Where it is** \u2014 what each compartment holds over the run, stacked, with what has left '
+				+ 'and decayed on top.',
+				'**Every route** \u2014 how much it carried, and its share of what there was.',
+			],
+		}, {
+			text: 'Each route\u2019s rate is worked out at every output time by the run\u2019s own arithmetic and '
+				+ 'added up between them by the trapezium rule. What no route accounts for is said, not spread '
+				+ 'over the routes.',
+		}],
+		more: 'Where the inventory goes',
+	},
 	'check-run': {
 		title: 'Check the run',
 		lead: 'The run on show solved again with both tolerances a hundred times tighter, and set against '

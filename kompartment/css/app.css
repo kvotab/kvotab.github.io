@@ -9276,6 +9276,63 @@ input.ix-unit { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 .check-run-verdict { margin: 4px 0 8px; }
 .check-run-table tr.is-moved td:nth-child(2) { color: var(--warn); font-weight: 600; }
 
+/* Where it goes: the nuclide and the time, a line of the account, the flow
+   diagram, where the inventory is over the run, and every route. The places
+   take the chart's own series colours, in the order of how much they held;
+   the ends of the account -- what came in, grew in, left and decayed -- are
+   in the muted ink, and what nothing accounts for in the warning one. */
+.flows-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; margin: 2px 0 6px; }
+.flows-family { font-weight: 600; }
+.flows-slider input[type='range'] { width: min(320px, 40vw); vertical-align: middle; }
+.flows-when { font-size: 12px; color: var(--text-secondary); }
+.flows-summary { margin: 2px 0 8px; font-size: 12.5px; }
+.flows-other { color: var(--warn); }
+.flows-svg { display: block; width: 100%; height: auto; margin: 2px 0 6px; }
+.flows-band { fill: var(--accent); fill-opacity: 0.26; }
+.flows-band.is-in,
+.flows-band.is-ingrowth { fill: var(--series-3); fill-opacity: 0.3; }
+.flows-band.is-out { fill: var(--text-secondary); fill-opacity: 0.28; }
+.flows-band.is-decay { fill: var(--text-muted); fill-opacity: 0.3; }
+.flows-band.is-other { fill: var(--warn); fill-opacity: 0.3; }
+.flows-band.is-back { fill-opacity: 0.14; stroke: var(--text-muted); stroke-width: 0.6; stroke-dasharray: 3 3; }
+.flows-node { fill: var(--text-muted); }
+.flows-node.is-in,
+.flows-node.is-ingrowth { fill: var(--series-3); }
+.flows-node.is-out { fill: var(--text-secondary); }
+.flows-node.is-otherIn,
+.flows-node.is-otherOut { fill: var(--warn); }
+.flows-label {
+	font-family: var(--sans);
+	font-size: 11px;
+	fill: var(--text-primary);
+	/* A halo in the window's own colour, so a label over a band reads. */
+	paint-order: stroke;
+	stroke: var(--surface-1);
+	stroke-width: 3px;
+	stroke-linejoin: round;
+}
+.flows-area { fill-opacity: 0.8; }
+.flows-area.is-out { fill: var(--text-secondary); fill-opacity: 0.35; }
+.flows-area.is-decay { fill: var(--text-muted); fill-opacity: 0.55; }
+.flows-axis, .flows-tick { stroke: var(--axis); stroke-width: 1; }
+.flows-tick-label { font-family: var(--sans); font-size: 10px; fill: var(--text-secondary); }
+.flows-now { stroke: var(--text-primary); stroke-width: 1; stroke-dasharray: 4 3; }
+.flows-legend { display: flex; flex-wrap: wrap; gap: 3px 14px; font-size: 11px; color: var(--text-secondary); margin: 0 0 8px; }
+.flows-swatch { display: inline-block; width: 10px; height: 10px; margin-right: 5px; border-radius: 2px; vertical-align: -1px; background: var(--text-muted); }
+.flows-swatch.is-out { background: color-mix(in oklab, var(--text-secondary) 45%, transparent); }
+.flows-swatch.is-decay { background: color-mix(in oklab, var(--text-muted) 65%, transparent); }
+.flows-node.series-1, .flows-area.series-1, .flows-swatch.series-1 { fill: var(--series-1); background: var(--series-1); }
+.flows-node.series-2, .flows-area.series-2, .flows-swatch.series-2 { fill: var(--series-2); background: var(--series-2); }
+.flows-node.series-3, .flows-area.series-3, .flows-swatch.series-3 { fill: var(--series-3); background: var(--series-3); }
+.flows-node.series-4, .flows-area.series-4, .flows-swatch.series-4 { fill: var(--series-4); background: var(--series-4); }
+.flows-node.series-5, .flows-area.series-5, .flows-swatch.series-5 { fill: var(--series-5); background: var(--series-5); }
+.flows-node.series-6, .flows-area.series-6, .flows-swatch.series-6 { fill: var(--series-6); background: var(--series-6); }
+.flows-node.series-7, .flows-area.series-7, .flows-swatch.series-7 { fill: var(--series-7); background: var(--series-7); }
+.flows-node.series-8, .flows-area.series-8, .flows-swatch.series-8 { fill: var(--series-8); background: var(--series-8); }
+.flows-routes tr.is-other td { color: var(--warn); }
+.flows-routes th:nth-child(2), .flows-routes td:nth-child(2),
+.flows-routes th:nth-child(3), .flows-routes td:nth-child(3) { width: 11em; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* The import chooser: one row per thing the file holds. */
 .imp-row {
 	display: flex;

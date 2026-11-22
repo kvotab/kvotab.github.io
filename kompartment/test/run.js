@@ -18332,6 +18332,90 @@ test('Check the run solves the run again a hundred times more carefully and says
 		'the worker does not restore the run it is handed');
 });
 
+test('where the inventory goes: each route by the run’s own arithmetic, totals that agree with the audit', async () => {
+	const F = await import('../src/sim/flows.js');
+	const { readFileSync } = await import('node:fs');
+	const load = (name) => JSON.parse(readFileSync(new URL(`../examples/${name}.json`, import.meta.url), 'utf8'));
+
+	// Against the mass-balance audit, which the solver integrates: what came
+	// in, left, decayed and grew in, family by family, to the trapezium rule's
+	// few parts in ten thousand on the bundled output grids.
+	const against = (name, family = null, within = 2e-3) => {
+		const raw = load(name);
+		raw.simulation.mass_balance = true;
+		const r = run(raw);
+		const a = F.flowAccount(r, { family });
+		const at = F.accountAt(a, a.t.length - 1);
+		const fam = r.massBalance().families.find((f) => f.name === a.family).final;
+		const scale = fam.start + fam.in + fam.ingrowth;
+		for (const [mine, theirs, what] of [
+			[at.totals.start, fam.start, 'start'], [at.totals.now, fam.inventory, 'held'],
+			[at.totals.in, fam.in, 'in'], [at.totals.out, fam.out, 'out'],
+			[at.totals.decay, fam.decay, 'decay'], [at.totals.ingrowth, fam.ingrowth, 'ingrowth'],
+		]) {
+			assert(Math.abs(mine - theirs) <= within * scale,
+				`${name} ${a.family} ${what}: ${mine} against the audit's ${theirs}`);
+		}
+		// Every place's books close, by construction: start, plus what came,
+		// less what went, is what it holds -- the rest named, not hidden.
+		for (const p of at.held) {
+			let balance = p.start;
+			for (const l of at.routes) {
+				if (l.to === p.key) balance += l.amount;
+				if (l.from === p.key) balance -= l.amount;
+			}
+			assert(Math.abs(balance - p.now) <= 1e-9 * scale + 1e-300, `${name} ${p.key}: ${balance} against ${p.now}`);
+		}
+		// And what nothing accounts for is the summing's error alone here.
+		assert(Math.abs(at.totals.other) <= within * scale, `${name}: ${at.totals.other} not accounted for`);
+		return { a, at, r };
+	};
+	const bio = against('biosphere');
+	assert(bio.a.family === 'Tc-99' && bio.a.families.length === 4 && bio.a.unit === 'Bq',
+		JSON.stringify({ f: bio.a.family, n: bio.a.families.length, u: bio.a.unit }));
+	// The routes are the model's: the four transfers along the chain, by name.
+	const names = new Set(bio.at.routes.filter((l) => l.kind === 'transfer' || l.kind === 'out').map((l) => l.name));
+	assert(['Release', 'Migration', 'Leaching', 'Flushing'].every((n) => names.has(n)), [...names].join());
+	against('biosphere', 'I-129');
+	// A chain: the daughters grow in, and the account says by how much.
+	const chain = against('decay-chain', 'Am-241');
+	assert(chain.at.totals.ingrowth > 0, 'Am-241 grew in from nothing');
+	against('landscape');
+	against('farfield');
+	// Waste packages hold inventory, as the audit counts it: what fails moves
+	// from the intact packages to the exposed inventory.
+	const waste = against('waste-packages', null, 3e-3);
+	assert(waste.at.routes.some((l) => /fail$/.test(l.name) && l.amount > 0), 'no failure route');
+
+	// An explicit dy/dt term is no route here: it is what is not accounted for.
+	const explicit = {
+		name: 'explicit', simulation: {
+			start_time: 0, end_time: 10, output_points: 101, spacing: 'linear',
+			solver: 'ndf', rtol: 1e-9, abstol: 1e-12, time_unit: 'year',
+		},
+		compartments: [{ name: 'A', initial: '100', dydt: '-0.1*A' }, { name: 'B', initial: '0' }],
+		transfers: [{ name: 'T', from: 'A', to: 'B', rate: '0.05' }],
+	};
+	const ex = F.flowAccount(run(explicit));
+	const exAt = F.accountAt(ex, ex.t.length - 1);
+	const t = exAt.routes.find((l) => l.name === 'T');
+	const other = exAt.routes.find((l) => l.kind === 'other' && l.to === 'A');
+	// d/dt A = -0.15 A: T carries a third of what A loses, the term the rest.
+	const lost = 100 * (1 - Math.exp(-1.5));
+	close(t.amount, lost / 3, 1e-3, 'the transfer’s share');
+	close(-other.amount, (2 * lost) / 3, 1e-3, 'the explicit term, as not accounted for');
+	assert(ex.family === 'not by nuclide', ex.family);
+
+	// The editor: Where it goes asks the worker that holds the run, for the
+	// run on show, and draws what comes back.
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	assert(/ensureWorker\(\)\.postMessage\(\{ type: 'flows', id: runId, seq, family \}\);/.test(app), 'the account is not asked for');
+	assert(/if \(m\.type === 'flows'\) \{\n\t\t\tif \(m\.seq === flowsSeq\) \{/.test(app), 'the answer is not drawn, or an old one is');
+	const worker = readFileSync(new URL('../src/worker/sim-worker.js', import.meta.url), 'utf8');
+	assert(/if \(msg\.type === 'flows'\) \{[\s\S]*?const account = flowAccount\(held, \{ family: msg\.family \?\? null \}\);/.test(worker),
+		'the worker does not work the account out');
+});
+
 test('the Jacobian check says what it could not judge, and stays affordable', async () => {
 	const { checkJacobian, MANY_COLUMNS } = await import('../src/sim/jaccheck.js');
 	const { readFileSync } = await import('node:fs');
