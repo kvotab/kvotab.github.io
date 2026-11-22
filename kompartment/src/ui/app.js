@@ -63,6 +63,7 @@ import { implicitInputs } from '../domain/uncertainty.js';
 import { runLogLines, probabilisticLogLines, runLogText, scenarioLogLines } from '../domain/runlog.js';
 import { compareModels, reportLines, summary as versionSummary } from '../domain/versions.js';
 import { describeAudit } from '../domain/massbalance.js';
+import { fixFor, applyNameFix } from '../domain/suggest.js';
 import { openLocalSensitivityPicker, openLocalSensitivityResult } from './localsensdialog.js';
 import { openShapeSettings } from './shapedialog.js';
 import { renderJacobianView } from './jacobianview.js';
@@ -159,7 +160,7 @@ import * as sitechrome from './sitechrome.js';
  * caused more than one "the code says otherwise" puzzle. Serve with serve.py,
  * which disables caching.
  */
-const BUILD = '2026-11-19';
+const BUILD = '2026-11-22';
 
 const EXAMPLES = [
 	{ file: 'four-compartment.json', title: 'Four-compartment test model' },
@@ -3992,6 +3993,11 @@ function rescanProblems({ rail = true } = {}) {
 		where: p.name,
 		what: `${p.field}${p.index ? ` at ${Object.values(p.index).join(' · ')}` : ''}`,
 		message: p.message,
+		// Where the equation is, for a fix the strip may offer: the field
+		// and the entry, and what kind of block holds them.
+		field: p.field,
+		index: p.index ?? null,
+		blockKind: p.kind,
 	}));
 	// The simulation settings, keyed by setting so the panel can mark the
 	// field rather than only saying that the model will not run.
@@ -4445,13 +4451,61 @@ function renderProblems() {
 		// rather than saying it twice, and keeps the column so the messages
 		// down the strip start in the same place.
 		const linked = !p.where && p.goto && GOTO[p.goto];
+		// A name the check found nobody's, with the names it was probably
+		// meant to be: each a button that writes it in, as an edit like any
+		// other. Worked out for the rows on show, not for every problem the
+		// scan found -- a renamed list can break a hundred equations.
+		const fix = p.kind === 'equation' ? problemFix(p) : null;
 		row.append(
 			el('span', { className: 'problem-what' }, linked ? '' : p.what),
-			el('span', { className: 'problem-msg' }, p.message),
+			el('span', { className: 'problem-msg' }, p.message, fix ? fixButtons(p, fix) : null),
 		);
 		box.append(row);
 	}
 	if (rows.length > MOST) box.append(expander(rows.length, MOST, box, 'problem-more'));
+}
+
+/**
+ * The names a refused one was probably meant to be, for a row of the strip.
+ *
+ * A compartment's dy/dt may read its own block, and a function's body reads
+ * its parameters before anything else -- the same two allowances the check
+ * itself makes, so what is offered is what the check would accept.
+ */
+function problemFix(p) {
+	if (!p.where || !p.field) return null;
+	const fn = p.blockKind === 'function' ? ed.findBlock(state.raw, p.where)?.block : null;
+	return fixFor(state.raw, p.message, p.where, {
+		self: p.blockKind === 'compartment' && p.field === 'dydt',
+		locals: fn ? (fn.parameters ?? []).map(String) : null,
+	});
+}
+
+/** `Change to Leach_rate`, and the next nearest beside it. */
+function fixButtons(p, fix) {
+	return el('span', { className: 'problem-fix' }, ...fix.to.map((to, i) => {
+		const b = el('button', {
+			type: 'button',
+			className: 'problem-fix-btn',
+			title: `Write ${to} in place of ${fix.written} in ${p.where}\u2019s ${p.what}`,
+		}, i === 0 ? `Change to ${to}` : to);
+		b.addEventListener('click', () => fixMistypedName(p, fix, to));
+		return b;
+	}));
+}
+
+/**
+ * Writes the name in, where the check refused the other: one field, one
+ * entry, every place the equation writes the name. An edit like any other,
+ * so the strip is scanned again and one undo takes it back.
+ */
+function fixMistypedName(p, fix, to) {
+	if (!applyNameFix(state.raw, p.where, p.field, p.index, fix, to)) {
+		flash(`${p.where} no longer has ${fix.written} in its ${p.what}.`, 'info');
+		return;
+	}
+	modelChanged({ label: `${fix.written} \u2192 ${to} in ${p.where}` });
+	flash(`${fix.written} changed to ${to} in ${p.where}. One undo takes it back.`, 'info');
 }
 
 /**

@@ -2558,6 +2558,37 @@ footer .stat b { color: var(--text-primary); font-weight: 650; }
 
 .problem-msg { min-width: 0; overflow-wrap: anywhere; }
 
+/* The names a refused one was probably meant to be, after the message: a
+   button each, small and in the strip's own ink, the nearest first. */
+.problem-fix {
+	display: inline-flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	margin-left: 6px;
+	vertical-align: baseline;
+}
+
+.problem-fix-btn,
+.insp-fix-btn {
+	padding: 0 6px;
+	border: 1px solid currentColor;
+	border-radius: 3px;
+	background: transparent;
+	font: inherit;
+	font-family: var(--mono);
+	font-size: 10.5px;
+	line-height: 1.5;
+	color: var(--danger);
+	cursor: pointer;
+}
+
+.problem-fix-btn:hover,
+.problem-fix-btn:focus-visible,
+.insp-fix-btn:hover,
+.insp-fix-btn:focus-visible { color: var(--text-primary); }
+
+.insp-fix-btn + .insp-fix-btn { margin-left: 4px; }
+
 /* `and 23 more — show all 29`, and `Show the first 6` once it is open. A
    button rather than a line of text: the count was the only thing saying that
    the strip was not the whole list, and there was no way to see the rest. The

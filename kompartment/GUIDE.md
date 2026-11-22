@@ -209,6 +209,25 @@ at the field. Both halves of a block's value are checked, the default and every
 per-index entry, since a model whose default is fine and whose Cs-137 entry is
 `0q` is exactly as unrunnable.
 
+**A name that is nobody's comes with the names it was probably meant to be.**
+`'Leach_rat' is not a block in this model` is followed by **Change to
+Leach_rate**, and by the next nearest beside it when there is one: the names
+within a letter or two of the one written, counted without regard to case —
+letters put in, left out, changed, or two neighbours swapped — the nearest
+first, and among equals those in the equation's own sub-system first. Each is
+written the way the equation must write it to reach that block from where it
+stands, so a block in another sub-system is offered by its full path. Only
+what the equation could read is offered: not a block that is switched off, not
+the block itself (except in a compartment's dy/dt term), and in a function's
+body its parameters first; a name that is *called* — `Q_gww(time)` — is offered
+the functions, lookup tables and transport operations there are. A click
+writes the name in, every place that one equation writes the one refused, as
+an edit like any other: the strip is scanned again, and one undo takes it
+back. The settings window offers the same under the box the equation is in.
+Nothing is changed until it is clicked, and a name one letter long is offered
+only in its other case, since one letter from `k` is every other one-letter
+name in the model.
+
 **The simulation settings are checked too**, and each problem is keyed to its
 setting, so the field that is wrong is the field that goes red — with the
 reason in its tooltip. What is checked: the time span (the end after the

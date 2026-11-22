@@ -19672,6 +19672,118 @@ test('unknown names are rejected with a helpful message', () => {
 	);
 });
 
+test('a mistyped name is offered the names it was probably meant to be, and the fix is an edit of that one equation', async () => {
+	const S = await import('../src/domain/suggest.js');
+	const { readFileSync } = await import('node:fs');
+
+	// The distance: letters put in, taken out, changed or two neighbours
+	// swapped, each one; and the count stops as soon as it is past the most.
+	assert(S.nameDistance('Leach_rat', 'Leach_rate') === 1, 'one letter left off');
+	assert(S.nameDistance('Laech_rate', 'Leach_rate') === 1, 'two neighbours swapped');
+	assert(S.nameDistance('Leach_rate', 'Leach_rate') === 0);
+	assert(S.nameDistance('abcdef', 'xyz', 2) === 3, 'not cut off past the most');
+
+	const model = () => ({
+		name: 'suggest',
+		simulation: {
+			start_time: 0, end_time: 1, output_points: 2, spacing: 'linear',
+			solver: 'ndf', rtol: 1e-6, abstol: 1e-9, time_unit: 'year',
+		},
+		systems: ['NF', 'Geo'],
+		nuclides: ['Cs-137', 'I-129'],
+		parameters: [
+			{ name: 'Leach_rate', value: 0.1, index_lists: [] },
+			{ name: 'Kd', value: 1, index_lists: [], system: 'Geo' },
+			{ name: 'k', value: 2, index_lists: [] },
+			{ name: 'Old_rate', value: 3, index_lists: [], enabled: false },
+		],
+		compartments: [
+			{
+				name: 'Water', initial: '1', index_lists: ['Radionuclides'], system: 'NF',
+				dydt: '-Leach_rat*Water + 0*Leach_rat',
+				entries: [{ index: { Radionuclides: 'I-129' }, dydt: '-Leach_rat2*Water' }],
+			},
+			{ name: 'Rock', initial: '0', index_lists: ['Radionuclides'], system: 'Geo' },
+		],
+		expressions: [
+			{ name: 'Flow', equation: 'Q_gww(time) * 2', index_lists: [] },
+			{ name: 'Sum', equation: 'Leach_rate + Old_rat', index_lists: [] },
+		],
+		lookups: [{ name: 'Q_gw', points: [[0, 1], [1, 2]], index_lists: [] }],
+		functions: [{ name: 'twice', parameters: ['rate'], equation: '2 * rat' }],
+	});
+	const m = model();
+
+	// Within a letter or two, without regard to case, the nearest first; each
+	// written the way the equation must write it to reach that block -- a
+	// block in another sub-system by its full path.
+	assert(S.nameSuggestions(m, 'Leach_rat', 'NF.Water').join() === 'Leach_rate', 'one letter off');
+	assert(S.nameSuggestions(m, 'kd', 'NF.Water').join() === 'Geo.Kd,k',
+		`case first, then a letter: ${S.nameSuggestions(m, 'kd', 'NF.Water')}`);
+	// One letter from a one-letter name is every other one; only its case is offered.
+	assert(S.nameSuggestions(m, 'K', 'NF.Water').join() === 'k', S.nameSuggestions(m, 'K', 'NF.Water').join());
+	assert(S.nameSuggestions(m, 'q', 'NF.Water').length === 0, 'a one-letter name drew a list');
+	// Not a block that is switched off, which would only be refused again.
+	assert(!S.nameSuggestions(m, 'Old_rat', 'Sum').includes('Old_rate'), 'a switched-off block was offered');
+	// Not the block itself, except in the field about its own value.
+	assert(!S.nameSuggestions(m, 'Watr', 'NF.Water').includes('Water'), 'a block was offered itself');
+	assert(S.nameSuggestions(m, 'Watr', 'NF.Water', { self: true }).includes('Water'), 'dy/dt may read its own block');
+	// A name called is offered what can be called.
+	assert(S.nameSuggestions(m, 'Q_gww', 'Flow', { call: true }).join() === 'Q_gw', 'a table, called');
+	assert(S.nameSuggestions(m, 'exq', 'Flow', { call: true }).includes('exp'), 'a library function');
+	// A function's body reads its parameters first.
+	assert(S.nameSuggestions(m, 'rat', 'twice', { locals: ['rate'] })[0] === 'rate', 'a parameter of the function');
+
+	// The fix is read off the check's own message, for the name it named.
+	const problems = ed.allEquationProblems(m);
+	const byName = (n) => problems.filter((p) => p.name === n);
+	const water = byName('NF.Water');
+	assert(water.length === 2, `the block and its entry: ${JSON.stringify(water)}`);
+	const fixOf = (p) => S.fixFor(m, p.message, p.name, {
+		self: p.kind === 'compartment' && p.field === 'dydt',
+		locals: p.kind === 'function' ? ['rate'] : null,
+	});
+	const own = water.find((p) => !p.index);
+	const fix = fixOf(own);
+	assert(fix && fix.written === 'Leach_rat' && !fix.call && fix.to[0] === 'Leach_rate', JSON.stringify(fix));
+	const called = fixOf(byName('Flow')[0]);
+	assert(called && called.call && called.to[0] === 'Q_gw', JSON.stringify(called));
+	assert(fixOf(byName('twice')[0])?.to[0] === 'rate', 'no fix in a function body');
+	assert(S.fixFor(m, 'Unexpected end of input (at character 4)', 'Sum') === null, 'a fault that is not a name');
+
+	// Put in: every place that one equation writes the name, as a token -- not
+	// inside a longer name, not where it is called -- and in no other field or entry.
+	assert(S.replaceName('-Leach_rat*W + Leach_rat2 + Leach_rat(1)', 'Leach_rat', 'Leach_rate')
+		=== '-Leach_rate*W + Leach_rat2 + Leach_rat(1)', 'a token, and only where it is read');
+	assert(S.applyNameFix(m, 'NF.Water', 'dydt', null, fix, fix.to[0]), 'nothing changed');
+	const w = m.compartments.find((c) => c.name === 'Water');
+	assert(w.dydt === '-Leach_rate*Water + 0*Leach_rate', w.dydt);
+	assert(w.entries[0].dydt === '-Leach_rat2*Water', 'the entry was changed with the block');
+	// The entry, by its index, and a called name where it is called.
+	const entryFix = fixOf(ed.allEquationProblems(m).find((p) => p.name === 'NF.Water'));
+	assert(entryFix?.to[0] === 'Leach_rate', JSON.stringify(entryFix));
+	assert(S.applyNameFix(m, 'NF.Water', 'dydt', { Radionuclides: 'I-129' }, entryFix, entryFix.to[0]));
+	assert(w.entries[0].dydt === '-Leach_rate*Water', w.entries[0].dydt);
+	assert(S.applyNameFix(m, 'Flow', 'equation', null, called, 'Q_gw'));
+	assert(m.expressions[0].equation === 'Q_gw(time) * 2', m.expressions[0].equation);
+	// What was fixed is no longer a problem, and a fix that finds nothing to change says so.
+	assert(!ed.allEquationProblems(m).some((p) => p.name === 'NF.Water' || p.name === 'Flow'),
+		JSON.stringify(ed.allEquationProblems(m)));
+	assert(!S.applyNameFix(m, 'NF.Water', 'dydt', null, fix, 'Leach_rate'), 'a second fix changed something');
+
+	// The strip offers them for the rows it shows and puts one in as an edit
+	// like any other -- recorded for undo, the model scanned again; the
+	// settings window offers them under the box, as typing would.
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	assert(/const fix = p\.kind === 'equation' \? problemFix\(p\) : null;/.test(app), 'the strip offers no fix');
+	assert(/function fixMistypedName\(p, fix, to\) \{\n\tif \(!applyNameFix\(state\.raw, p\.where, p\.field, p\.index, fix, to\)\)[\s\S]*?modelChanged\(\{ label:/.test(app),
+		'the strip’s fix is not an edit');
+	const inspector = readFileSync(new URL('../src/ui/inspector.js', import.meta.url), 'utf8');
+	assert(/const fix = error \? fixFor\(project, error, qname, \{ self, locals \}\) : null;/.test(inspector), 'the settings window offers no fix');
+	assert(/const next = replaceName\(get\(\), fix\.written, to, \{ call: fix\.call \}\);\n\t\t\t\tinput\.value = next;\n\t\t\t\tset\(next\);\n\t\t\t\thooks\.onChange/.test(inspector),
+		'the settings window’s fix is not an edit');
+});
+
 test('a transfer to a missing compartment is rejected', () => {
 	expectError(
 		() => new Project({

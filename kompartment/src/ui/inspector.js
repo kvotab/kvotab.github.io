@@ -131,6 +131,7 @@ function railSection(id, title, badge = '', badgeTitle = '', fallbackOpen = null
 // nine of the twelve block kinds -- threw `validateEquation is not defined`
 // halfway through being built and never opened.
 import { validateEquation } from '../domain/edit.js';
+import { fixFor, replaceName } from '../domain/suggest.js';
 import { hasDydt } from '../domain/project.js';
 import { startValueLine, markStartValue, refreshStartValue } from './startvalue.js';
 import { el } from './parts.js';
@@ -569,10 +570,14 @@ export function renderInspector(host, project, selection, hooks = {}, opts = {})
 	 */
 	const equationField = (label, get, set, {
 		hint, field = null, title, self = false, check = null, complete = null,
-		colour = null, uncertain = false, placeholder = '',
+		colour = null, uncertain = false, placeholder = '', locals = null,
 	} = {}) => {
 		const read = check ?? ((text) => validateEquation(project, text, qname, { self }));
 		const error = quiet ? null : read(get());
+		// A name the check found nobody's, and the names it was probably meant
+		// to be: each a button under the box that writes it in, as typing it
+		// would -- an edit like any other, which one undo takes back.
+		const fix = error ? fixFor(project, error, qname, { self, locals }) : null;
 		// One line at rest and the whole equation while it is typed in: see
 		// ./equationbox.js.
 		const { box, field: input } = equationBox({
@@ -609,8 +614,22 @@ export function renderInspector(host, project, selection, hooks = {}, opts = {})
 		// Directly under the box rather than after the hint: it is about what
 		// is in the box, and the hint is about what may go in it.
 		const spreadHint = uncertain && field ? spreadNote(field) : null;
+		const fixes = fix ? fix.to.map((to, i) => {
+			const b = el('button', {
+				type: 'button',
+				className: 'insp-fix-btn',
+				title: `Write ${to} in place of ${fix.written}`,
+			}, i === 0 ? `Change to ${to}` : to);
+			b.addEventListener('click', () => {
+				const next = replaceName(get(), fix.written, to, { call: fix.call });
+				input.value = next;
+				set(next);
+				hooks.onChange?.({ soft: !!(quiet ? null : read(next)) });
+			});
+			return b;
+		}) : [];
 		return withStartLine(row(label, control, {
-			error,
+			error: fixes.length ? [error, ' ', ...fixes] : error,
 			warning: clash ? `Units: ${clash.detail}.` : null,
 			hint: spreadHint ? [spreadHint, hint ? ' ' : null, hint] : hint,
 		}), field ?? undefined);
@@ -1694,6 +1713,7 @@ export function renderInspector(host, project, selection, hooks = {}, opts = {})
 			check: (text) => ed.validateEquation(project, text, qname, {
 				locals: new Set(params()),
 			}),
+			locals: params(),
 			complete: equationLook(project, qname, '', { locals: new Set(params()) }),
 			colour: (text) => colourer(text, qname, { locals: new Set(params()), quiet }),
 			hint: `What ${called} works out to. It may use `

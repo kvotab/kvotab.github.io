@@ -75,6 +75,7 @@ exercise `domain/` and `sim/` directly, which is why they can be plain Node.
 | `src/domain/fit.js` | The parameter shapes fitted to a sample, by likelihood and by moments, and ranked |
 | `src/domain/massbalance.js` | The mass-balance audit, done with budget states the solver integrates |
 | `src/domain/versions.js` | Two models in, the differences out |
+| `src/domain/suggest.js` | The names a mistyped one was probably meant to be, and the fix put into the one equation |
 | `src/domain/runlog.js` | What a run was, written into its results archive |
 | `src/domain/pdf.js`, `src/domain/sample.js` | The distributions and the sampler |
 | `src/domain/unitcheck.js` | The unit algebra, the literal conversion and the clash messages |
