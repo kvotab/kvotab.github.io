@@ -371,6 +371,59 @@ int main() {
         CHECK_MSG(json_text(report, 0) == json_text(mine, 0), "the check's report is check_run's\n   service: " + json_text(report, 0) +
                                                                   "\n   here:    " + json_text(mine, 0));
 
+        // An edit that moves no state -- an expression's equation changed -- worked out here over
+        // the states of a kept run: the run held again under the new job, its series the edit's
+        // over the run's own states, to the bit. One that moves the states, and one that adds an
+        // expression (the layout counts the slots), refused as the page's own re-evaluation
+        // refuses them.
+        {
+            const std::string four_text = check::read_file(examples + "four-compartment.json");
+            const std::string four_zip = (scratch / "four.zip").string();
+            in_buffer.put(json_text(Json::object({{"op", Json("job")}, {"id", Json("reevalrun")}, {"kind", Json("run")}, {"model", parse_json(four_text)},
+                                                  {"options", Json::object({{"keep", Json(true)}})}, {"out", Json(four_zip)}}), 0));
+            CHECK(name_of(out_buffer.until_ended("reevalrun")) == "done");
+            Results four = run_project(std::make_shared<const Project>(parse_json(four_text)), nullptr, RunOptions{});
+            const std::vector<double> outflow = four.series(std::string("Outflow [Fo-42]"));
+            Json edited = parse_json(four_text);
+            Json& exprs = edited["expressions"];
+            for (std::size_t i = 0; i < exprs.size(); i++) {
+                if (exprs[i].get("name") != Json("Outflow")) continue;
+                const char* key = exprs[i].has("equation") ? "equation" : "value";
+                exprs[i].set(key, Json("(" + exprs[i].get(key).as_string() + ")*2"));
+            }
+            const std::string reeval = (scratch / "reeval.zip").string();
+            auto reevaluate = [&](const std::string& id, const Json& m) {
+                in_buffer.put(json_text(Json::object({{"op", Json("job")}, {"id", Json(id)}, {"kind", Json("re-evaluate")}, {"model", m},
+                                                      {"options", Json::object({{"keep", Json(true)}, {"run", Json("reevalrun")}})},
+                                                      {"out", Json(reeval)}}), 0));
+                return out_buffer.until_ended(id);
+            };
+            const auto re_events = reevaluate("reeval1", edited);
+            CHECK_MSG(name_of(re_events) == "done", "an edit worked out over kept states ends done: " + name_of(re_events) + " " + message_of(re_events));
+            CHECK(fs::exists(reeval) && zip_entry(check::read_file(reeval), "results/y.f64").empty());
+            in_buffer.put(json_text(Json::object({{"op", Json("series")}, {"id", Json("qr1")}, {"run", Json("reeval1")},
+                                                  {"labels", Json::array({Json("Outflow [Fo-42]")})}, {"out", Json(series)}}), 0));
+            CHECK(name_of(out_buffer.until_ended("qr1")) == "done");
+            const std::string doubled = fs::exists(series) ? check::read_file(series) : "";
+            bool twice = doubled.size() == outflow.size() * 8;
+            for (std::size_t k = 0; twice && k < outflow.size(); k++) {
+                double v;
+                std::memcpy(&v, doubled.data() + 8 * k, 8);
+                twice = check::same_bits(v, 2 * outflow[k]);
+            }
+            CHECK_MSG(twice, "the edit's expression over the run's own states");
+            Json moved = edited.copy();
+            moved["compartments"].push(Json::object({{"name", Json("Extra")}, {"initial", Json("0")}, {"unit", Json("Bq")}, {"index_lists", Json::array()}}));
+            const auto re_moved = reevaluate("reeval2", moved);
+            CHECK_MSG(name_of(re_moved) == "NotReused" && message_of(re_moved) == "the states moved",
+                      "an edit that moves the states is refused: " + name_of(re_moved) + " " + message_of(re_moved));
+            Json added = edited.copy();
+            added["expressions"].push(Json::object({{"name", Json("Half")}, {"equation", Json("0.5")}, {"unit", Json("")}, {"index_lists", Json::array()}}));
+            const auto re_added = reevaluate("reeval3", added);
+            CHECK_MSG(name_of(re_added) == "NotReused" && message_of(re_added) == "the states moved",
+                      "an expression added is refused as the page refuses it: " + name_of(re_added) + " " + message_of(re_added));
+        }
+
         // Let go of, it is no longer there to ask -- nor to check.
         in_buffer.put(json_text(Json::object({{"op", Json("forget")}, {"id", Json("q5")}, {"run", Json("b")}}), 0));
         CHECK(name_of(out_buffer.until_ended("q5")) == "done");

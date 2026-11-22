@@ -23,9 +23,10 @@ machine only.
 The page solves its models in the browser. Served from here, it can also hand
 a run -- Run, a probabilistic run, and the analyses that solve the model: a
 tornado, a sensitivity design, a replayed realisation, a calibration, dy/dp,
-and Check the run of a run an engine holds, made where it is held (`check-run`,
-the run by its id: one no engine holds for the page any more is answered 410,
-and the page checks it itself) --
+Check the run of a run an engine holds, made where it is held (`check-run`, the
+run by its id), and an edit worked out over its states there (`re-evaluate`,
+held in its place) -- one no engine holds for the page any more is answered 410,
+and the page deals with it itself --
 to the Python engine (`python/kompartment`), the Julia one (`julia/`) or the
 C++ one (`cpp/`), chosen in the page beside Run; `--engine` says which the page
 starts on. What an engine does not do, it refuses at once, and the page does it
@@ -163,7 +164,7 @@ class Job:
         # A run whose engine holds it for its page, its archive without the states
         # -- or a sample, without its realisations (never a tornado's or a design's).
         asked = isinstance(options, dict) and options.get("keep") is True
-        self.keep = asked and (kind in ("run", "replay") or kind == "probabilistic"
+        self.keep = asked and (kind in ("run", "replay", "re-evaluate") or kind == "probabilistic"
                                and not options.get("tornado") and not options.get("gsa"))
         # Which of the two a page's held run is: its next of the same kind replaces it.
         self.slot = "sample" if kind == "probabilistic" else "run"
@@ -478,12 +479,13 @@ class Engines:
     def submit(self, kind, engine, client, model, options):
         if engine not in self.engines:
             raise ValueError(f"There is no engine called '{engine}' here.")
-        if kind not in ("run", "probabilistic", "replay", "calibrate", "local-sensitivity", "check-run"):
+        if kind not in ("run", "probabilistic", "replay", "calibrate", "local-sensitivity", "check-run", "re-evaluate"):
             raise ValueError(f"'{kind}' is not a kind of job the engines run.")
-        if kind == "check-run":
-            # A check of a run an engine holds for this page, made where it is held:
-            # one let go of, held for another page, by another engine or by an
-            # engine since restarted is the page's to check.
+        if kind in ("check-run", "re-evaluate"):
+            # A check of a run an engine holds for this page, or an edit worked out
+            # over its states, made where it is held: one let go of, held for
+            # another page, by another engine or by an engine since restarted is
+            # the page's to deal with.
             r = self.held(str(options.get("run") or "") if isinstance(options, dict) else "")
             if r is None or r["client"] != client or r["engine"] != engine \
                     or r["generation"] != self.engines[engine].generation:

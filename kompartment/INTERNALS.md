@@ -5656,8 +5656,9 @@ out there (Julia's renamed to the page's fields).
   here unawares). A refusal is posted as `columns-failed`: the page says it as
   the run's problem, keeps the run, unmarks the columns so the next drawing asks
   again, and rejects what was waiting on them (an export says *Not exported*).
-- *What needs every state* -- `dataset` (a save, Keep this run) and
-  `re-evaluate` -- calls `materialize`: the whole run fetched from
+- *What needs every state* -- `dataset` (a save, Keep this run), and
+  `re-evaluate` where the engine cannot work the edit out itself (see below) --
+  calls `materialize`: the whole run fetched from
   `/engine/runs/<id>/archive`, restored over the same build, and the engine
   told to let go of it; asked twice at once it is fetched once, and a series
   fetch caught by the engine letting go is answered here.
@@ -5763,7 +5764,19 @@ ends the process, and the next job starts it again.
 the states held rather than solving (`re-evaluate`). Not across a change of
 engine: the reuse test includes `results.engine`, so choosing Julia and pressing
 Run is Julia's solve. A re-evaluation over an engine's states keeps saying which
-engine solved them.
+engine solved them -- and over a run an engine holds it is worked out there, a
+`re-evaluate` job (`reevaluateOnEngine`): the job names the run and carries the
+edited model; the engine builds it, refuses as the worker does -- `NotReused`,
+*the model remembers* (a recorder, or a semi-analytical far-field path) or *the
+states moved* (`layout_signature`, the counts of slots included) -- and
+otherwise holds a run of the edited model over the same states, written as a
+kept run is and held in place of the old one (`Job.keep`, slot `run`). A refusal
+or a run no engine holds (410) is a `reused` that is not, and the page solves;
+a server or an engine that does not know the job, and the worker brings the
+states here and works the edit out itself. On the 55,728-state assessment held by
+the C++ engine, Run on the unchanged model took 10.8 s and 14.7 MB -- the
+stateless archive a run sends -- where bringing the run here took 20.9 s and
+137 MB.
 
 **Security.** The server listens on 127.0.0.1 only, and every request under
 `/engine/` must name it as it was started (`Host` -- a page elsewhere can point a

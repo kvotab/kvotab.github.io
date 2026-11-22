@@ -109,6 +109,26 @@ end
     @test [m["label"] for m in report["moved"]] == [m["label"] for m in mine["moved"]]
     @test report["worst"] == mine["worst"] && report["careful"]["steps"] == mine["careful"]["steps"]
     @test report["careful"]["rtol"] == 1e-8 && report["run"]["rtol"] == 1e-6
+    # An edit that moves no state, worked out here over the states held: the run held
+    # again under the new job, its series the edit's, the one it replaced kept until
+    # the server lets it go. One that moves the states, refused.
+    edited = K.parse_json(four)
+    out_expr = first(e for e in edited["expressions"] if e["name"] == "Outflow")
+    ekey = haskey(out_expr, "equation") ? "equation" : "value"
+    out_expr[ekey] = "(" * out_expr[ekey] * ")*2"
+    ask(Dict("op" => "job", "id" => "e1", "kind" => "re-evaluate", "model" => K.json_text(edited; indent=0),
+             "options" => Dict("keep" => true, "run" => "r1"), "out" => joinpath(dir, "e1.zip")))
+    @test ended("e1")["event"] == "done"
+    @test !haskey(K._ds_unzip(read(joinpath(dir, "e1.zip"))), "results/y.f64")
+    ask(Dict("op" => "series", "id" => "q7", "run" => "e1", "labels" => ["Outflow [Fo-42]"], "out" => joinpath(dir, "q7.f64")))
+    @test ended("q7")["event"] == "done"
+    @test reinterpret(Float64, read(joinpath(dir, "q7.f64"))) == 2 .* K.series_many(made, ["Outflow [Fo-42]"])[1]
+    moved = K.jcopy(edited)
+    push!(moved["compartments"], K.JDict("name" => "C5", "initial" => "0", "unit" => "Bq", "index_lists" => Any["Radionuclides"]))
+    ask(Dict("op" => "job", "id" => "e2", "kind" => "re-evaluate", "model" => K.json_text(moved; indent=0),
+             "options" => Dict("keep" => true, "run" => "r1"), "out" => joinpath(dir, "e2.zip")))
+    e2 = ended("e2")
+    @test (e2["event"], e2["name"], e2["message"]) == ("error", "NotReused", "the states moved")
     # Let go of, and then said to be gone -- to a check too.
     ask(Dict("op" => "forget", "id" => "q4", "run" => "r1"))
     @test ended("q4")["event"] == "done"

@@ -3130,6 +3130,10 @@ reading a parameter puts all three inside. The footer says which happened —
 **solve** carries a time when the model was solved, and reads *not repeated —
 the states were already right* when it was not.
 
+**On an engine on this machine** the states stay with the engine that holds the
+run, and the edit is worked out there, over them: nothing is fetched into the
+tab, and the run goes on being held where it was made.
+
 **Two things always solve again.** Anything reaching a compartment's initial
 value, a transfer or source rate, or a far-field pathway; and anything at all in a
 model with a **block that remembers**. A peak, a mean from a given year, a value

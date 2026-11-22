@@ -483,9 +483,11 @@ across them all (`column`) and one realisation (`realisation`). It runs the
 analyses the page hands it as well: a tornado or a sensitivity design (a
 `probabilistic` job with `tornado` or `gsa`), a replayed realisation (`replay`),
 a calibration (`calibrate`, its best so far said on the way), dy/dp
-(`local-sensitivity`), and Check the run of a run it holds (`check-run`: the
+(`local-sensitivity`), Check the run of a run it holds (`check-run`: the
 careful run solved beside it and set against it here, only the report sent back;
-`kompartment.engine.checkrun`). See the module's notes for the protocol.
+`kompartment.engine.checkrun`), and an edit worked out over the states of a run
+it holds (`re-evaluate`, held in its place). See the module's notes for the
+protocol.
 
 ### Importing
 

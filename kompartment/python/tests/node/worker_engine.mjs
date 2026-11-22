@@ -125,6 +125,36 @@ out.replay = {
 	worst: rColsThere.length ? worstOf(rColsThere, got.find((m) => m.type === 'columns').columns) : null,
 };
 
+// An edit that moves no state, worked out over the states the engine holds, there:
+// the run held again in place of the old one, nothing brought here, its series the
+// edit's; an edit that moves the states refused, for the page to solve the model.
+const four = model('four-compartment');
+got = await send({ type: 'run', id: 20, project: four, engine });
+const fourDone = got.find((m) => m.type === 'done');
+const outflow = fourDone.payload.outputs.findIndex((o) => o.label === 'Outflow [Fo-42]');
+got = await send({ type: 'columns', id: 20, indices: [outflow] });
+const before = got.find((m) => m.type === 'columns').columns[0];
+const edited = structuredClone(four);
+const edOut = edited.expressions.find((e) => e.name === 'Outflow');
+const edKey = 'equation' in edOut ? 'equation' : 'value';
+edOut[edKey] = `(${edOut[edKey]})*2`;
+got = await send({ type: 're-evaluate', id: 21, project: edited, rev: 2 });
+const reDone = got.find((m) => m.type === 'done');
+const reStages = got.filter((m) => m.type === 'loading').map((m) => m.stage);
+const broughtHere = got.some((m) => m.type === 'materialized');
+got = await send({ type: 'columns', id: 21, indices: [outflow] });
+const after = got.find((m) => m.type === 'columns')?.columns?.[0] ?? [];
+const moved = structuredClone(edited);
+moved.compartments.push({ name: 'C5', initial: '0', unit: 'Bq', index_lists: ['Radionuclides'] });
+got = await send({ type: 're-evaluate', id: 22, project: moved, rev: 3 });
+const refusedReuse = got.find((m) => m.type === 'reused');
+out.reevaluate = {
+	onEngine: reStages.includes('engine-sending') && !broughtHere && !!reDone?.reused
+		&& !!reDone.payload.engineRun && reDone.payload.engineRun !== fourDone.payload.engineRun,
+	doubled: after.length === before.length && Array.from(after).every((v, i) => v === 2 * before[i]),
+	refused: refusedReuse ? [refusedReuse.ok, refusedReuse.why] : null,
+};
+
 // A calibration with a known answer.
 const cal = {
 	name: 'cal',

@@ -28,6 +28,11 @@
 # checks a run held here (`run`, its id; the job's model is not read): the run
 # solved again a hundred times more carefully and set against itself
 # (`check_run`), the report written as JSON -- so the page need not fetch it.
+# A `re-evaluate` job works an edit out over the states of a run held here
+# (`run`, its id; the job's model the edited one): built, its states checked to be
+# laid out as the run's with nothing that remembers in either (`NotReused`
+# otherwise, and the page solves the model), and held again with the edit's
+# algebra over the same states, as a kept run is, in place of the one it replaces.
 
 const _SERVICE_PROGRESS_EVERY = 0.1
 
@@ -42,6 +47,22 @@ struct NotOnThisEngine <: Exception
     message::String
 end
 Base.showerror(io::IO, e::NotOnThisEngine) = print(io, e.message)
+
+"""
+An edit that cannot be worked out over a held run's states -- they moved, or the
+model remembers the path of the run -- so the page solves the model.
+"""
+struct NotReused <: Exception
+    message::String
+end
+Base.showerror(io::IO, e::NotReused) = print(io, e.message)
+
+"""
+Whether a system remembers the path of its run (`system.memory` in the
+application): a recorder, or a semi-analytical far-field path, which keeps what
+it took in -- neither of which a system built afresh over kept states has.
+"""
+_service_remembers(sys::System) = !isempty(sys.builder.MEM) || any(e -> e[:farf].laplace, sys.builder.farf_layout)
 
 function _service_ready()
     OrderedDict{String,Any}("event" => "ready", "engine" => "julia", "version" => string(pkgversion(@__MODULE__)),
@@ -189,6 +210,27 @@ function _service_job(job::AbstractDict, say, stopped, kept=nothing, kept_lock=R
             # A sample the page asked the engine to keep goes without its series.
             write(string(job["out"]), sample_archive(prob; series=!keeping))
             keeping && lock(() -> (kept[id] = Dict{String,Any}("sample" => prob)), kept_lock)
+        elseif kind == "re-evaluate"
+            # An edit worked out over the states of a run held here, held in its place:
+            # only the algebra over them changes, which is a build without a single
+            # step -- as the page re-evaluates a run it holds itself.
+            run_id = string(_service_option(options, "run", ""))
+            held = kept === nothing ? nothing : lock(() -> get(kept, run_id, nothing), kept_lock)
+            (held === nothing || !haskey(held, "results")) &&
+                throw(ArgumentError("This engine no longer holds that run: it may have been restarted since, or the " *
+                                    "run let go of. Run it again."))
+            was = held["results"]
+            say(OrderedDict{String,Any}("id" => id, "event" => "stage", "stage" => "building"))
+            proj = project(m)
+            built = time()
+            sys = build_system(proj)
+            (_service_remembers(sys) || _service_remembers(was.system)) && throw(NotReused("the model remembers"))
+            layout_signature(sys) == layout_signature(was.system) || throw(NotReused("the states moved"))
+            timing = Dict{String,Float64}(was.timing)
+            timing["build_ms"] = 1000 * (time() - built)
+            res = Results(proj, sys, was.t, was.y, was.stats, timing)
+            say(OrderedDict{String,Any}("id" => id, "event" => "stage", "stage" => "writing"))
+            _service_write_run(res, job, options, kept, kept_lock)
         elseif kind == "check-run"
             # The run held here for the page, solved again more carefully here and
             # set against itself: the page need not fetch it to check it.

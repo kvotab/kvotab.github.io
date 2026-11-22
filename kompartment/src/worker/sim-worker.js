@@ -972,7 +972,11 @@ async function engineArchive(msg, kind, options, { raw = false, onDetail = null 
 		throw engineFault(engine, `could not be reached (${e.message ?? e})`);
 	}
 	const asked = await res.json().catch(() => ({}));
-	if (!res.ok) throw engineFault(engine, `refused the run: ${asked.error ?? `the server answered ${res.status}`}`);
+	if (!res.ok) {
+		// With what the server answered: 410 is a run no engine holds for the page any more.
+		throw Object.assign(engineFault(engine, `refused the run: ${asked.error ?? `the server answered ${res.status}`}`),
+			{ status: res.status });
+	}
 	remote = { job: asked.id, token: engine.token };
 	let stage = null;
 	try {
@@ -1055,6 +1059,49 @@ async function runOnEngine(msg) {
 		payload: { ...donePayload(results, outputs), engine: engine.name, ...(results.onEngine ? { engineRun: job } : {}) },
 		log: Array.isArray(data.meta.log) ? data.meta.log : null,
 	});
+}
+
+/**
+ * An edit worked out over the states an engine holds, on that engine: it
+ * builds the edited model, checks that its states are laid out as the run's
+ * and that nothing in it remembers the path of the run, and holds the run
+ * again with the edit's algebra over the same states -- sent back as a kept
+ * run is, without them, and held in place of the one it replaces. Worked out
+ * here, every state came over first, 137 MB on a 55,728-state assessment, for
+ * an edit that moves none of them.
+ *
+ * The engine's refusal -- the states moved, or the model remembers -- and a
+ * run it no longer holds are a `reused` that is not, and the page solves the
+ * model; false where the engine or the server does not know the job, and the
+ * edit is worked out here.
+ */
+async function reevaluateOnEngine(msg, held) {
+	const { id, project } = msg;
+	const { engine, job: run } = held.results.handle;
+	let got;
+	try {
+		got = await engineArchive({ ...msg, engine }, 're-evaluate', { keep: true, run });
+	} catch (e) {
+		if (cancelled) throw e;
+		if (e.name === 'NotReused' || e.status === 410) {
+			self.postMessage({ type: 'reused', id, ok: false, why: e.status === 410 ? 'nothing kept' : e.message });
+			return true;
+		}
+		if (e.status === 400 || /is not a kind of job/.test(e.message ?? '')) return false;
+		throw e;
+	}
+	const data = readDataset(got.entries);
+	if (!data) throw engineFault(engine, 'sent back no run');
+	self.postMessage({ type: 'loading', id, stage: 'engine-reading', detail: engine.name });
+	const results = data.meta.onEngine ? restoreOnEngine(project, data, { engine, job: got.job }) : restoreRun(project, data);
+	results.timing = { ...(data.meta.timing ?? {}), reused: true, engine: engine.name };
+	const outputs = results.outputs();
+	last = { id, results, outputs, rev: msg.rev ?? null, engine: engine.name };
+	self.postMessage({
+		type: 'done', id, reused: true,
+		payload: { ...donePayload(results, outputs), engine: engine.name, ...(results.onEngine ? { engineRun: got.job } : {}) },
+	});
+	return true;
 }
 
 /**
@@ -2744,10 +2791,13 @@ self.onmessage = async (ev) => {
 		const { id, project } = msg;
 		try {
 			if (!last) { self.postMessage({ type: 'reused', id, ok: false, why: 'nothing kept' }); return; }
-			// An edit is worked out over the states, which an engine holding
-			// the run sends now.
+			// An edit is worked out over the states where they are: an engine
+			// holding the run works it out there. One that cannot sends the
+			// states, and it is worked out here.
 			if (last.results.onEngine) {
 				const held = last;
+				if (await reevaluateOnEngine(msg, held)) return;
+				if (last !== held) { self.postMessage({ type: 'reused', id, ok: false, why: 'nothing kept' }); return; }
 				self.postMessage({ type: 'loading', id, stage: 'engine-receiving', detail: held.engine });
 				await materialize(held);
 				if (last !== held) { self.postMessage({ type: 'reused', id, ok: false, why: 'nothing kept' }); return; }

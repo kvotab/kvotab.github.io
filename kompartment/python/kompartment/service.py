@@ -55,6 +55,14 @@ state (:func:`kompartment.engine.checkrun.check_run`), its answer written as
 JSON -- whether the run holds, and the states that moved most -- so that the
 page need not fetch a run to check it.
 
+A ``re-evaluate`` job works an edit out over the states of a run held here
+(``run``, its id; the job's model is the edited one): the model built and its
+states checked to be laid out as the run's, with nothing that remembers the
+path of the run in either (``NotReused`` otherwise, and the page solves the
+model), and the run held again with the edit's algebra over the same states --
+written and kept as a ``run`` job with ``keep`` is, in place of the one it
+replaces, so that the page need not fetch the states to work an edit out.
+
 A ``probabilistic`` job with ``tornado`` or ``gsa`` among its options runs that
 design in place of a sample: every input swung alone, or a sensitivity
 design's points (:func:`kompartment.engine.probabilistic.run_probabilistic`).
@@ -112,6 +120,18 @@ PROGRESS_EVERY = 0.1
 
 class _Stopped(Exception):
     """A run the page has stopped -- raised out of a progress report."""
+
+
+class NotReused(Exception):
+    """An edit that cannot be worked out over a held run's states -- they moved,
+    or the model remembers the path of the run -- so the page solves it."""
+
+
+def _remembers(system: Any) -> bool:
+    """Whether a system remembers the path of its run (``system.memory`` in the
+    application): a recorder, or a semi-analytical far-field path, which keeps
+    what it took in -- neither of which a system built afresh over kept states has."""
+    return bool(system.MEM) or any(p.farf.laplace for p in system.builder.farf_layout)
 
 
 def _protocol_stream() -> TextIO:
@@ -256,6 +276,31 @@ def run_job(job: Dict[str, Any], say: Callable[..., None], stopped: Callable[[],
             report = check_run(held['results'], careful, model=held['model'])
             say(id=job_id, event='stage', stage='writing')
             _write_json(job['out'], report)
+        elif kind == 're-evaluate':
+            from .engine.builder import build_system
+            from .engine.project import Project
+            from .engine.runner import Results
+            from .io.dataset import layout_signature
+            # An edit worked out over the states of a run held here, held in its
+            # place: only the algebra over them changes, which is a build without a
+            # single step -- as the page re-evaluates a run it holds itself.
+            held = (kept or {}).get(str(options.get('run')))
+            if held is None or 'results' not in held:
+                raise LookupError('This engine no longer holds that run: it may have been restarted since, '
+                                  'or the run let go of. Run it again.')
+            was = held['results']
+            say(id=job_id, event='stage', stage='building')
+            project = Project(raw)
+            built = time.perf_counter()
+            system = build_system(project)
+            if _remembers(system) or _remembers(was.system):
+                raise NotReused('the model remembers')
+            if layout_signature(system) != layout_signature(was.system):
+                raise NotReused('the states moved')
+            res = Results(project, system, {'t': was.t, 'y': was.y, 'stats': was.stats},
+                          {**(was.timing or {}), 'build_ms': (time.perf_counter() - built) * 1000, 'reused': True})
+            say(id=job_id, event='stage', stage='writing')
+            _write_run(res, raw, job, options, kept)
         elif kind == 'probabilistic':
             from .engine.probabilistic import run_probabilistic
             from .engine.project import js_truthy

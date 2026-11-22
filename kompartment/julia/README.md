@@ -236,8 +236,9 @@ a run or a probabilistic run kept for the page and asked about included, and the
 interactive thread is where a cancel is heard while every other thread solves.
 It runs everything the page hands an engine: a run, a probabilistic run, a
 tornado, a sensitivity design's runs, a replayed realisation, a calibration,
-dy/dp, and Check the run of a run it holds (`check_run`: the careful run solved
-beside it and set against it here, only the report sent back).
+dy/dp, Check the run of a run it holds (`check_run`: the careful run solved
+beside it and set against it here, only the report sent back), and an edit worked
+out over the states of a run it holds, held in its place.
 
 ## The built model
 

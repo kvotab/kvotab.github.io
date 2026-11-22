@@ -175,6 +175,22 @@ struct Kept {
     bool listed = false;
 };
 
+/// An edit that cannot be worked out over a held run's states -- they moved, or the model
+/// remembers the path of the run -- so the page solves the model (`NotReused`).
+struct NotReused : std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
+
+/// Whether a system remembers the path of its run (`system.memory` in the application): a
+/// recorder, or a semi-analytical far-field path, which keeps what it took in -- neither of
+/// which a system built afresh over kept states has.
+bool remembers(const System& sys) {
+    if (!sys.builder->MEM.empty()) return true;
+    for (const EntryPtr& e : sys.builder->farf_layout)
+        if (e->farf && e->farf->laplace) return true;
+    return false;
+}
+
 /// What a kept sample is asked, besides `archive` and `forget`.
 bool sample_query(const Json& op) { return op == "bands" || op == "realisations" || op == "column" || op == "realisation"; }
 
@@ -207,6 +223,8 @@ struct Service {
             std::rethrow_exception(e);
         } catch (const NotOnThisEngine& x) {
             info = {"NotOnThisEngine", x.what(), x.what(), std::nullopt, std::nullopt};
+        } catch (const NotReused& x) {
+            info = {"NotReused", x.what(), x.what(), std::nullopt, std::nullopt};
         } catch (...) {
             info = error_info(e);
             if (info.name == "NotSupported") info.name = "NotOnThisEngine";
@@ -311,7 +329,7 @@ struct Service {
             // (`from_json`, before anything else is said.)
             if (!raw.is_object()) throw ArgumentError("A model is one JSON object");
             if (!(kind == "run" || kind == "probabilistic" || kind == "replay" || kind == "local-sensitivity" || kind == "calibrate" ||
-                  kind == "check-run"))
+                  kind == "check-run" || kind == "re-evaluate"))
                 throw ArgumentError("'" + julia_string(kind) + "' is not a kind of job this engine runs");
             // The model is read as a project where the Julia engine's job reads it -- after its
             // stage is said and its options are taken -- so that a model it refuses is refused at
@@ -327,6 +345,38 @@ struct Service {
                 };
                 Results res = run_project(project_of(), nullptr, run_options);
                 if (stopped(id)) throw ServiceStopped();
+                stage("writing");
+                write_run(std::move(res), id, options, out_path);
+            } else if (kind == "re-evaluate") {
+                // An edit worked out over the states of a run held here, held in its place: only
+                // the algebra over them changes, which is a build without a single step -- as the
+                // page re-evaluates a run it holds itself.
+                const std::string run_id = js_str(option(options, "run", Json("")));
+                std::shared_ptr<Kept> held;
+                {
+                    std::lock_guard<std::mutex> hold(kept_mutex);
+                    auto it = kept.find(run_id);
+                    if (it != kept.end()) held = it->second;
+                }
+                if (!held || !held->results)
+                    throw ArgumentError("This engine no longer holds that run: it may have been restarted since, or the run let go of. "
+                                        "Run it again.");
+                stage("building");
+                const Results& was = *held->results;
+                auto project = project_of();
+                const double built = now_s();
+                auto system = std::make_shared<System>(project);
+                if (remembers(*system) || remembers(*was.system)) throw NotReused("the model remembers");
+                if (layout_signature(*system) != layout_signature(*was.system)) throw NotReused("the states moved");
+                Results res;
+                res.project = project;
+                res.system = system;
+                res.t = was.t;
+                res.y = was.y;
+                res.stats = was.stats.copy();
+                res.timing = was.timing.is_object() ? was.timing.copy() : Json::object();
+                res.timing.set("build_ms", Json((now_s() - built) * 1000));
+                res.kept = run_state(*system);
                 stage("writing");
                 write_run(std::move(res), id, options, out_path);
             } else if (kind == "check-run") {

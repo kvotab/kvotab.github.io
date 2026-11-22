@@ -545,6 +545,8 @@ class Server(unittest.TestCase):
         self.assertTrue(got['calibrate']['onEngine'] and got['calibrate']['matched'] and got['calibrate']['same']
                         and got['calibrate']['precise'], got['calibrate'])
         self.assertTrue(got['sensitivity']['onEngine'] and got['sensitivity']['same'], got['sensitivity'])
+        # An edit that moves no state, worked out on the engine over the states it holds.
+        self.assertEqual(got['reevaluate'], {'onEngine': True, 'doubled': True, 'refused': [False, 'the states moved']})
         self.assertLessEqual(got['sensitivity']['worst'], 1e-9)
         # A sample the engine holds: its bands the page's own formulas over its
         # realisations, to the last bit, screened or not; and every question asked
@@ -595,6 +597,71 @@ class Server(unittest.TestCase):
         code, body = check('k', run_job)
         self.assertEqual((code, json.loads(body).get('gone')), (410, True), body)
         self.assertEqual(check('k', 'f00d')[0], 410)
+
+    def test_an_edit_is_worked_out_over_the_states_its_engine_holds(self):
+        """Run again after an edit that moves no state: the engine holding the run
+        works the edit's algebra out over the same states and holds the run again,
+        in place of the one it replaces -- the page fetches nothing. An edit that
+        moves the states, or a model that remembers the path of its run, is
+        refused as NotReused, and the page solves the model; a run no engine
+        holds for the page is answered 410."""
+        ok = {'X-Kompartment-Token': self.token}
+        model = json.loads((EXAMPLES / 'four-compartment.json').read_text())
+        run_job, _ = self.finished(model, 'v')
+
+        def edit(m, run, client='v'):
+            return self.call('/engine/jobs', {'kind': 're-evaluate', 'engine': 'python', 'client': client, 'model': m,
+                                              'options': {'keep': True, 'run': run}}, **ok)
+
+        def ended(job):
+            for _ in range(600):
+                state = json.loads(self.call(f'/engine/jobs/{job}', **ok)[1])
+                if state['state'] not in ('queued', 'running'):
+                    return state
+                time.sleep(0.1)
+            return state
+
+        def series(run, label):
+            code, data = self.call(f'/engine/runs/{run}/series', {'labels': [label]}, **ok)
+            return code, (np.frombuffer(data, '<f8') if code == 200 else None)
+
+        _, before = series(run_job, 'Outflow [Fo-42]')
+        edited = json.loads(json.dumps(model))
+        out = next(e for e in edited['expressions'] if e['name'] == 'Outflow')
+        key = 'equation' if 'equation' in out else 'value'
+        out[key] = f'({out[key]})*2'
+        code, body = edit(edited, run_job)
+        self.assertEqual(code, 202, body)
+        job = json.loads(body)['id']
+        self.assertEqual(ended(job)['state'], 'done')
+        code, data = self.call(f'/engine/jobs/{job}/archive', **ok)
+        self.assertEqual(code, 200)
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            meta = json.loads(z.read('results/meta.json'))
+            self.assertNotIn('results/y.f64', z.namelist())
+        self.assertTrue(meta['onEngine'] and meta['timing']['reused'], meta.get('timing'))
+        # The edit's values over the same states, held under the new job; the run
+        # it replaced let go of.
+        code, after = series(job, 'Outflow [Fo-42]')
+        self.assertEqual(code, 200)
+        self.assertTrue(np.array_equal(after, 2 * before))
+        self.assertEqual(series(run_job, 'Outflow [Fo-42]')[0], 404)
+        # Refused: an edit that moves the states, and a model that remembers.
+        moved = json.loads(json.dumps(edited))
+        moved['compartments'].append({'name': 'C5', 'initial': '0', 'unit': 'Bq', 'index_lists': ['Radionuclides']})
+        code, body = edit(moved, job)
+        self.assertEqual(code, 202, body)
+        state = ended(json.loads(body)['id'])
+        self.assertEqual((state['state'], state['error']['name'], state['error']['message']),
+                         ('error', 'NotReused', 'the states moved'), state)
+        recorders = json.loads((EXAMPLES / 'recorders.json').read_text())
+        kept_recorders, _ = self.finished(recorders, 'w')
+        code, body = edit(recorders, kept_recorders, client='w')
+        state = ended(json.loads(body)['id'])
+        self.assertEqual((state['error']['name'], state['error']['message']), ('NotReused', 'the model remembers'), state)
+        # Not held for this page: 410, and the page solves the model.
+        code, body = edit(edited, job, client='someone else')
+        self.assertEqual((code, json.loads(body).get('gone')), (410, True), body)
 
     def test_a_sample_its_engine_holds_is_asked_about_beside_the_run_and_let_go_of(self):
         ok = {'X-Kompartment-Token': self.token}

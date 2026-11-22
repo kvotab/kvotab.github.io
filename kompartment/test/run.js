@@ -29425,6 +29425,17 @@ test('a run an engine holds answers for its series as they are asked for', async
 	const reuse = worker.slice(worker.indexOf("if (msg.type === 're-evaluate') {"));
 	assert(/await materialize\(held\);/.test(reuse.slice(0, reuse.indexOf('const kept = last.results;'))),
 		'an edit is worked out over states that are not here');
+	// An edit over a run an engine holds is worked out there first: the states are
+	// brought here only where the engine or the server does not know the job.
+	const before = reuse.slice(0, reuse.indexOf('await materialize(held);'));
+	assert(/if \(await reevaluateOnEngine\(msg, held\)\) return;/.test(before), 'an edit over an engine’s run is not worked out there');
+	const onEngine = worker.slice(worker.indexOf('async function reevaluateOnEngine('), worker.indexOf('async function replayOnEngine('));
+	assert(/engineArchive\(\{ \.\.\.msg, engine \}, 're-evaluate', \{ keep: true, run \}\)/.test(onEngine)
+		&& /if \(e\.name === 'NotReused' \|\| e\.status === 410\)/.test(onEngine)
+		&& /type: 'reused', id, ok: false, why: e\.status === 410 \? 'nothing kept' : e\.message/.test(onEngine)
+		&& /if \(e\.status === 400 \|\| \/is not a kind of job\/\.test/.test(onEngine)
+		&& /engineRun: got\.job/.test(onEngine), 'the engine’s answer to an edit is not read as the page’s');
+	assert(/self\.keep = asked and \(kind in \("run", "replay", "re-evaluate"\)/.test(serve), 'the server does not hold an edited run in place of the old one');
 	// The page: a series the engine could not send leaves the run as it was.
 	assert(/if \(m\.type === 'columns-failed'\) \{ acceptColumnsFailed\(m\); return; \}/.test(app)
 		&& /m\.type === 'columns' \|\| m\.type === 'columns-failed'/.test(app), 'a refused series is not heard');
@@ -29704,7 +29715,7 @@ test('the analyses go to the engine that has them, and come back as the page’s
 	}
 	assert(/'engine-elsewhere': '\{engine\} does not do this: doing it in the browser…',/.test(app), 'the bar does not say where it went');
 	// The server takes each kind, and passes a job's own account of its progress on.
-	assert(/if kind not in \("run", "probabilistic", "replay", "calibrate", "local-sensitivity", "check-run"\):/.test(serve)
+	assert(/if kind not in \("run", "probabilistic", "replay", "calibrate", "local-sensitivity", "check-run", "re-evaluate"\):/.test(serve)
 		&& /\("fraction", "at", "done", "total", "detail"\)/.test(serve), 'the server refuses the analyses');
 });
 
