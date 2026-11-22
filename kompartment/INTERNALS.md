@@ -78,6 +78,7 @@ exercise `domain/` and `sim/` directly, which is why they can be plain Node.
 | `src/domain/suggest.js` | The names a mistyped one was probably meant to be, and the fix put into the one equation |
 | `src/domain/precision.js` | How well a calibration's values are known: standard errors, ranges and correlations from the residuals' derivatives; Student's t |
 | `src/sim/checkrun.js`, `src/ui/checkdialog.js` | Check the run: the run on show solved again with its tolerances a hundred times tighter, in a worker of its own, and set against itself |
+| `src/sim/enginecheck.js` | Check the run of a run an engine holds, made there: the `check-run` job sent, followed and fetched |
 | `src/sim/flows.js`, `src/ui/flowsdialog.js` | Where it goes: one nuclide's account over a run -- each route's rate by the derivative's own arithmetic, added up by the trapezium rule, and read a level up by sub-system (`groupAccount`) -- and its flow diagram, stacked chart and table |
 | `src/domain/runlog.js` | What a run was, written into its results archive |
 | `src/domain/pdf.js`, `src/domain/sample.js` | The distributions and the sampler |
@@ -5803,6 +5804,24 @@ the engine as a job of its own kind:
   out -- gets the dialog's *How well are they known?*, which sends
   `calibration-precision`, answered here by `calibrationPrecision` at the values
   the engine found.
+- *Check the run* of a run an engine holds is a `check-run` job
+  (`src/sim/enginecheck.js`, sent by the page itself, not the worker): the job
+  names the run (`run`, the id the engine holds it under) and carries no model;
+  the engine solves the careful run beside it and sets the two against each
+  other there -- the Python package's `kompartment/engine/checkrun.py`, which
+  gives `compareRuns`'s report to the bit on the same two runs, and Julia's
+  `engine/checkrun.jl` and the C++ engine's `engine/checkrun.cpp`, each the
+  last one's to the bit, the states named as `stateLabels` names them -- and
+  writes the report as JSON (a share that is not finite as null, read back as
+  Infinity). Nothing of the run crosses: on a 55,728-state assessment held by
+  the C++ engine the check took 7 s and 0.3 MB, where fetching the run into the
+  tab and solving it there took 63 s and 140 MB. serve.py takes the job only for
+  a run that engine holds for that page in the process it holds it in, and
+  answers 410 otherwise; the page then checks the run itself, as it does when
+  the server or the engine does not know the job. When the worker brings a run
+  over from its engine -- for *Where it goes*, a save, an edit worked out over
+  its states -- it posts `materialized`, and the page stops asking the engine
+  about it; until then *Where it goes* says it is fetching the run.
 - What an engine does not do it refuses before anything runs, as
   `NotOnThisEngine`, and the worker then does it here, posting
   `engine-elsewhere` so the bar says so. Both engines now do everything the

@@ -336,7 +336,8 @@ export function simTopic(key, ctx) {
 					+ '**Run with the careful setting** writes the tighter tolerances into the model and runs it.',
 			}, {
 				text: 'The careful run is solved in a worker of its own, so the run on show stays as it is, and '
-					+ 'Stop stops only the check.',
+					+ 'Stop stops only the check. A run an engine on this machine holds is checked there, and only '
+					+ 'the answer comes back.',
 			}],
 		};
 		case 'flows': return {

@@ -24,7 +24,10 @@
 # answered as Python's are (see its notes). Each job is a task of its own:
 # the engine takes one a thread at once (`concurrent` in `ready`), and the server
 # sends it that many. What this engine does not do it refuses before anything
-# runs (`NotOnThisEngine`), and the page does it itself.
+# runs (`NotOnThisEngine`), and the page does it itself. A `check-run` job
+# checks a run held here (`run`, its id; the job's model is not read): the run
+# solved again a hundred times more carefully and set against itself
+# (`check_run`), the report written as JSON -- so the page need not fetch it.
 
 const _SERVICE_PROGRESS_EVERY = 0.1
 
@@ -98,7 +101,8 @@ function _service_job(job::AbstractDict, say, stopped, kept=nothing, kept_lock=R
     end
     try
         model = get(job, "model", "")
-        m = from_json(model isa AbstractString ? model : json_text(model))
+        # A check is of a run held here, and reads no model of its own.
+        m = kind == "check-run" ? nothing : from_json(model isa AbstractString ? model : json_text(model))
         if kind == "run"
             say(OrderedDict{String,Any}("id" => id, "event" => "stage", "stage" => "solving"))
             res = run(m; on_progress=(fraction, at) -> begin
@@ -185,6 +189,26 @@ function _service_job(job::AbstractDict, say, stopped, kept=nothing, kept_lock=R
             # A sample the page asked the engine to keep goes without its series.
             write(string(job["out"]), sample_archive(prob; series=!keeping))
             keeping && lock(() -> (kept[id] = Dict{String,Any}("sample" => prob)), kept_lock)
+        elseif kind == "check-run"
+            # The run held here for the page, solved again more carefully here and
+            # set against itself: the page need not fetch it to check it.
+            run_id = string(_service_option(options, "run", ""))
+            held = kept === nothing ? nothing : lock(() -> get(kept, run_id, nothing), kept_lock)
+            (held === nothing || !haskey(held, "results")) &&
+                throw(ArgumentError("This engine no longer holds that run: it may have been restarted since, or the " *
+                                    "run let go of. Run it again."))
+            say(OrderedDict{String,Any}("id" => id, "event" => "stage", "stage" => "building"))
+            report = check_run(held["results"], p -> begin
+                say(OrderedDict{String,Any}("id" => id, "event" => "stage", "stage" => "solving"))
+                res = run_project(p; on_progress=(fraction, at) -> begin
+                    tell("fraction" => Float64(fraction), "at" => Float64(at))
+                    !stopped()
+                end)
+                stopped() && throw(_ServiceStopped())
+                res
+            end)
+            say(OrderedDict{String,Any}("id" => id, "event" => "stage", "stage" => "writing"))
+            write(string(job["out"]), json_text(report; indent=0))
         else
             throw(ArgumentError("'$kind' is not a kind of job this engine runs"))
         end

@@ -555,6 +555,47 @@ class Server(unittest.TestCase):
         self.assertLess(sample['kept'], sample['iterations'])
         self.assertEqual(sample['differ'], [])
 
+    def test_a_run_its_engine_holds_is_checked_there(self):
+        """Check the run, made where the run is held: the run solved again more
+        carefully on its engine and set against itself, the answer the report
+        the page shows -- and the run still held after. A run no engine holds for
+        the page is answered 410, which the page reads as its own to check."""
+        ok = {'X-Kompartment-Token': self.token}
+        model = json.loads((EXAMPLES / 'four-compartment.json').read_text())
+        run_job, _ = self.finished(model, 'k')
+
+        def check(client, run):
+            return self.call('/engine/jobs', {'kind': 'check-run', 'engine': 'python', 'client': client, 'model': None,
+                                              'options': {'run': run}}, **ok)
+
+        code, body = check('k', run_job)
+        self.assertEqual(code, 202, body)
+        job = json.loads(body)['id']
+        for _ in range(600):
+            state = json.loads(self.call(f'/engine/jobs/{job}', **ok)[1])
+            if state['state'] not in ('queued', 'running'):
+                break
+            time.sleep(0.1)
+        self.assertEqual(state['state'], 'done', state)
+        code, data = self.call(f'/engine/jobs/{job}/archive', **ok)
+        self.assertEqual(code, 200)
+        report = json.loads(data)
+        self.assertEqual((report['verdict'], report['states'], report['sameTimes']), ('holds', 4, True), report)
+        self.assertEqual(report['times'], 300)
+        self.assertTrue(report['moved'] and report['moved'][0]['label'].startswith('C'), report['moved'])
+        self.assertEqual((report['run']['rtol'], report['careful']['rtol']), (1e-6, 1e-8))
+        self.assertTrue(report['careful']['steps'] > report['run']['steps'] > 0, report)
+        # Still held: its series answer as before.
+        code, _ = self.call(f'/engine/runs/{run_job}/series', {'labels': ['C2 [Fo-42]']}, **ok)
+        self.assertEqual(code, 200)
+        # Another page's, or one let go of: the page checks it itself.
+        code, body = check('someone else', run_job)
+        self.assertEqual((code, json.loads(body).get('gone')), (410, True), body)
+        self.assertEqual(self.call(f'/engine/runs/{run_job}/forget', {}, **ok)[0], 200)
+        code, body = check('k', run_job)
+        self.assertEqual((code, json.loads(body).get('gone')), (410, True), body)
+        self.assertEqual(check('k', 'f00d')[0], 410)
+
     def test_a_sample_its_engine_holds_is_asked_about_beside_the_run_and_let_go_of(self):
         ok = {'X-Kompartment-Token': self.token}
         model = json.loads((EXAMPLES / 'biosphere.json').read_text())

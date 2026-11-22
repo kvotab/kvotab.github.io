@@ -22,7 +22,10 @@ machine only.
 
 The page solves its models in the browser. Served from here, it can also hand
 a run -- Run, a probabilistic run, and the analyses that solve the model: a
-tornado, a sensitivity design, a replayed realisation, a calibration, dy/dp --
+tornado, a sensitivity design, a replayed realisation, a calibration, dy/dp,
+and Check the run of a run an engine holds, made where it is held (`check-run`,
+the run by its id: one no engine holds for the page any more is answered 410,
+and the page checks it itself) --
 to the Python engine (`python/kompartment`), the Julia one (`julia/`) or the
 C++ one (`cpp/`), chosen in the page beside Run; `--engine` says which the page
 starts on. What an engine does not do, it refuses at once, and the page does it
@@ -446,6 +449,10 @@ class Engine:
                 proc.kill()
 
 
+class Gone(LookupError):
+    """A run no engine holds for the page any more: what asked about it does it itself."""
+
+
 class Engines:
     """Every engine there is, and every job asked of one."""
 
@@ -471,8 +478,16 @@ class Engines:
     def submit(self, kind, engine, client, model, options):
         if engine not in self.engines:
             raise ValueError(f"There is no engine called '{engine}' here.")
-        if kind not in ("run", "probabilistic", "replay", "calibrate", "local-sensitivity"):
+        if kind not in ("run", "probabilistic", "replay", "calibrate", "local-sensitivity", "check-run"):
             raise ValueError(f"'{kind}' is not a kind of job the engines run.")
+        if kind == "check-run":
+            # A check of a run an engine holds for this page, made where it is held:
+            # one let go of, held for another page, by another engine or by an
+            # engine since restarted is the page's to check.
+            r = self.held(str(options.get("run") or "") if isinstance(options, dict) else "")
+            if r is None or r["client"] != client or r["engine"] != engine \
+                    or r["generation"] != self.engines[engine].generation:
+                raise Gone("No engine holds that run for this page any more, so the page checks it itself.")
         job = Job(kind, engine, client, model, options, None)
         job.out = os.path.join(self.folder, f"{job.id}.zip")
         # A page asks for one run of a kind at a time: a new one replaces the
@@ -741,6 +756,9 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
                 text = model if isinstance(model, str) else json.dumps(model)
                 job = ENGINES.submit(ask.get("kind"), ask.get("engine"), str(ask.get("client") or ""),
                                      text, ask.get("options") or {})
+            except Gone as e:
+                self._json(410, {"error": str(e), "gone": True})
+                return
             except (ValueError, TypeError) as e:
                 self._json(400, {"error": str(e)})
                 return

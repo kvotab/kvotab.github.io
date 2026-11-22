@@ -5,7 +5,8 @@
 // starts; local sensitivities answered as the Julia engine's service answers them
 // (tools/localsens_fixtures.jl keeps what that said and wrote), refused, and stopped; and
 // calibrations the same way (tools/calibrate_fixtures.jl): each step's best said as a
-// progress detail, the answer written, the refusals -- and a search stopped part way.
+// progress detail, the answer written, the refusals -- and a search stopped part way; and
+// Check the run of a kept run, made where it is held, as `check_run` makes it.
 //
 // The service is driven here as serve.py drives it -- a line in, the lines that
 // answer it out -- through two streams of the test's own, so that a question is
@@ -35,6 +36,7 @@
 #include "engine/probabilistic.hpp"
 #include "engine/project.hpp"
 #include "engine/runlog.hpp"
+#include "engine/checkrun.hpp"
 #include "engine/runner.hpp"
 #include "engine/system.hpp"
 #include "model/names.hpp"
@@ -351,13 +353,35 @@ int main() {
         in_buffer.put(json_text(Json::object({{"op", Json("bands")}, {"id", Json("q4")}, {"run", Json("b")}, {"out", Json(series)}}), 0));
         CHECK(message_of(out_buffer.until_ended("q4")) == "That run is not a probabilistic run: it has no realisations to ask about.");
 
-        // Let go of, it is no longer there to ask.
+        // Checked where it is held: solved again more carefully here and set against itself,
+        // the report as JSON -- what `check_run` makes of the same run here, to the character
+        // (the careful run's time aside).
+        const std::string checked = (scratch / "checked.json").string();
+        in_buffer.put(json_text(Json::object({{"op", Json("job")}, {"id", Json("check1")}, {"kind", Json("check-run")}, {"model", Json()},
+                                              {"options", Json::object({{"run", Json("b")}})}, {"out", Json(checked)}}), 0));
+        const auto check_events = out_buffer.until_ended("check1");
+        CHECK_MSG(name_of(check_events) == "done", "a check of a kept run ends done: " + name_of(check_events) + " " + message_of(check_events));
+        bool solving = false;
+        for (const Json& e : check_events) solving = solving || (e.get("event") == Json("stage") && e.get("stage") == Json("solving"));
+        CHECK_MSG(solving, "a check says when it is solving the careful run");
+        Json report = fs::exists(checked) ? parse_json(check::read_file(checked)) : Json::object();
+        Json mine = check_run(here, [](std::shared_ptr<const Project> p) { return run_project(p); });
+        if (report.is_object()) report["careful"].erase("ms");
+        mine["careful"].erase("ms");
+        CHECK_MSG(json_text(report, 0) == json_text(mine, 0), "the check's report is check_run's\n   service: " + json_text(report, 0) +
+                                                                  "\n   here:    " + json_text(mine, 0));
+
+        // Let go of, it is no longer there to ask -- nor to check.
         in_buffer.put(json_text(Json::object({{"op", Json("forget")}, {"id", Json("q5")}, {"run", Json("b")}}), 0));
         CHECK(name_of(out_buffer.until_ended("q5")) == "done");
         in_buffer.put(json_text(Json::object({{"op", Json("series")}, {"id", Json("q6")}, {"run", Json("b")}, {"labels", labels}, {"out", Json(series)}}), 0));
         const auto gone = out_buffer.until_ended("q6");
         CHECK(name_of(gone) == "ArgumentError");
         CHECK(message_of(gone).rfind("This engine no longer holds that run", 0) == 0);
+        in_buffer.put(json_text(Json::object({{"op", Json("job")}, {"id", Json("check2")}, {"kind", Json("check-run")}, {"model", Json()},
+                                              {"options", Json::object({{"run", Json("b")}})}, {"out", Json(checked)}}), 0));
+        const auto check_gone = out_buffer.until_ended("check2");
+        CHECK(name_of(check_gone) == "ArgumentError" && message_of(check_gone).rfind("This engine no longer holds that run", 0) == 0);
     }
 
     // A solver the other engines have and this one does not: a run, a probabilistic run, a replay and

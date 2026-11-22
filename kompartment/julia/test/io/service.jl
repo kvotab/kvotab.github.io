@@ -97,11 +97,26 @@ end
     ask(Dict("op" => "archive", "id" => "q3", "run" => "r1", "out" => joinpath(dir, "q3.zip")))
     @test ended("q3")["event"] == "done"
     @test haskey(K._ds_unzip(read(joinpath(dir, "q3.zip"))), "results/y.f64")
-    # Let go of, and then said to be gone.
+    # Checked where it is held: solved again more carefully here and set against
+    # itself, the report as JSON -- as `check_run` makes it of the same run.
+    ask(Dict("op" => "job", "id" => "c1", "kind" => "check-run", "model" => nothing, "options" => Dict("run" => "r1"),
+             "out" => joinpath(dir, "c1.json")))
+    @test ended("c1")["event"] == "done"
+    report = K.parse_json(read(joinpath(dir, "c1.json"), String))
+    mine = K.check_run(made, p -> K.run_project(p))
+    @test (report["verdict"], report["states"], report["times"], report["sameTimes"]) ==
+          (mine["verdict"], mine["states"], mine["times"], mine["sameTimes"])
+    @test [m["label"] for m in report["moved"]] == [m["label"] for m in mine["moved"]]
+    @test report["worst"] == mine["worst"] && report["careful"]["steps"] == mine["careful"]["steps"]
+    @test report["careful"]["rtol"] == 1e-8 && report["run"]["rtol"] == 1e-6
+    # Let go of, and then said to be gone -- to a check too.
     ask(Dict("op" => "forget", "id" => "q4", "run" => "r1"))
     @test ended("q4")["event"] == "done"
     ask(Dict("op" => "series", "id" => "q5", "run" => "r1", "labels" => labels, "out" => joinpath(dir, "q5.f64")))
     @test occursin("no longer holds that run", ended("q5")["message"])
+    ask(Dict("op" => "job", "id" => "c2", "kind" => "check-run", "model" => nothing, "options" => Dict("run" => "r1"),
+             "out" => joinpath(dir, "c2.json")))
+    @test occursin("no longer holds that run", ended("c2")["message"])
     close(inp.in)
     wait(server)
 end

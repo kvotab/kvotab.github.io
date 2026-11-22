@@ -2542,7 +2542,10 @@ The careful run is solved in a worker of its own, from the run as a save writes
 it, so the run on show is not touched and **Stop** stops only the check. It is a
 check of the run in front of you: a model edited since its run is run first, and
 a replayed realisation is checked as the run it came from. A run an engine on
-this machine made is brought into the tab, and its careful run is solved here.
+this machine holds is checked there instead: the engine solves the careful run
+beside the run it holds and sends back only the answer, so nothing is fetched
+into the tab and the run stays where it is — on a large assessment seconds
+rather than a minute. One the engine no longer holds is checked in the tab.
 
 ## The mass-balance audit
 

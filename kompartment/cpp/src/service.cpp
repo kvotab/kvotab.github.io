@@ -16,6 +16,7 @@
 
 #include "engine/analysis.hpp"
 #include "engine/calibrate.hpp"
+#include "engine/checkrun.hpp"
 #include "engine/errorinfo.hpp"
 #include "engine/farfield.hpp"
 #include "engine/jacobian.hpp"
@@ -305,10 +306,12 @@ struct Service {
         try {
             // A job with no model reads the empty text (`get(job, "model", "")`).
             const Json model = job.has("model") ? job.get("model") : Json("");
-            Json raw = model.is_string() ? parse_json(model.as_string()) : model;
+            // A check is of a run held here, and reads no model of its own.
+            Json raw = kind == "check-run" ? Json::object() : model.is_string() ? parse_json(model.as_string()) : model;
             // (`from_json`, before anything else is said.)
             if (!raw.is_object()) throw ArgumentError("A model is one JSON object");
-            if (!(kind == "run" || kind == "probabilistic" || kind == "replay" || kind == "local-sensitivity" || kind == "calibrate"))
+            if (!(kind == "run" || kind == "probabilistic" || kind == "replay" || kind == "local-sensitivity" || kind == "calibrate" ||
+                  kind == "check-run"))
                 throw ArgumentError("'" + julia_string(kind) + "' is not a kind of job this engine runs");
             // The model is read as a project where the Julia engine's job reads it -- after its
             // stage is said and its options are taken -- so that a model it refuses is refused at
@@ -326,6 +329,33 @@ struct Service {
                 if (stopped(id)) throw ServiceStopped();
                 stage("writing");
                 write_run(std::move(res), id, options, out_path);
+            } else if (kind == "check-run") {
+                // The run held here for the page, solved again more carefully here and set
+                // against itself: the page need not fetch it to check it.
+                const std::string run_id = js_str(option(options, "run", Json("")));
+                std::shared_ptr<Kept> held;
+                {
+                    std::lock_guard<std::mutex> hold(kept_mutex);
+                    auto it = kept.find(run_id);
+                    if (it != kept.end()) held = it->second;
+                }
+                if (!held || !held->results)
+                    throw ArgumentError("This engine no longer holds that run: it may have been restarted since, or the run let go of. "
+                                        "Run it again.");
+                stage("building");
+                Json report = check_run(*held->results, [&](std::shared_ptr<const Project> careful) {
+                    stage("solving");
+                    RunOptions run_options;
+                    run_options.on_progress = [&](double fraction, double at) {
+                        tell(Json::object({{"id", Json(id)}, {"event", Json("progress")}, {"fraction", Json(fraction)}, {"at", Json(at)}}));
+                        return !stopped(id);
+                    };
+                    Results res = run_project(careful, nullptr, run_options);
+                    if (stopped(id)) throw ServiceStopped();
+                    return res;
+                });
+                stage("writing");
+                write_file(out_path, json_text(report, 0));
             } else if (kind == "calibrate") {
                 stage("solving");
                 CalibrateOptions calibration;

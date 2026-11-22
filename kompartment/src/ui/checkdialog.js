@@ -53,9 +53,12 @@ export function openCheckRunDialog({ timeUnit = '', onStop, onCareful, isAboutSh
 			body.replaceChildren();
 			if (state.running) {
 				const p = state.running;
+				const on = p.engine ? ` on ${p.engine}` : '';
 				const word = p.stage === 'solving'
-					? `Solving it again a hundred times more carefully… ${Math.round((p.fraction ?? 0) * 100)} %`
-					: 'Building the model for the careful run…';
+					? `Solving it again a hundred times more carefully${on}… ${Math.round((p.fraction ?? 0) * 100)} %`
+					: p.stage === 'sending' ? `Handing the check to ${p.engine ?? 'the engine'}…`
+						: p.stage === 'fetching' ? `Fetching the run from ${p.engine ?? 'the engine'}…`
+							: `Building the model for the careful run${on}…`;
 				body.append(el('p', { className: 'check-run-busy' }, word));
 				const bar = el('div', { className: 'jac-bar' }, el('div', { className: 'jac-bar-fill' }));
 				bar.firstChild.style.width = `${Math.round(Math.min(1, p.fraction ?? 0) * 100)}%`;
@@ -93,7 +96,7 @@ export function openCheckRunDialog({ timeUnit = '', onStop, onCareful, isAboutSh
 
 	return {
 		handle,
-		progress(p) { state.running = { stage: p.stage, fraction: p.fraction ?? 0 }; redraw(); },
+		progress(p) { state.running = { stage: p.stage, fraction: p.fraction ?? 0, engine: p.engine ?? null }; redraw(); },
 		finished(report) { state.running = null; state.report = report; state.error = null; redraw(); },
 		failed(message) { state.running = null; state.error = message; redraw(); },
 		/** Whether the window is still open, for a reply that arrives after it was closed. */

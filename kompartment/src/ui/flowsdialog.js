@@ -70,7 +70,7 @@ const ENDS = {
  * @param {(family: string|null) => void} opts.onFamily  ask for a family's account
  * @param {boolean} [opts.stale]          the run is of the model before the latest edits
  */
-export function openFlowsDialog({ timeUnit = '', unit = '', onFamily, stale = false }) {
+export function openFlowsDialog({ timeUnit = '', unit = '', onFamily, stale = false, fetchingFrom = () => null }) {
 	// `depth` the level the account is read at: null each compartment, a number
 	// the sub-systems that many levels down; undefined until the first account
 	// arrives and the level is chosen for it.
@@ -93,7 +93,12 @@ export function openFlowsDialog({ timeUnit = '', unit = '', onFamily, stale = fa
 			const a = state.account;
 			if (state.error) body.append(el('p', { className: 'prob-warn' }, state.error));
 			if (!a) {
-				if (state.busy) body.append(el('p', { className: 'hint' }, 'Working the account out…'));
+				if (state.busy) {
+					const from = fetchingFrom();
+					body.append(el('p', { className: 'hint' }, from
+						? `Fetching the run from ${from}, then working the account out…`
+						: 'Working the account out…'));
+				}
 				body.append(foot());
 				return;
 			}

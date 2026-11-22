@@ -1310,6 +1310,9 @@ async function materialize(held) {
 		held.results = results;
 		held.outputs = outputs;
 		was.forget();
+		// Held here from now on, and let go of by the engine: the page checks
+		// it here, and has nothing to fetch for it.
+		self.postMessage({ type: 'materialized', id: held.id });
 		return results;
 	})().finally(() => { held.materializing = null; });
 	return held.materializing;

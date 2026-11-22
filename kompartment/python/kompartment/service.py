@@ -48,6 +48,13 @@ A ``calibrate`` job searches for the values that meet its ``targets``
 as JSON: the calibration's result, or the times, the parameters, the run's
 statistics and every state the page shows with its derivatives.
 
+A ``check-run`` job checks a run this engine holds for the page (``run``, its
+id; the job's model is not read): the run solved again with both tolerances a
+hundred times tighter at its own output times and set against itself state by
+state (:func:`kompartment.engine.checkrun.check_run`), its answer written as
+JSON -- whether the run holds, and the states that moved most -- so that the
+page need not fetch a run to check it.
+
 A ``probabilistic`` job with ``tornado`` or ``gsa`` among its options runs that
 design in place of a sample: every input swung alone, or a sensitivity
 design's points (:func:`kompartment.engine.probabilistic.run_probabilistic`).
@@ -224,6 +231,31 @@ def run_job(job: Dict[str, Any], say: Callable[..., None], stopped: Callable[[],
                             'sens': [block[s['offset']] for block in r['sens']]}
                            for s in r['series'] if not s.get('hidden')],
             })
+        elif kind == 'check-run':
+            from .engine.checkrun import check_run
+            from .engine.runner import run
+            # The run this engine holds for the page, solved again more carefully
+            # here and set against itself: the page need not fetch it to check it.
+            held = (kept or {}).get(str(options.get('run')))
+            if held is None or 'results' not in held:
+                raise LookupError('This engine no longer holds that run: it may have been restarted since, '
+                                  'or the run let go of. Run it again.')
+            say(id=job_id, event='stage', stage='building')
+
+            def careful(project: Any) -> Any:
+                say(id=job_id, event='stage', stage='solving')
+
+                def progress(fraction: float, at: float) -> None:
+                    throttled(fraction=float(fraction), at=float(at))
+
+                res = run(project, on_progress=progress, signal=stopped)
+                if stopped():
+                    raise _Stopped()
+                return res
+
+            report = check_run(held['results'], careful, model=held['model'])
+            say(id=job_id, event='stage', stage='writing')
+            _write_json(job['out'], report)
         elif kind == 'probabilistic':
             from .engine.probabilistic import run_probabilistic
             from .engine.project import js_truthy

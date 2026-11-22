@@ -88,6 +88,7 @@ import { openCheckRunDialog } from './checkdialog.js';
 import { openFlowsDialog } from './flowsdialog.js';
 import { flowAccount } from '../sim/flows.js';
 import { tightenTolerances } from '../sim/checkrun.js';
+import { checkOnEngine } from '../sim/enginecheck.js';
 import { findBlock } from '../domain/blocks.js';
 import {
 	describeDataset, describeSampleMeta, sampleBytes, sampleBuffers, MOST_SAMPLE_BYTES, readDataset,
@@ -1202,6 +1203,12 @@ function ensureWorker() {
 		const m = ev.data;
 		if (!messageIsCurrent(m, state.runId)) return;
 		if (m.type === 'loading') { setLoadingStage(m.stage, m.detail); return; }
+		// The run on show brought over from the engine that held it, which has
+		// let it go: nothing more is asked of the engine about it.
+		if (m.type === 'materialized') {
+			if (state.results?.runId === m.id) state.results.engineRun = null;
+			return;
+		}
 		if (m.type === 'pool') { acceptPool(m); return; }
 		if (m.type === 'progress') {
 			// The Jacobian check reports its progress too, and it is not a run:
@@ -12511,9 +12518,11 @@ let checkWorker = null;
 let checkId = 0;
 
 /**
- * Check the run: the run on show, written out as a save writes it, handed to
- * a worker of its own, solved again a hundred times more carefully and set
- * against itself. See ../sim/checkrun.js and ./checkdialog.js.
+ * Check the run: the run on show solved again a hundred times more carefully
+ * and set against itself. A run an engine holds is checked there, where it is
+ * (../sim/enginecheck.js); any other -- and one the engine no longer holds --
+ * is written out as a save writes it and handed to a worker of its own. See
+ * ../sim/checkrun.js and ./checkdialog.js.
  */
 async function openCheckRun() {
 	const r = state.results;
@@ -12555,6 +12564,34 @@ async function openCheckRun() {
 		onCareful: () => runCareful(),
 		isAboutShownRun: () => state.results?.runId === runId,
 	});
+	const where = ENGINE_NAMES[r.engine] ?? 'the engine';
+	if (r.engineRun && engines.token) {
+		// Made where the run is held: nothing fetched, and the careful run solved
+		// by the engine that made the run.
+		dialog.progress({ stage: 'sending', engine: where });
+		let got;
+		try {
+			got = await checkOnEngine({
+				engine: r.engine,
+				token: engines.token,
+				client: engines.client,
+				run: r.engineRun,
+				onProgress: (p) => { if (id === checkId) dialog.progress({ ...p, engine: where }); },
+				isWanted: () => id === checkId,
+			});
+		} catch (e) {
+			if (id === checkId) dialog.failed(`${where} could not check the run: ${e.message}`);
+			return;
+		}
+		if (id !== checkId || got.stopped) return;
+		if (got.report) {
+			dialog.finished(got.report);
+			return;
+		}
+		// Not held there any more, or not a job that engine knows: checked here.
+	}
+	// A run still on the engine comes over first, every state of it.
+	if (r.engineRun) dialog.progress({ stage: 'fetching', engine: where });
 	let entries;
 	try {
 		entries = await requestDataset('model.json');
@@ -12615,6 +12652,9 @@ function openFlows() {
 		timeUnit: state.raw?.simulation?.time_unit ?? 'year',
 		stale: resultsAreStale(),
 		onFamily: (family) => askFlows(runId, family),
+		// The run an engine still holds comes over before the account is worked out.
+		fetchingFrom: () => (state.results?.runId === runId && state.results.engineRun
+			? ENGINE_NAMES[state.results.engine] ?? 'the engine' : null),
 	});
 	askFlows(runId, null);
 }

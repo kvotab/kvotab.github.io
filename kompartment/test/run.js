@@ -29704,8 +29704,81 @@ test('the analyses go to the engine that has them, and come back as the page’s
 	}
 	assert(/'engine-elsewhere': '\{engine\} does not do this: doing it in the browser…',/.test(app), 'the bar does not say where it went');
 	// The server takes each kind, and passes a job's own account of its progress on.
-	assert(/if kind not in \("run", "probabilistic", "replay", "calibrate", "local-sensitivity"\):/.test(serve)
+	assert(/if kind not in \("run", "probabilistic", "replay", "calibrate", "local-sensitivity", "check-run"\):/.test(serve)
 		&& /\("fraction", "at", "done", "total", "detail"\)/.test(serve), 'the server refuses the analyses');
+});
+
+test('Check the run of a run an engine holds is made there, and one it no longer holds here', async () => {
+	// The job sent, followed and fetched against a server that answers as
+	// serve.py does: the report, its shares that JSON wrote as null read back as
+	// Infinity, the stages said on the way; a run the engine no longer holds for
+	// the page (410), a server that does not know the job (400) or an engine that
+	// does not, checked in the page; another fault said; a Stop cancels the job.
+	// (The engines' jobs: python/tests/test_service.py, julia/test/io/service.jl
+	// and cpp/tests/test_service.cpp.)
+	const { checkOnEngine, fromJson } = await import('../src/sim/enginecheck.js');
+	const report = {
+		verdict: 'does not', worst: null, states: 3, times: 4, sameTimes: true,
+		moved: [{ label: 'A', state: 0, share: null, at: 2, held: null, careful: 1 }, { label: 'B', state: 1, share: 0.5, at: 1, held: 2, careful: 1 }],
+		run: { rtol: 1e-3, abstol: 1e-6, steps: 10 }, careful: { rtol: 1e-5, abstol: 1e-8, floor: false, ms: 5, steps: 30, maxSteps: 1e6 },
+	};
+	const server = ({ submit = 202, states = ['queued', 'running:building', 'running:solving:0.5', 'done'], error = null } = {}) => {
+		const calls = [];
+		let polled = 0;
+		const reply = (status, body) => ({ status, ok: status < 300, json: async () => body });
+		const fetch = async (url, init = {}) => {
+			calls.push({ url, method: init.method ?? 'GET', body: init.body ? JSON.parse(init.body) : null, token: init.headers?.['X-Kompartment-Token'] });
+			if (url === '/engine/jobs') return reply(submit, submit === 202 ? { id: 'j1' } : { error: 'no', gone: submit === 410 });
+			if (url === '/engine/jobs/j1/cancel') return reply(200, {});
+			if (url === '/engine/jobs/j1/archive') return reply(200, report);
+			const [state, stage, fraction] = (states[Math.min(polled++, states.length - 1)]).split(':');
+			return reply(200, { state, stage: stage ?? null, fraction: fraction == null ? undefined : Number(fraction), error });
+		};
+		return { calls, fetch };
+	};
+	const said = [];
+	let s = server();
+	const got = await checkOnEngine({
+		engine: 'cpp', token: 't', client: 'c', run: 'r9', fetch: s.fetch, wait: async () => {}, onProgress: (p) => said.push(`${p.stage}:${p.fraction}`),
+	});
+	assert(s.calls[0].method === 'POST' && s.calls[0].token === 't' && JSON.stringify(s.calls[0].body)
+		=== JSON.stringify({ kind: 'check-run', engine: 'cpp', client: 'c', model: null, options: { run: 'r9' } }), JSON.stringify(s.calls[0]));
+	assert(said.join() === 'sending:0,building:0,solving:0.5', said.join());
+	assert(got.report.worst === Infinity && got.report.moved[0].share === Infinity && got.report.moved[1].share === 0.5
+		&& got.report.moved[0].held === null && got.report.verdict === 'does not', JSON.stringify(got));
+	assert(fromJson({ worst: 0.2, moved: [] }).worst === 0.2, 'a finite worst is not kept');
+	for (const submit of [410, 400]) {
+		s = server({ submit });
+		const back = await checkOnEngine({ engine: 'cpp', token: 't', client: 'c', run: 'r9', fetch: s.fetch, wait: async () => {} });
+		assert(back.elsewhere === true && s.calls.length === 1, `${submit}: ${JSON.stringify(back)}`);
+	}
+	s = server({ states: ['error'], error: { name: 'ArgumentError', message: "'check-run' is not a kind of job this engine runs" } });
+	assert((await checkOnEngine({ engine: 'cpp', token: 't', client: 'c', run: 'r9', fetch: s.fetch, wait: async () => {} })).elsewhere,
+		'an engine that does not know the job is not left to the page');
+	s = server({ states: ['error'], error: { name: 'SolverError', message: 'Exceeded 10000000 steps' } });
+	let fault = null;
+	try { await checkOnEngine({ engine: 'cpp', token: 't', client: 'c', run: 'r9', fetch: s.fetch, wait: async () => {} }); } catch (e) { fault = e.message; }
+	assert(fault === 'Exceeded 10000000 steps', fault);
+	let wanted = true;
+	s = server({ states: ['running:solving:0.1'] });
+	const stopped = await checkOnEngine({
+		engine: 'cpp', token: 't', client: 'c', run: 'r9', fetch: s.fetch, isWanted: () => wanted,
+		wait: async () => { if (s.calls.length > 2) wanted = false; },
+	});
+	assert(stopped.stopped && s.calls.some((c) => c.url === '/engine/jobs/j1/cancel' && c.method === 'POST'), JSON.stringify(s.calls));
+
+	// The page asks the engine first, and the worker says when it has brought a run over.
+	const { readFileSync } = await import('node:fs');
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	const worker = readFileSync(new URL('../src/worker/sim-worker.js', import.meta.url), 'utf8');
+	const open = app.slice(app.indexOf('async function openCheckRun()'), app.indexOf('/** The window of *Where it goes*'));
+	assert(open.indexOf('await checkOnEngine({') > 0 && open.indexOf('await checkOnEngine({') < open.indexOf("await requestDataset('model.json')")
+		&& /if \(r\.engineRun\) dialog\.progress\(\{ stage: 'fetching', engine: where \}\);/.test(open), 'the engine is not asked first');
+	assert(/self\.postMessage\(\{ type: 'materialized', id: held\.id \}\);/.test(worker)
+		&& /if \(m\.type === 'materialized'\) \{\s*if \(state\.results\?\.runId === m\.id\) state\.results\.engineRun = null;/.test(app),
+	'the page goes on asking the engine about a run it has let go of');
+	assert(/fetchingFrom: \(\) => \(state\.results\?\.runId === runId && state\.results\.engineRun/.test(app),
+		'Where it goes does not say it is fetching the run');
 });
 
 test('the scenarios beside the selected one run on the engine, each held as a run of its own', async () => {

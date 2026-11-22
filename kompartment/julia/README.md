@@ -235,8 +235,9 @@ once and keeps it; the protocol is the Python package's (`kompartment.service`),
 a run or a probabilistic run kept for the page and asked about included, and the
 interactive thread is where a cancel is heard while every other thread solves.
 It runs everything the page hands an engine: a run, a probabilistic run, a
-tornado, a sensitivity design's runs, a replayed realisation, a calibration and
-dy/dp.
+tornado, a sensitivity design's runs, a replayed realisation, a calibration,
+dy/dp, and Check the run of a run it holds (`check_run`: the careful run solved
+beside it and set against it here, only the report sent back).
 
 ## The built model
 
