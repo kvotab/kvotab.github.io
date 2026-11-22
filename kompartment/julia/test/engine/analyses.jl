@@ -493,6 +493,26 @@ _hexes(v) = Float64[parse(Float64, s) for s in v]
                 @test _alike(_mine(steps), _fx(fx["steps"]))
             end
         end
+        checks = joinpath(ANALYSIS_FIXTURES, "checkruns")
+        @testset "check the run $(splitext(f)[1])" for f in (isdir(checks) ? sort(readdir(checks)) : String[])
+            fx = K.parse_json(read(joinpath(checks, f), String))
+            if haskey(fx, "labels")
+                raw = fx["model"]
+                held = K.run_project(K.Project(K.jcopy(raw)))
+                @test K.state_labels(held.system) == fx["labels"]
+                report = K.check_run(held, p -> K.run_project(p); model=K.jcopy(raw))
+                delete!(report["careful"], "ms")
+                @test _alike(_mine(report), _fx(fx["report"]))
+            else
+                proj = K.Project(fx["model"])
+                sys = K.build_system(proj)
+                for c in fx["cases"]
+                    run_of(r) = (project=proj, system=sys, t=Float64[x for x in _fx(r["t"])],
+                                 y=[Float64[x for x in row] for row in _fx(r["y"])], stats=Dict{String,Any}())
+                    @test _alike(_mine(K.compare_runs(run_of(c["held"]), run_of(c["careful"]))), _fx(c["report"]))
+                end
+            end
+        end
         @testset "dy/dp $(splitext(f)[1])" for f in sort(readdir(joinpath(ANALYSIS_FIXTURES, "sensitivity")))
             fx = K.parse_json(read(joinpath(ANALYSIS_FIXTURES, "sensitivity", f), String))
             got = try

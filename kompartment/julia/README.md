@@ -439,7 +439,7 @@ The engine is checked against the Python package's, with fixtures the
 | Editing: the model's file after every edit, and every refusal | `tools/edit_fixtures.py DIR`, `KOMPARTMENT_EDIT_FIXTURES=DIR julia --project=. test/model/edit.jl` |
 | Solving in parts: the partition, every plan and refusal, split runs to the bit | `tools/split_fixtures.py DIR`, `KOMPARTMENT_SPLIT_FIXTURES=DIR julia --project=. --threads=4 test/engine/split.jl` |
 | Probabilistic runs: every draw, every realisation, the analysis, the result files | `tools/prob_fixtures.py DIR`, `KOMPARTMENT_PROB_FIXTURES=DIR julia --project=. --threads=auto test/engine/probabilistic.jl` |
-| Sensitivity designs, every step of a calibration, dy/dp and the refusals | `tools/analysis_fixtures.py DIR`, `KOMPARTMENT_ANALYSIS_FIXTURES=DIR julia --project=. test/engine/analyses.jl` |
+| Sensitivity designs, every step of a calibration, Check the run, dy/dp and the refusals | `tools/analysis_fixtures.py DIR`, `KOMPARTMENT_ANALYSIS_FIXTURES=DIR julia --project=. test/engine/analyses.jl` |
 | The Ecolego importer | `tools/eco_fixtures.py DIR`, `KOMPARTMENT_ECO_FIXTURES=DIR julia --project=. test/importers/test_eco.jl` |
 | The HDF5 files, byte for byte | `tools/hdf5_fixtures.py DIR`, `KOMPARTMENT_H5_FIXTURES=DIR julia --project=. test/io/test_hdf5.jl` |
 

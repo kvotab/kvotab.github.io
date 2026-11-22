@@ -12,6 +12,8 @@ Julia ports of the sensitivity designs (``kompartment/stats/gsa.py`` and
   consistent), lists read by probability, a varied subset -- with each
   factor's probability at every run, every value drawn and the statistics the
   page reads;
+- ``checkruns/<case>.json``: Check the run of a bundled example (the states'
+  names and the report) and the comparison of runs made up to reach every rule;
 - ``calibrations/<case>.json``: a calibration of a bundled example by each
   method -- every step the search took, and the result with how well its
   values are known -- and the refusals;
@@ -387,6 +389,68 @@ def write_pvps(root):
     print('pvp', sum(len(v['points']) for v in out.values()))
 
 
+# --- Check the run -----------------------------------------------------------------------------
+
+CHECKRUN_EXAMPLES = ['four-compartment', 'decay-chain', 'waste-packages', 'landscape', 'farfield']
+
+
+def made_up_runs():
+    """tests/test_checkrun.py's runs made up to reach every rule: a state not a
+    number in one run, infinite in one, in both, one that never moves, one under
+    the absolute tolerance over the relative, shares that tie, and careful runs
+    at other times."""
+    model = {'name': 'made up', 'simulation': {'start_time': 0, 'end_time': 3, 'output_points': 4, 'spacing': 'linear',
+                                                'rtol': 1e-3, 'abstol': 1e-6},
+             'compartments': [{'name': n, 'initial': '1', 'unit': 'Bq', 'index_lists': []}
+                              for n in ('A', 'B', 'C', 'D', 'E', 'F', 'G', 'H')]}
+    nan, inf = math.nan, math.inf
+    t = [0.0, 1.0, 2.0, 3.0]
+    held = [[1, 2, 3, 1e-5, 0, 5, 5, 1], [1, 2, nan, 2e-5, 0, 5, 5, inf], [1, nan, 3, 1e-5, 0, 6, 6, inf],
+            [1, 2, nan, 1e-5, 0, 7, 7, 1]]
+    careful = [[1, 2, 3, 1e-5, 0, 5, 5, 1], [1.001, 2, 3, 2.0001e-5, 0, 5.5, 5.5, 1], [1, 2, nan, 1e-5, 0, 6, 6, inf],
+               [1, 2, 4, 3e-5, 0, 7, 7, 2]]
+    cases = [(t, held, t, careful), (t, held, [0.0, 0.9, 1.6, 2.4, 3.0], careful + [careful[-1]]),
+             (t, held, [0.0, 1.5, 3.0], [careful[0], careful[1], careful[3]])]
+    return model, cases
+
+
+def write_checkruns(root):
+    """``checkruns/<case>.json``: Check the run of a bundled example -- the
+    states' names and the report without the careful run's time -- and the
+    comparison of the made-up runs."""
+    from kompartment.engine.builder import build_system
+    from kompartment.engine.checkrun import check_run, compare_runs, state_labels
+    from kompartment.engine.project import Project
+    from kompartment.engine.runner import run
+
+    class Run:
+        def __init__(self, project, system, t, y):
+            self.project, self.system, self.t, self.y, self.stats = project, system, t, y, {}
+
+    (root / 'checkruns').mkdir(parents=True, exist_ok=True)
+    for name in CHECKRUN_EXAMPLES:
+        m = example(f'{name}.json')
+        # Solved whole: whether a run is split into its independent parts follows
+        # what earlier runs measured, and a run in parts takes other steps.
+        m['simulation']['split'] = 'off'
+        held = run(Project(copy.deepcopy(m)))
+        report = check_run(held, lambda p: run(p), model=copy.deepcopy(m))
+        report['careful'].pop('ms')
+        (root / 'checkruns' / f'{name}.json').write_text(json.dumps({
+            'case': name, 'model': m, 'labels': state_labels(held.system.layout), 'report': plain(report)}))
+        print('check the run', name, report['verdict'], report['worst'])
+    model, cases = made_up_runs()
+    project = Project(copy.deepcopy(model))
+    system = build_system(project)
+    out = []
+    for ht, hy, ct, cy in cases:
+        r = compare_runs(Run(project, system, ht, hy), Run(project, system, ct, cy))
+        out.append({'held': plain({'t': ht, 'y': [[float(v) for v in row] for row in hy]}),
+                    'careful': plain({'t': ct, 'y': [[float(v) for v in row] for row in cy]}), 'report': plain(r)})
+    (root / 'checkruns' / 'made-up.json').write_text(json.dumps({'case': 'made-up', 'model': model, 'cases': out}))
+    print('check the run: made-up runs', len(out))
+
+
 def main():
     if len(sys.argv) < 2:
         raise SystemExit(__doc__)
@@ -394,6 +458,7 @@ def main():
     root.mkdir(parents=True, exist_ok=True)
     write_designs(root)
     write_calibrations(root)
+    write_checkruns(root)
     write_sensitivities(root)
     write_tangents(root)
     write_pvps(root)
