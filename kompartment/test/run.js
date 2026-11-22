@@ -41465,6 +41465,21 @@ test('a calibration says how well it knows each value: standard errors, ranges a
 		targets, variables, method: 'lm', maxEvals: 400, signal: { aborted: true },
 	});
 	assert(stopped.precision === null, JSON.stringify(stopped.precision));
+	// Nor does one stopped while it is worked out: once the search is done the
+	// signal is asked before the precision and before each value is differenced,
+	// and this one says stop at the second value. The engines' ports ask it so too.
+	let done = false;
+	let after = 0;
+	const late = calibrate(model(), {
+		targets,
+		variables,
+		method: 'nelder',
+		maxEvals: 30,
+		onProgress: (p) => { done = p.evals >= 30; },
+		signal: { get aborted() { if (!done) return false; after++; return after > 2; } },
+	});
+	assert(late.reason === 'budget' && late.precision === null && after === 3,
+		`${late.reason}, ${JSON.stringify(late.precision)}, asked ${after} times after the search`);
 	// And the model is left as it was.
 	const raw = model();
 	calibrate(raw, { targets, variables, method: 'lm', maxEvals: 400 });

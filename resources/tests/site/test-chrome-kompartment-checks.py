@@ -17,8 +17,9 @@ mouse or the keyboard where a reader would use them:
   - the Table's peaks mark a curve still rising when the run ends, and say so
     under the table (src/ui/tableviews.js);
   - the optimisation window shows how well the values found are known -- their
-    ranges and correlations -- and offers to work them out for an answer that
-    came without them (src/ui/optdialog.js);
+    ranges and correlations, a correlation an engine's JSON sent as null as a
+    dash -- offers nothing for an answer whose precision is null, and offers to
+    work them out for an answer that came without them (src/ui/optdialog.js);
   - Check the run solves the run on show again a hundred times more carefully
     and says whether it holds, names what moved most, can be stopped without
     touching the run on show, and writes the careful setting into the model as
@@ -254,17 +255,31 @@ async def precision(p):
       await new Promise(r => setTimeout(r, 200));
       const ranges = [...document.querySelectorAll('.opt-ranges tbody tr')].map(r => r.textContent);
       const strong = document.querySelectorAll('.opt-corr td.is-strong').length;
+      // From an engine, through JSON: a number that was not finite comes as null,
+      // and an answer it could not judge has a precision of null and no button.
+      d.finished({ ...base, precision: { targets: 2, free: 2, dof: 0, spread: null, t: null, level: 0.95,
+        reason: 'no spare targets', runs: 4,
+        values: [{ key: 'k', se: null, low: null, high: null, factor: null, held: null },
+                 { key: 'A0', se: null, low: null, high: null, factor: null, held: null }],
+        correlations: { keys: ['k', 'A0'], matrix: [[1, null], [null, 1]] } } });
+      await new Promise(r => setTimeout(r, 200));
+      const nulls = [...document.querySelectorAll('.opt-corr tbody td.mono')].map(td => td.textContent);
+      d.finished({ ...base, precision: null });
+      await new Promise(r => setTimeout(r, 200));
+      const judged = !!document.querySelector('.opt-precision button') || !!document.querySelector('.opt-ranges');
       d.finished({ ...base });
       await new Promise(r => setTimeout(r, 200));
       const button = [...document.querySelectorAll('.opt-precision button')].find(b => b.textContent === 'How well are they known?');
       button?.click();
       await new Promise(r => setTimeout(r, 100));
       d.handle.close();
-      return JSON.stringify({ ranges, strong, button: !!button, asked: !!asked });
+      return JSON.stringify({ ranges, strong, nulls, judged, button: !!button, asked: !!asked });
     })()"""))
     p.check(len(shown['ranges']) == 2 and '0.28 to 0.34' in shown['ranges'][0] and '× 1.18' in shown['ranges'][1],
             'the ranges: %r' % shown['ranges'])
     p.check(shown['strong'] == 2, 'a correlation of 0.93 is not marked')
+    p.check(shown['nulls'] == ['1', '\u2014', '\u2014', '1'], 'a correlation sent as null: %r' % shown['nulls'])
+    p.check(not shown['judged'], 'an answer whose precision is null is offered ranges or the button')
     p.check(shown['button'] and shown['asked'], 'an answer without its precision is not offered it')
 
 

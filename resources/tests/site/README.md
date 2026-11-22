@@ -1392,7 +1392,7 @@ before then does nothing, leaving the example the page opened with.
 
 Kompartment's checks on a model and its run, in the page.
 
-    SITE_HTTP_PORT=8765 SITE_CDP_PORT=9222 python3 test-chrome-kompartment-checks.py    # expect 43/43
+    SITE_HTTP_PORT=8765 SITE_CDP_PORT=9222 python3 test-chrome-kompartment-checks.py    # expect 45/45
 
 Seven things a reader does to check a model or read its run. A model edited and
 then replaced by an example is put aside first: the line above the tabs names it
@@ -1408,8 +1408,9 @@ generated value at smaller steps (`src/sim/jaccheck.js`). The Table's peaks mark
 a sink still rising at the end of the run, not a compartment that peaked inside
 it, and say so under the table (`src/ui/tableviews.js`). The optimisation window
 draws the ranges and the correlations it is handed, marks a correlation of 0.93,
-and offers to work them out for an answer that came without them
-(`src/ui/optdialog.js`). Check the run of a decay chain at a loose tolerance
+shows a correlation an engine's JSON sent as null as a dash, offers nothing for
+an answer whose precision is null, and offers to work them out for an answer
+that came without them (`src/ui/optdialog.js`). Check the run of a decay chain at a loose tolerance
 says it nearly holds or does not and names the compartment that moved; a second
 check stopped at once reports nothing and leaves the run on show answering the
 Table; and Run with the careful setting is one named edit

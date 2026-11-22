@@ -556,7 +556,7 @@ function precisionBox(r, { onPrecision, precisionRunning, precisionError }) {
 			tb.append(el('tr', {}, el('td', { title: c.keys[a] }, c.keys[a]),
 				...row.map((v, b) => el('td', {
 					className: `mono${a !== b && Math.abs(v) >= 0.9 ? ' is-strong' : ''}`,
-				}, a === b ? '1' : v.toFixed(2)))));
+				}, a === b ? '1' : (Number.isFinite(v) ? v.toFixed(2) : '\u2014')))));
 		});
 		table.append(tb);
 		box.append(table);

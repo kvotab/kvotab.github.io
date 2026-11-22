@@ -149,10 +149,11 @@ export function calibrate(input, opts = {}) {
 	// How well they are known, from the misfit left and how the endpoints
 	// move with each value there: after the search, so nothing the search
 	// decided depends on it and its count of evaluations is its own. Not for
-	// a search that was stopped -- a Stop is a Stop -- nor one the model could
-	// not finish at its best point.
+	// a search that was stopped -- a Stop is a Stop, and one that comes while
+	// this is worked out drops it too -- nor one the model could not finish
+	// at its best point.
 	const precision = out.x && opts.precision !== false && out.reason !== 'stopped'
-		&& !opts.signal?.aborted && readings.every(Number.isFinite)
+		&& !c.stopped() && readings.every(Number.isFinite)
 		? precisionAround(c, out.x, residuals, values)
 		: null;
 	c.restore();
@@ -256,7 +257,11 @@ function setUp(input, opts) {
 		for (let i = 0; i < vars.length; i++) P[vars[i].slot] = before[i];
 		system.evaluateInvariant();
 	};
-	return { project, targets, vars, before, evaluate, restore, readings: () => lastReadings };
+	return {
+		project, targets, vars, before, evaluate, restore,
+		readings: () => lastReadings,
+		stopped: () => !!opts.signal?.aborted,
+	};
 }
 
 /** The values at a point of the search, as the model holds them, and which sit on a bound. */
@@ -296,7 +301,8 @@ const PRECISION_STEP = 1e-3;
  * The precision of the values found: the residuals differenced along each
  * value about the answer -- central where both sides are inside the bounds,
  * one-sided against a bound -- and `precisionOf` on what that gives. A value
- * on a bound is held; one the model would not run around is said so.
+ * on a bound is held; one the model would not run around is said so. Null
+ * when the signal stops it part way: a Stop is a Stop.
  */
 function precisionAround(c, x, residuals, values) {
 	const { vars } = c;
@@ -311,6 +317,7 @@ function precisionAround(c, x, residuals, values) {
 		return c.readings().every(Number.isFinite) ? got.residuals : null;
 	};
 	for (let k = 0; k < vars.length; k++) {
+		if (c.stopped()) return null;
 		const v = vars[k];
 		if (values[k].pinned) { columns.push(null); failed.push(null); continue; }
 		const span = v.upper - v.lower;
