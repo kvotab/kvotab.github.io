@@ -515,9 +515,7 @@ test('a constraint that binds for the whole run is carried, and the run says so'
 		}],
 	});
 
-	const started = Date.now();
 	const held = run(model(true));
-	const took = Date.now() - started;
 	const heldB = held.series(held.outputs().find((o) => o.block === 'B'));
 	const heldA = held.series(held.outputs().find((o) => o.block === 'A'));
 	for (const v of heldB) assert(v >= -1e-9 && v <= 1e-6, `B let go: ${v}`);
@@ -527,7 +525,11 @@ test('a constraint that binds for the whole run is carried, and the run says so'
 	assert(report.length === 1 && report[0].label === 'B', JSON.stringify(report));
 	assert(report[0].fraction > 0.9, `held for ${report[0].fraction} of the steps`);
 	assert(held.stats.nsteps < 2000, `${held.stats.nsteps} steps for a held straight line`);
-	assert(took < 30000, `took ${took} ms`);
+	// What the run cost, counted rather than timed, so that a busy machine
+	// cannot fail it: a solver crawling at the kink shows in its evaluations
+	// and factorisations however long they take.
+	assert(held.stats.nfevals < 10000 && held.stats.ndecomps < 2000,
+		`${held.stats.nfevals} evaluations and ${held.stats.ndecomps} factorisations for a held straight line`);
 
 	// The same model without the constraint is linear and trivial: A = 10 + t,
 	// B = -t. It has to stay that way -- the guard must not cost a real run.
@@ -15409,23 +15411,31 @@ test('deleting a large sub-system reads the model once, not once per block', () 
 		transfers: [],
 		systems: ['Keep', 'Going'],
 	};
+	// Every equation counts the times it is read. The walk is what this test
+	// is about, and a count says so whatever else the machine is doing.
+	const reads = [];
+	const counted = (block, key, text) => {
+		const k = reads.push(0) - 1;
+		let value = text;
+		Object.defineProperty(block, key, {
+			enumerable: true, configurable: true,
+			get() { reads[k]++; return value; },
+			set(v) { value = v; },
+		});
+		return block;
+	};
 	for (let i = 0; i < N; i++) {
 		m.compartments.push({ name: `C${i}`, system: 'Going', initial: '0' });
 		// An equation apiece, so there is something real to tokenise, and one
 		// that reaches out of the doomed sub-system so the scoping matters.
-		m.expressions.push({
-			name: `E${i}`, system: 'Going', equation: `Going.C${i} * 2 + Keep.k`,
-		});
+		m.expressions.push(counted({ name: `E${i}`, system: 'Going' }, 'equation', `Going.C${i} * 2 + Keep.k`));
 		if (i) {
-			m.transfers.push({
-				name: `T${i}`, system: 'Going',
-				from: `Going.C${i - 1}`, to: `Going.C${i}`, rate: `Going.E${i} / 3`,
-			});
+			m.transfers.push(counted({
+				name: `T${i}`, system: 'Going', from: `Going.C${i - 1}`, to: `Going.C${i}`,
+			}, 'rate', `Going.E${i} / 3`));
 		}
 	}
-	const started = Date.now();
 	const removed = ed.deleteSystem(m, 'Going', { contents: 'delete' });
-	const took = Date.now() - started;
 	void removed;
 	assert(!(m.compartments ?? []).length && !(m.expressions ?? []).length
 		&& !(m.transfers ?? []).length,
@@ -15433,10 +15443,11 @@ test('deleting a large sub-system reads the model once, not once per block', () 
 	// The parameter outside it is untouched, and nothing referred to it that
 	// would have blocked the delete.
 	assert(m.parameters.length === 1, 'the block outside went too');
-	// Measured on this machine: ~280 ms batched against ~5,800 ms asking one
-	// name at a time. The bound sits between them with room on both sides --
-	// seven times what the one walk needs, and a third of what the other does.
-	assert(took < 2000, `${took} ms to delete ${N * 3 - 1} blocks`);
+	// A few reads of each equation over the whole delete (three, as it is
+	// done), where asking about each block on its own reads every equation
+	// twice for every block asked about -- six thousand times here.
+	const most = Math.max(...reads);
+	assert(most <= 10, `an equation read ${most} times to delete ${N * 3 - 1} blocks`);
 });
 
 test('asking about many names at once gives the same answers as asking one by one', () => {
@@ -26869,17 +26880,19 @@ test('the values are described once per block, however many rows ask', () => {
 		compartments: [{ name: 'Pool', initial: '1', index_lists: [] }],
 		transfers: [],
 	}));
+	// Timed against describing it once, in the same moment, so a busy machine
+	// slows both alike: the 240 asks after it have to cost less than that one.
+	let started = performance.now();
 	const first = at.of('Wide');
+	const once = performance.now() - started;
 	assert(first.own.length === 90000, `${first.own.length} values`);
-	const started = Date.now();
+	started = performance.now();
 	for (let i = 0; i < 240; i++) {
 		// The same answer, not a fresh one: a caller may hold on to it.
 		assert(at.of('Wide') === first, 'described again');
 	}
-	const took = Date.now() - started;
-	// Generous: this is a check that the work is cached, not a benchmark, and
-	// a bound of 50 ms tripped on a loaded machine.
-	assert(took < 1000, `${took} ms to ask 240 times`);
+	const asked = performance.now() - started;
+	assert(asked < once, `asking 240 times took ${asked.toFixed(3)} ms, describing once ${once.toFixed(3)} ms`);
 	// And a name nobody has is remembered as nothing, rather than searched for
 	// again on every row that asks.
 	assert(at.of('Nope') === null);
@@ -31007,12 +31020,18 @@ test('a symbol parses in one pass, however it is written', () => {
 	assert(runs('<b>x</B >') === 'x*', 'but one in the close tag is allowed');
 
 	const pathological = '<b>'.repeat(600);
-	const started = Date.now();
 	assert(runs(pathological) === `${pathological}`, 'unmatched tags are text');
-	const took = Date.now() - started;
-	// Generous for the same reason as above: quadratic parsing would take
-	// seconds here, and that is what the bound is for.
-	assert(took < 1000, `${took} ms to parse 1,800 characters of opening tags`);
+	// Generous: quadratic parsing would take seconds here, and that is what
+	// the bound is for. The quickest of five parses is held to it -- a string
+	// this long is not cached, so each one parses -- because a busy machine or
+	// a garbage collection can hold up one of them, not all five.
+	let quickest = Infinity;
+	for (let k = 0; k < 5; k++) {
+		const started = performance.now();
+		runs(pathological);
+		quickest = Math.min(quickest, performance.now() - started);
+	}
+	assert(quickest < 1000, `${quickest} ms to parse 1,800 characters of opening tags`);
 
 	// And the same label parsed again is free, which is what a render does.
 	const label = '<sup>137</sup>Cs in <b>Soil</b>';
@@ -34156,10 +34175,17 @@ test('the exponent takes a sign and one operand, and NaN is true, as in the desk
 	assert(FUNCTIONS.and.fn(NaN, 1) === 1 && evalExpr('(0/0) && 1') === 1, 'NaN is not zero, so it is true');
 	assert(FUNCTIONS.if.fn(NaN, 1, 2) === 1 && evalExpr('if(0/0, 1, 2)') === 1);
 	// factorial is capped where the double runs out rather than looping to it.
-	const t = performance.now();
 	assert(FUNCTIONS.factorial.fn(1e12) === Infinity && FUNCTIONS.factorial.fn(170) > 7e306
 		&& FUNCTIONS.factorial.fn(171) === Infinity && Number.isNaN(FUNCTIONS.factorial.fn(-1)));
-	assert(performance.now() - t < 100, 'factorial of a huge number returns at once');
+	// And at once. The quickest of five huge ones is held to the bound: a busy
+	// machine can hold up one of them, not all five.
+	let quickest = Infinity;
+	for (let k = 0; k < 5; k++) {
+		const t = performance.now();
+		FUNCTIONS.factorial.fn(1e12 + k);
+		quickest = Math.min(quickest, performance.now() - t);
+	}
+	assert(quickest < 100, `factorial of a huge number took ${quickest} ms`);
 });
 
 // =========================================================================
@@ -34223,14 +34249,20 @@ test('a derivative that is not a number at the start is refused by the one-step 
 	// The first step is worked out from y' at the start, and a NaN there made a
 	// NaN step that `Math.max` kept: the retry loop never reached the floor,
 	// and dp45 on a model dividing zero by zero never came back.
-	const f = (t, y, o) => { o[0] = 0 / y[1]; o[1] = 0; return o; };
 	for (const [name, solver] of [['dp45', dormandPrince], ['ros23', rosenbrock23]]) {
-		const started = performance.now();
+		// Counted rather than timed: how many times the method asked for y'
+		// before it gave up. And a stop at a hundred thousand, so that one
+		// going round for ever fails here instead of hanging the run.
+		let calls = 0;
+		const f = (t, y, o) => {
+			if (++calls > 100000) throw new Error('still going round after 100,000 calls');
+			o[0] = 0 / y[1]; o[1] = 0; return o;
+		};
 		let caught = null;
 		try { solver(f, [0, 1, 2], Float64Array.from([1, 0]), { rtol: 1e-6, abstol: 1e-9 }); }
 		catch (e) { caught = e; }
-		assert(caught && caught.name === 'SolverError', `${name} returned`);
-		assert(performance.now() - started < 2000, `${name} took ${performance.now() - started} ms to give up`);
+		assert(caught && caught.name === 'SolverError', `${name} returned${caught ? `: ${caught.message}` : ''}`);
+		assert(calls < 1000, `${name} asked for the derivative ${calls} times before giving up`);
 	}
 });
 
