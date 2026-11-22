@@ -3773,11 +3773,17 @@ what a fresh system would have called the peak.
 
 **The signature is the whole safety argument, so it is written down.**
 `layoutSignature(system)` is one string naming every state entry and every
-recorder slot by kind, name, base and width. It is saved into `meta.json` and
-compared against the system built from the model *in the same file*; a mismatch
-drops the results with the reason and opens the model alone. The worker's
-`stateSignature` -- the re-evaluate path's check -- is now this function, since
-it asks the same question of a smaller set.
+recorder slot by kind, name, base and width, after the counts of states,
+algebraic slots and parameters. It is saved into `meta.json` and compared
+against the system built from the model *in the same file*; a mismatch drops
+the results with the reason and opens the model alone. The worker's
+`stateSignature` -- the re-evaluate path's check -- is this function without the
+counts of algebraic slots and parameters (`{ counts: false }`): an edit worked
+out over the states may add an expression or a parameter, one slot more of
+either, and the states are still the states. Counted, they would refuse an
+expression added as *the states moved* and solve the model again, though nothing
+it adds reaches a compartment. The engines' `re-evaluate` asks the same of a run
+they hold.
 
 What the signature cannot catch is the one case the page refuses instead: a rate
 changed since the run moves no layout, so a saved pair of "model as edited" and
@@ -5768,7 +5774,7 @@ engine solved them -- and over a run an engine holds it is worked out there, a
 `re-evaluate` job (`reevaluateOnEngine`): the job names the run and carries the
 edited model; the engine builds it, refuses as the worker does -- `NotReused`,
 *the model remembers* (a recorder, or a semi-analytical far-field path) or *the
-states moved* (`layout_signature`, the counts of slots included) -- and
+states moved* (`layout_signature` without its counts of slots) -- and
 otherwise holds a run of the edited model over the same states, written as a
 kept run is and held in place of the old one (`Job.keep`, slot `run`). A refusal
 or a run no engine holds (410) is a `reused` that is not, and the page solves;

@@ -225,7 +225,10 @@ function _service_job(job::AbstractDict, say, stopped, kept=nothing, kept_lock=R
             built = time()
             sys = build_system(proj)
             (_service_remembers(sys) || _service_remembers(was.system)) && throw(NotReused("the model remembers"))
-            layout_signature(sys) == layout_signature(was.system) || throw(NotReused("the states moved"))
+            # The states and what remembers, not the counts of slots: an expression or a
+            # parameter added is still worked out over the same states.
+            layout_signature(sys; counts=false) == layout_signature(was.system; counts=false) ||
+                throw(NotReused("the states moved"))
             timing = Dict{String,Float64}(was.timing)
             timing["build_ms"] = 1000 * (time() - built)
             res = Results(proj, sys, was.t, was.y, was.stats, timing)

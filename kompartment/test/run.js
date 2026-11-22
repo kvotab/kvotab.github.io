@@ -29719,6 +29719,60 @@ test('the analyses go to the engine that has them, and come back as the page’s
 		&& /\("fraction", "at", "done", "total", "detail"\)/.test(serve), 'the server refuses the analyses');
 });
 
+test('an expression or a parameter added is worked out over the states the run has, and a compartment added is solved', async () => {
+	// The re-evaluate path asks whether the states are laid out as the run's:
+	// the states and what remembers, not how many expressions and parameters
+	// there are -- an expression added is one algebraic slot more, and the
+	// states are still the states, which the Guide's "Edits that do not need
+	// solving again" says. A saved run's signature keeps its counts, as every
+	// file written so far has them.
+	const harness = await simWorker();
+	const model = () => ({
+		name: 'reuse',
+		simulation: {
+			start_time: 0, end_time: 10, output_points: 11, spacing: 'linear',
+			solver: 'ndf', rtol: 1e-8, abstol: 1e-12, time_unit: 'year',
+		},
+		parameters: [{ name: 'k', value: '0.3', unit: '1/year' }, { name: 'dc', value: '2', unit: '' }],
+		compartments: [{ name: 'A', initial: '1', unit: 'Bq' }, { name: 'B', initial: '0', unit: 'Bq' }],
+		transfers: [{ name: 'AB', from: 'A', to: 'B', rate: 'k', unit: '1/year' }],
+		expressions: [{ name: 'Dose', equation: 'dc*B', unit: 'Sv' }],
+	});
+	const added = model();
+	added.expressions.push({ name: 'Twice', equation: '2*Dose', unit: 'Sv' });
+	added.parameters.push({ name: 'spare', value: '5', unit: '' });
+	const moved = structuredClone(added);
+	moved.compartments.push({ name: 'C', initial: '0', unit: 'Bq' });
+	const [ran, re, refused] = await harness.alone(async (ask) => [
+		await ask({ type: 'run', id: 92001, project: model() }),
+		await ask({ type: 're-evaluate', id: 92002, project: added }),
+		await ask({ type: 're-evaluate', id: 92003, project: moved }),
+	]);
+	assert(ran.some((m) => m.type === 'done'), JSON.stringify(ran.filter((m) => m.type === 'error')));
+	const done = re.find((m) => m.type === 'done');
+	assert(done?.reused === true, `an expression and a parameter added were not worked out over the states: ${
+		JSON.stringify(re.find((m) => m.type === 'reused' || m.type === 'error'))}`);
+	const labels = done.payload.outputs.map((o) => o.label);
+	assert(labels.includes('Twice') && labels.includes('spare'), labels.join());
+	const [cols] = await harness.alone(async (ask) => [
+		await ask({ type: 'columns', id: 92002, indices: [labels.indexOf('Twice'), labels.indexOf('B')] }),
+	]);
+	const [twice, b] = cols.find((m) => m.type === 'columns').columns;
+	assert(Array.from(twice).every((v, i) => v === 2 * (2 * b[i])), 'the expression added is not worked out over the run’s states');
+	const no = refused.find((m) => m.type === 'reused');
+	assert(no && no.ok === false && no.why === 'the states moved', JSON.stringify(refused.map((m) => m.type)));
+
+	// A saved run's signature with its counts, the re-evaluate path's without.
+	const { layoutSignature } = await import('../src/io/dataset.js');
+	const { buildSystem } = await import('../src/sim/builder.js');
+	const { Project } = await import('../src/domain/project.js');
+	const [one, two] = [model(), added].map((m) => buildSystem(new Project(m)));
+	assert(/\|n=2,\d+,2\|/.test(layoutSignature(one)) && /\|n=2,\d+,3\|/.test(layoutSignature(two))
+		&& layoutSignature(one) !== layoutSignature(two), `${layoutSignature(one)} / ${layoutSignature(two)}`);
+	assert(layoutSignature(one, { counts: false }) === layoutSignature(two, { counts: false })
+		&& /\|n=2\|/.test(layoutSignature(one, { counts: false })), layoutSignature(one, { counts: false }));
+});
+
 test('Check the run of a run an engine holds is made there, and one it no longer holds here', async () => {
 	// The job sent, followed and fetched against a server that answers as
 	// serve.py does: the report, its shares that JSON wrote as null read back as

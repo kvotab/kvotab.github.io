@@ -145,8 +145,14 @@ export const SAMPLE_FORMAT = 1;
  * about the vector itself: a model edit that does not move anything -- a
  * comment, a colour, a rate constant -- leaves it alone, and one that does
  * changes it.
+ *
+ * A saved run's signature carries the counts of algebraic slots and
+ * parameters beside the states (`counts`, the default, and what every file
+ * written so far holds). The re-evaluate path asks without them: an edit worked
+ * out over the states may add an expression or a parameter, which is one slot
+ * more of either, and the states are still the states.
  */
-export function layoutSignature(system) {
+export function layoutSignature(system, { counts = true } = {}) {
 	const L = system?.layout ?? {};
 	const states = (L.states ?? [])
 		.map((s) => `${s.kind}:${s.name}@${s.base}+${s.width}`)
@@ -154,8 +160,8 @@ export function layoutSignature(system) {
 	const mem = (system?.recorders ?? [])
 		.map((r) => `${r.kind}:${r.entry?.name ?? '?'}@${r.mem}+${r.width}`)
 		.join(',');
-	return `v${FORMAT}|n=${L.nstate ?? 0},${L.nalg ?? 0},${L.nparam ?? 0}`
-		+ `|s=${states}|m=${mem}`;
+	const n = counts ? `${L.nstate ?? 0},${L.nalg ?? 0},${L.nparam ?? 0}` : `${L.nstate ?? 0}`;
+	return `v${FORMAT}|n=${n}|s=${states}|m=${mem}`;
 }
 
 /** A Float64Array of everything in `rows`, one row after another. */

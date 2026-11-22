@@ -454,13 +454,16 @@ async function runSplit(args) {
  * trusted: the page's own test is over the model text, and this is over what
  * the model actually built into.
  *
- * The same question a saved dataset asks of the model it travels with, so it
- * is the same function -- see ../io/dataset.js. It covers the memory layout as
- * well, which this caller does not need (a model that remembers is refused for
- * reuse a few lines further down) and which costs nothing to carry.
+ * The question a saved dataset asks of the model it travels with, so it is the
+ * same function -- see ../io/dataset.js -- without its counts of algebraic
+ * slots and parameters: an edit worked out over the states may add an
+ * expression or a parameter, and the states are still the states. It covers
+ * the memory layout as well, which this caller does not need (a model that
+ * remembers is refused for reuse a few lines further down) and which costs
+ * nothing to carry. The engines ask the same of a run they hold.
  */
 function stateSignature(system) {
-	return layoutSignature(system);
+	return layoutSignature(system, { counts: false });
 }
 
 /**

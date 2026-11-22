@@ -42,17 +42,21 @@ end
 Base.showerror(io::IO, e::DatasetError) = print(io, e.message)
 
 """
-    layout_signature(sys) -> String
+    layout_signature(sys; counts=true) -> String
 
 What the numbers of a run mean, as one string (the application's
 `layoutSignature`): every entry of the state vector and every recorder slot,
 by the name and offset the builder gave it. Two models that produce this
-string produce the same `y`.
+string produce the same `y`. A saved run's signature carries the counts of
+algebraic slots and parameters beside the states (`counts`, the default); the
+re-evaluate path asks without them, since an edit worked out over the states may
+add an expression or a parameter, and the states are still the states.
 """
-function layout_signature(sys::System)
+function layout_signature(sys::System; counts::Bool=true)
     s = join(("$(x.kind):$(x.name)@$(x.base)+$(x.width)" for x in sys.builder.states), ",")
     m = join(("$(r.kind):$(r[:entry].name)@$(r[:mem])+$(r.width)" for r in sys.recorders), ",")
-    return "v$(DATASET_FORMAT)|n=$(sys.nstate),$(sys.nalg),$(sys.nparam)|s=$s|m=$m"
+    n = counts ? "$(sys.nstate),$(sys.nalg),$(sys.nparam)" : "$(sys.nstate)"
+    return "v$(DATASET_FORMAT)|n=$n|s=$s|m=$m"
 end
 
 _ds_bytes(v::Vector{Float64}) = collect(reinterpret(UInt8, htol.(v)))

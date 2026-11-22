@@ -28,7 +28,10 @@ inline constexpr int DATASET_FORMAT = 1;
 /// What the numbers of a run mean, as one string (the application's `layoutSignature`):
 /// every entry of the state vector and every recorder slot, by the name and offset the
 /// builder gave it.
-std::string layout_signature(const System& sys);
+/// A saved run's signature carries the counts of algebraic slots and parameters beside the
+/// states (`counts`, the default); the re-evaluate path asks without them, since an edit worked
+/// out over the states may add an expression or a parameter, and the states are still the states.
+std::string layout_signature(const System& sys, bool counts = true);
 
 /// The file name a model's name gives, as the application makes it.
 std::string slug(const Json& name);

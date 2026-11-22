@@ -207,10 +207,15 @@ def _text(v: Any) -> str:
     return 'undefined' if v is None else js_string(v)
 
 
-def layout_signature(system: Any) -> str:
+def layout_signature(system: Any, counts: bool = True) -> str:
     """What the numbers mean, as one string (``layoutSignature``): every entry of
     the state vector and every recorder slot, by the name and offset the builder
-    gave it. Two models that produce this string produce the same ``y``."""
+    gave it. Two models that produce this string produce the same ``y``.
+
+    A saved run's signature carries the counts of algebraic slots and
+    parameters beside the states (``counts``, the default); the re-evaluate
+    path asks without them, since an edit worked out over the states may add an
+    expression or a parameter, and the states are still the states."""
     layout = _prop(system, 'layout') if system is not None else None
     states = (_prop(layout, 'states') if layout is not None else None) or []
     s = ','.join(f"{_text(_prop(x, 'kind'))}:{_text(_prop(x, 'name'))}@{_text(_prop(x, 'base'))}"
@@ -229,7 +234,8 @@ def layout_signature(system: Any) -> str:
         v = _prop(layout, key) if layout is not None else None
         return js_string(0 if v is None else v)
 
-    return f"v{FORMAT}|n={count('nstate')},{count('nalg')},{count('nparam')}|s={s}|m={m}"
+    n = f"{count('nstate')},{count('nalg')},{count('nparam')}" if counts else count('nstate')
+    return f"v{FORMAT}|n={n}|s={s}|m={m}"
 
 
 # --- writing ---------------------------------------------------------------------------------

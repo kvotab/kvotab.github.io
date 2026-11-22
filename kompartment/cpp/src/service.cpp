@@ -367,7 +367,9 @@ struct Service {
                 const double built = now_s();
                 auto system = std::make_shared<System>(project);
                 if (remembers(*system) || remembers(*was.system)) throw NotReused("the model remembers");
-                if (layout_signature(*system) != layout_signature(*was.system)) throw NotReused("the states moved");
+                // The states and what remembers, not the counts of slots: an expression or a
+                // parameter added is still worked out over the same states.
+                if (layout_signature(*system, false) != layout_signature(*was.system, false)) throw NotReused("the states moved");
                 Results res;
                 res.project = project;
                 res.system = system;

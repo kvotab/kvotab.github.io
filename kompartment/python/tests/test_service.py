@@ -646,6 +646,20 @@ class Server(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertTrue(np.array_equal(after, 2 * before))
         self.assertEqual(series(run_job, 'Outflow [Fo-42]')[0], 404)
+        # An expression and a parameter added: one slot more of each, the states
+        # still the states -- worked out over them too.
+        added = json.loads(json.dumps(edited))
+        added['expressions'].append({'name': 'Half', 'equation': '0.5*Outflow', 'unit': 'Bq/year'})
+        added['parameters'].append({'name': 'spare', 'value': 5, 'unit': ''})
+        code, body = edit(added, job)
+        self.assertEqual(code, 202, body)
+        later = json.loads(body)['id']
+        self.assertEqual(ended(later)['state'], 'done')
+        self.call(f'/engine/jobs/{later}/archive', **ok)
+        code, half = series(later, 'Half [Fo-42]')
+        self.assertEqual(code, 200)
+        self.assertTrue(np.array_equal(half, 0.5 * after))
+        job = later
         # Refused: an edit that moves the states, and a model that remembers.
         moved = json.loads(json.dumps(edited))
         moved['compartments'].append({'name': 'C5', 'initial': '0', 'unit': 'Bq', 'index_lists': ['Radionuclides']})

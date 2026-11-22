@@ -295,7 +295,9 @@ def run_job(job: Dict[str, Any], say: Callable[..., None], stopped: Callable[[],
             system = build_system(project)
             if _remembers(system) or _remembers(was.system):
                 raise NotReused('the model remembers')
-            if layout_signature(system) != layout_signature(was.system):
+            # The states and what remembers, not the counts of slots: an expression
+            # or a parameter added is still worked out over the same states.
+            if layout_signature(system, counts=False) != layout_signature(was.system, counts=False):
                 raise NotReused('the states moved')
             res = Results(project, system, {'t': was.t, 'y': was.y, 'stats': was.stats},
                           {**(was.timing or {}), 'build_ms': (time.perf_counter() - built) * 1000, 'reused': True})

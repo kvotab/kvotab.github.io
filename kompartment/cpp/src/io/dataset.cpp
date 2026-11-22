@@ -50,7 +50,7 @@ const char* recorder_kind(RecorderKind k) {
 
 }  // namespace
 
-std::string layout_signature(const System& sys) {
+std::string layout_signature(const System& sys, bool counts) {
     std::string s, m;
     for (const auto& x : sys.builder->states) {
         if (!s.empty()) s += ",";
@@ -60,8 +60,9 @@ std::string layout_signature(const System& sys) {
         if (!m.empty()) m += ",";
         m += r->kind + ":" + r->entry->name + "@" + std::to_string(r->mem) + "+" + std::to_string(r->width);
     }
-    return "v" + std::to_string(DATASET_FORMAT) + "|n=" + std::to_string(sys.nstate) + "," + std::to_string(sys.nalg) + "," + std::to_string(sys.nparam) +
-           "|s=" + s + "|m=" + m;
+    const std::string n = counts ? std::to_string(sys.nstate) + "," + std::to_string(sys.nalg) + "," + std::to_string(sys.nparam)
+                                 : std::to_string(sys.nstate);
+    return "v" + std::to_string(DATASET_FORMAT) + "|n=" + n + "|s=" + s + "|m=" + m;
 }
 
 std::string slug(const Json& name) {

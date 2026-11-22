@@ -123,6 +123,17 @@ end
     ask(Dict("op" => "series", "id" => "q7", "run" => "e1", "labels" => ["Outflow [Fo-42]"], "out" => joinpath(dir, "q7.f64")))
     @test ended("q7")["event"] == "done"
     @test reinterpret(Float64, read(joinpath(dir, "q7.f64"))) == 2 .* K.series_many(made, ["Outflow [Fo-42]"])[1]
+    # An expression and a parameter added: one slot more of each, the states still the
+    # states -- worked out over them too.
+    added = K.jcopy(edited)
+    push!(added["expressions"], K.JDict("name" => "Half", "equation" => "0.5*Outflow", "unit" => "Bq/year"))
+    push!(added["parameters"], K.JDict("name" => "spare", "value" => 5, "unit" => ""))
+    ask(Dict("op" => "job", "id" => "e3", "kind" => "re-evaluate", "model" => K.json_text(added; indent=0),
+             "options" => Dict("keep" => true, "run" => "r1"), "out" => joinpath(dir, "e3.zip")))
+    @test ended("e3")["event"] == "done"
+    ask(Dict("op" => "series", "id" => "q8", "run" => "e3", "labels" => ["Half [Fo-42]"], "out" => joinpath(dir, "q8.f64")))
+    @test ended("q8")["event"] == "done"
+    @test reinterpret(Float64, read(joinpath(dir, "q8.f64"))) == 0.5 .* (2 .* K.series_many(made, ["Outflow [Fo-42]"])[1])
     moved = K.jcopy(edited)
     push!(moved["compartments"], K.JDict("name" => "C5", "initial" => "0", "unit" => "Bq", "index_lists" => Any["Radionuclides"]))
     ask(Dict("op" => "job", "id" => "e2", "kind" => "re-evaluate", "model" => K.json_text(moved; indent=0),
