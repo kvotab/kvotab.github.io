@@ -291,7 +291,13 @@ export function flowAccount(results, { family = null } = {}) {
 		}
 		return out;
 	};
-	const links = routes.map((r, j) => ({ kind: r.kind, name: r.name, from: r.from, to: r.to, cum: cumulative(rates[j]) }));
+	// A route that never carried anything is no route of this account: on an
+	// assessment most transfers never see a given nuclide.
+	const links = [];
+	routes.forEach((r, j) => {
+		const cum = cumulative(rates[j]);
+		if (cum.some((v) => v !== 0)) links.push({ kind: r.kind, name: r.name, from: r.from, to: r.to, cum });
+	});
 
 	// What no route accounts for, compartment by compartment: its change of
 	// inventory less what the routes brought and took.
@@ -312,14 +318,115 @@ export function flowAccount(results, { family = null } = {}) {
 	// own for the family that is not one.
 	const first = stateByName.get(places[0]?.block);
 	const unit = chosen !== UNINDEXED ? (project.decayUnit ?? '') : (first?.block?.unit ?? '');
+	// Nor is a place that never held anything and that no route touches.
+	const touched = new Set();
+	for (const l of links) { touched.add(l.from); touched.add(l.to); }
+	const kept = places.filter((p) => touched.has(p.key) || series.get(p.key).some((v) => v !== 0));
 	return {
 		family: chosen,
 		families,
 		unit,
 		t: Array.from(t),
-		places: places.map((p) => ({ key: p.key, label: p.label, block: p.block, series: series.get(p.key) })),
+		places: kept.map((p) => ({ key: p.key, label: p.label, block: p.block, series: series.get(p.key) })),
 		links,
 	};
+}
+
+/** The sub-system a place belongs to at `depth` levels from the top, or the place itself above that. */
+function groupOf(place, depth) {
+	const parts = String(place.block).split('.');
+	return parts.length - 1 >= depth ? parts.slice(0, depth).join('.') : place.key;
+}
+
+/**
+ * The account a level up: every place gathered into its sub-system `depth`
+ * levels from the top -- a place higher up than that stays itself -- and the
+ * routes between them added up, group to group. A route inside a group is not
+ * a route at this level and is left out; the books still close, since what one
+ * member gives another takes. `depth` null is the account as it is.
+ *
+ * An assessment is drawn this way: a thousand compartments in a hundred
+ * sub-systems is a picture of nothing until it is read at the level of its
+ * vaults, its rock and its biosphere.
+ */
+export function groupAccount(account, depth) {
+	if (depth == null) return account;
+	const T = account.t.length;
+	const groups = new Map();
+	const of = new Map();
+	for (const p of account.places) {
+		const g = groupOf(p, depth);
+		of.set(p.key, g);
+		if (!groups.has(g)) groups.set(g, { key: g, label: g, block: g, series: new Float64Array(T), members: 0 });
+		const G = groups.get(g);
+		for (let k = 0; k < T; k++) G.series[k] += p.series[k];
+		G.members++;
+	}
+	const links = new Map();
+	for (const l of account.links) {
+		const from = l.from === OUTSIDE ? OUTSIDE : of.get(l.from);
+		const to = l.to === OUTSIDE ? OUTSIDE : of.get(l.to);
+		if (from == null || to == null) continue;
+		if (l.kind === 'transfer' && from === to) continue;
+		const key = `${l.kind}\u0000${from}\u0000${to}`;
+		let L = links.get(key);
+		if (!L) {
+			L = { kind: l.kind, name: l.name, from, to, cum: new Float64Array(T), names: new Set() };
+			links.set(key, L);
+		}
+		for (let k = 0; k < T; k++) L.cum[k] += l.cum[k];
+		L.names.add(l.name);
+	}
+	return {
+		...account,
+		grouped: depth,
+		places: [...groups.values()],
+		links: [...links.values()].map(({ names, ...L }) => ({
+			...L,
+			name: names.size === 1 ? [...names][0] : `${names.size} ${L.kind === 'transfer' ? 'transfers' : 'routes'}`,
+		})),
+	};
+}
+
+/**
+ * The levels an account can be read at: each compartment, and each depth of
+ * sub-system there is, with how many places each leaves that hold or carry
+ * anything -- the count a reader chooses by. A depth that gathers nothing
+ * more than the one below it is offered as the higher of the two, the same
+ * picture with shorter names.
+ *
+ * @returns {Array<{depth: number|null, count: number}>} finest first
+ */
+export function groupingLevels(account) {
+	// Counted as the diagram draws them: what holds or carries a millionth of
+	// all there was, at some time in the run.
+	const most = (series) => {
+		let m = 0;
+		for (const v of series) if (Math.abs(v) > m) m = Math.abs(v);
+		return m;
+	};
+	const end = account.t.length - 1;
+	let whole = 0;
+	for (const p of account.places) whole += Math.max(0, p.series[0] || 0);
+	for (const l of account.links) if (l.kind === 'in' || l.kind === 'ingrowth') whole += Math.max(0, l.cum[end] || 0);
+	const smallest = whole * 1e-6;
+	const live = (acc) => {
+		const touched = new Set();
+		for (const l of acc.links) {
+			if (most(l.cum) > smallest) { touched.add(l.from); touched.add(l.to); }
+		}
+		return acc.places.filter((p) => touched.has(p.key) || most(p.series) > smallest).length;
+	};
+	const deepest = Math.max(0, ...account.places.map((p) => String(p.block).split('.').length - 1));
+	const out = [{ depth: null, count: live(account) }];
+	for (let d = deepest; d >= 1; d--) {
+		const count = live(groupAccount(account, d));
+		const last = out[out.length - 1];
+		if (count < last.count) out.push({ depth: d, count });
+		// As many boxes a level higher: the same picture with shorter names.
+		else if (count === last.count && last.depth != null) out[out.length - 1] = { depth: d, count };
+	}
+	return out;
 }
 
 /**

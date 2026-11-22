@@ -2620,6 +2620,14 @@ it draws the run on show as an account, at the time the slider names:
 A line above them says it in a sentence: of so much at the start and so much
 that came in, how much is held, how much has decayed and how much has left.
 
+**Show** says what a box stands for: each compartment, or the sub-systems at a
+depth — a box per vault of an assessment rather than one per compartment of it
+— with the routes between them added up and those inside one left out, so that
+each box's books still close. The levels offered are the ones the model has,
+each with how many boxes it leaves that hold or carry a millionth of all there
+was, and the window opens at the finest with no more than forty. The chart
+stacks the eight largest one by one and the rest as one layer.
+
 Each route's amount is worked out from the run as it stands, by the run's own
 arithmetic: a transfer carries its value — its rate times its availability —
 times what its donor holds, or its value alone where it is an absolute flux; a

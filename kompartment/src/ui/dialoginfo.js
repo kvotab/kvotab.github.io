@@ -255,6 +255,7 @@ const TOPICS = {
 				'**Where it is** \u2014 what each compartment holds over the run, stacked, with what has left '
 				+ 'and decayed on top.',
 				'**Every route** \u2014 how much it carried, and its share of what there was.',
+				'**Show** \u2014 a box per compartment, or per sub-system at a depth: an assessment read vault by vault.',
 			],
 		}, {
 			text: 'Each route\u2019s rate is worked out at every output time by the run\u2019s own arithmetic and '

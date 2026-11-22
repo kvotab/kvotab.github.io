@@ -9281,6 +9281,12 @@ input.ix-unit { width: 130px; padding: 2px 6px; font-size: 11.5px; }
    take the chart's own series colours, in the order of how much they held;
    the ends of the account -- what came in, grew in, left and decayed -- are
    in the muted ink, and what nothing accounts for in the warning one. */
+/* Where it goes and Check the run open small -- while the account is worked
+   out, while the careful run goes -- and fill when it comes. A window stays
+   where it opened and grows downwards, so these two open at the size they
+   will be: placed for that, what arrives fits, and their foot stays in reach. */
+.flows-modal .modal-body { min-height: min(72vh, 780px); }
+.check-run-modal .modal-body { min-height: min(56vh, 520px); }
 .flows-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; margin: 2px 0 6px; }
 .flows-family { font-weight: 600; }
 .flows-slider input[type='range'] { width: min(320px, 40vw); vertical-align: middle; }
@@ -9314,6 +9320,8 @@ input.ix-unit { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 .flows-area { fill-opacity: 0.8; }
 .flows-area.is-out { fill: var(--text-secondary); fill-opacity: 0.35; }
 .flows-area.is-decay { fill: var(--text-muted); fill-opacity: 0.55; }
+.flows-area.is-rest { fill: var(--text-secondary); fill-opacity: 0.18; }
+.flows-swatch.is-rest { background: color-mix(in oklab, var(--text-secondary) 25%, transparent); }
 .flows-axis, .flows-tick { stroke: var(--axis); stroke-width: 1; }
 .flows-tick-label { font-family: var(--sans); font-size: 10px; fill: var(--text-secondary); }
 .flows-now { stroke: var(--text-primary); stroke-width: 1; stroke-dasharray: 4 3; }

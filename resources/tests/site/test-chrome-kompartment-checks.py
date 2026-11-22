@@ -24,8 +24,9 @@ mouse or the keyboard where a reader would use them:
     touching the run on show, and writes the careful setting into the model as
     one edit (src/sim/checkrun.js, src/ui/checkdialog.js);
   - Where it goes draws one nuclide's account over the run -- a flow diagram, a
-    stacked chart and a row per route -- and answers another nuclide and the
-    slider (src/sim/flows.js, src/ui/flowsdialog.js);
+    stacked chart and a row per route -- answers another nuclide and the
+    slider, and reads a model in sub-systems a level up (src/sim/flows.js,
+    src/ui/flowsdialog.js);
   - and that the page raised nothing.
 
 Serve the repository and start headless Chrome (the recipe is in README.md),
@@ -85,7 +86,9 @@ class Page:
         return False
 
     async def click(self, expression):
-        xy = await self.ev("""(() => { const e = %s; if (!e) return null; e.scrollIntoView({block: 'nearest'});
+        # Scrolled at once, not smoothly: a window's body scrolls smoothly, and
+        # a position read before the scroll is done lies outside the viewport.
+        xy = await self.ev("""(() => { const e = %s; if (!e) return null; e.scrollIntoView({block: 'nearest', behavior: 'instant'});
           const b = e.getBoundingClientRect(); return [b.x + b.width / 2, b.y + b.height / 2]; })()""" % expression)
         if not xy:
             raise AssertionError('nothing to click: ' + expression)
@@ -316,6 +319,36 @@ async def flows(p):
     await asyncio.sleep(0.3)
     third = await p.ev("document.querySelector('.flows-summary')?.textContent")
     p.check(third and third != second, 'the slider did not redraw')
+    await p.click("[...document.querySelectorAll('dialog[open] .pdf-foot button')].find(b => b.textContent === 'Close')")
+    # A model in sub-systems is read a level up: a box per sub-system, offered
+    # with how many boxes each level leaves.
+    await p.apply(model={
+        'name': 'nested', 'simulation': dict(SIM, output_points=101),
+        'systems': ['Near', 'Near.Vault', 'Far'],
+        'compartments': [{'name': 'Waste', 'initial': '100', 'system': 'Near.Vault'},
+                         {'name': 'Water', 'initial': '0', 'system': 'Near.Vault'},
+                         {'name': 'Rock', 'initial': '0', 'system': 'Far'}],
+        'transfers': [{'name': 'Leach', 'from': 'Near.Vault.Waste', 'to': 'Near.Vault.Water', 'rate': '0.3'},
+                      {'name': 'Escape', 'from': 'Near.Vault.Water', 'to': 'Far.Rock', 'rate': '0.2'},
+                      {'name': 'Out', 'from': 'Far.Rock', 'rate': '0.1'}]})
+    p.check(await p.run(), 'the nested model did not run')
+    await p.ev("document.querySelector('.sb-flows').click(), true")
+    await p.wait("!!document.querySelector('.flows-svg')", tries=200)
+    levels = await p.ev("[...document.querySelectorAll('.flows-bar select[aria-label=\"What the diagram shows a box for\"] option')]"
+                        ".map(o => [o.value, o.textContent])")
+    p.check(levels and [v for v, _ in levels] == ['', '1'] and 'top-level sub-systems (2)' in levels[1][1],
+            'the levels offered: %r' % levels)
+    await p.ev("(() => { const s = document.querySelector('.flows-bar select[aria-label=\"What the diagram shows a box for\"]'); "
+               "s.value = ''; s.dispatchEvent(new Event('change')); return true; })()")
+    await asyncio.sleep(0.3)
+    each = await p.ev("[...document.querySelectorAll('.flows-routes tbody tr')].map(r => r.textContent)")
+    await p.ev("(() => { const s = document.querySelector('.flows-bar select[aria-label=\"What the diagram shows a box for\"]'); "
+               "s.value = '1'; s.dispatchEvent(new Event('change')); return true; })()")
+    await asyncio.sleep(0.3)
+    top = await p.ev("[...document.querySelectorAll('.flows-routes tbody tr')].map(r => r.textContent)")
+    p.check(any(r.startswith('Leach') for r in each) and not any(r.startswith('Leach') for r in top)
+            and any(r.startswith('Escape') and 'Near' in r and 'Far' in r for r in top),
+            'a level up, the route inside a sub-system is not one: %r / %r' % (each, top))
 
 
 async def main():

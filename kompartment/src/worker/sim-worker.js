@@ -2177,7 +2177,11 @@ self.onmessage = async (ev) => {
 			if (!last || last.id !== msg.id) throw new Error('The run on show is no longer held here: run it again.');
 			const held = await materialize(last);
 			const account = flowAccount(held, { family: msg.family ?? null });
-			self.postMessage({ type: 'flows', id: msg.id, seq: msg.seq ?? null, ok: true, account });
+			// Handed over rather than copied: on an assessment the account is a
+			// thousand places and five thousand routes over every output time,
+			// tens of megabytes, built here a moment ago and not kept.
+			const buffers = [...account.places.map((p) => p.series.buffer), ...account.links.map((l) => l.cum.buffer)];
+			self.postMessage({ type: 'flows', id: msg.id, seq: msg.seq ?? null, ok: true, account }, buffers);
 		} catch (e) {
 			self.postMessage({ type: 'flows', id: msg.id, seq: msg.seq ?? null, ok: false, message: e.message ?? String(e) });
 		}

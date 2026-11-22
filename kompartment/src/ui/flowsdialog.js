@@ -22,7 +22,17 @@
 import { el } from './parts.js';
 import { openModal } from './modal.js';
 import { dialogInfo } from './dialoginfo.js';
-import { accountAt, OUTSIDE } from '../sim/flows.js';
+import { accountAt, groupAccount, groupingLevels, OUTSIDE } from '../sim/flows.js';
+
+/**
+ * The most boxes the diagram is drawn with by default: the finest level with no
+ * more than this is chosen. An assessment's vaults, a dozen or two, read as a
+ * picture; its thousand compartments do not.
+ */
+const MOST_BOXES = 40;
+
+/** The layers the chart stacks one by one, the rest added up into one. */
+const MOST_LAYERS = 8;
 
 const NS = 'http://www.w3.org/2000/svg';
 
@@ -61,7 +71,10 @@ const ENDS = {
  * @param {boolean} [opts.stale]          the run is of the model before the latest edits
  */
 export function openFlowsDialog({ timeUnit = '', unit = '', onFamily, stale = false }) {
-	const state = { account: null, k: null, error: null, busy: true };
+	// `depth` the level the account is read at: null each compartment, a number
+	// the sub-systems that many levels down; undefined until the first account
+	// arrives and the level is chosen for it.
+	const state = { account: null, k: null, error: null, busy: true, depth: undefined };
 	let handle = null;
 	const redraw = () => handle?.refresh();
 
@@ -109,6 +122,26 @@ export function openFlowsDialog({ timeUnit = '', unit = '', onFamily, stale = fa
 			} else {
 				bar.append(el('span', { className: 'flows-family' }, a.family));
 			}
+			// The level it is read at, where the model has sub-systems to read it
+			// at: each compartment, or the sub-systems at a depth, with how many
+			// boxes each leaves.
+			const levels = groupingLevels(a);
+			if (state.depth === undefined || !levels.some((l) => l.depth === state.depth)) {
+				state.depth = (levels.find((l) => l.count <= MOST_BOXES) ?? levels[levels.length - 1]).depth;
+			}
+			if (levels.length > 1) {
+				const pick = el('select', { 'aria-label': 'What the diagram shows a box for' },
+					...levels.map((l) => el('option', {
+						value: l.depth == null ? '' : String(l.depth), selected: l.depth === state.depth,
+					}, `${l.depth == null ? 'each compartment'
+						: l.depth === 1 ? 'the top-level sub-systems'
+							: `sub-systems ${l.depth} levels down`} (${l.count.toLocaleString()})`)));
+				pick.addEventListener('change', () => {
+					state.depth = pick.value === '' ? null : Number(pick.value);
+					paint();
+				});
+				bar.append(el('label', { className: 'cs-tick' }, 'Show', pick));
+			}
 			const slider = el('input', {
 				type: 'range', min: '0', max: String(T - 1), step: '1', value: String(k),
 				'aria-label': 'Up to which output time',
@@ -140,11 +173,15 @@ export function openFlowsDialog({ timeUnit = '', unit = '', onFamily, stale = fa
 				.sort((p, q) => peak(q.series) - peak(p.series))
 				.map((p, i) => [p.key, (i % 8) + 1]));
 			const paint = () => {
-				const now = accountAt(a, state.k);
+				const g = groupAccount(a, state.depth);
+				const tones = state.depth == null ? tone : new Map([...g.places]
+					.sort((p, q) => peak(q.series) - peak(p.series))
+					.map((p, i) => [p.key, (i % 8) + 1]));
+				const now = accountAt(g, state.k);
 				const u = a.unit ?? unit;
 				summaryHost.replaceChildren(...summary(now, u));
-				pictureHost.replaceChildren(flowPicture(now, tone));
-				chartHost.replaceChildren(stackChart(a, state.k, timeUnit, u, tone));
+				pictureHost.replaceChildren(flowPicture(now, tones));
+				chartHost.replaceChildren(stackChart(g, state.k, timeUnit, u, tones));
 				tableHost.replaceChildren(routesTable(now, u));
 			};
 			paint();
@@ -292,13 +329,22 @@ function flowPicture(now, tone) {
 	const columns = Array.from({ length: lastCol + 1 }, () => []);
 	for (const n of nodes.values()) columns[col.get(n)].push(n);
 	for (const c of columns) c.sort((p, q) => q.size - p.size);
-	const H = Math.max(160, Math.min(420, 40 + 26 * Math.max(...columns.map((c) => c.length))));
-	const room = (c) => H - 2 * PAD - 12 - GAP * Math.max(0, c.length - 1);
-	const scale = Math.min(...columns.filter((c) => c.length).map((c) => room(c) / (sum(c.map((n) => ({ amount: n.size }))) || 1)));
+	// As tall as the fullest column needs, its boxes at their least and the
+	// gaps between them, and no shorter than a picture of a few.
 	const inner = W - 2 * PAD - LABEL;
+	const across = lastCol ? inner / lastCol : inner;
+	// Columns too close for a label each lay theirs at a slant, up and to the
+	// right, with room kept above the boxes for them: a chain of twenty
+	// geosphere cells is twenty columns forty pixels apart.
+	const slanted = across < 90;
+	const TOP = slanted ? 96 : 12;
+	const fullestCount = Math.max(...columns.map((c) => c.length));
+	const H = Math.max(160, Math.min(420, 40 + 26 * fullestCount), 2 * PAD + TOP + fullestCount * (GAP + 3));
+	const room = (c) => H - 2 * PAD - TOP - GAP * Math.max(0, c.length - 1);
+	const scale = Math.min(...columns.filter((c) => c.length).map((c) => room(c) / (sum(c.map((n) => ({ amount: n.size }))) || 1)));
 	const xOf = (c) => PAD + (lastCol ? (inner * c) / lastCol : 0);
 	for (const [c, list] of columns.entries()) {
-		let y0 = PAD + 12;
+		let y0 = PAD + TOP;
 		for (const n of list) {
 			n.x = xOf(c);
 			n.h = Math.max(2, n.size * scale);
@@ -345,21 +391,50 @@ function flowPicture(now, tone) {
 	}
 	// Labels last, over the bands: the ends of the account to the right of
 	// their node, in the room kept for them; a place above its node, in the
-	// gap the column leaves, where no band runs.
+	// gap the column leaves, where no band runs -- cut to the room up to the
+	// next column, or set at a slant where the columns are close, the whole
+	// of it in the table below.
+	// Cut from the front, where names under one sub-system all begin alike --
+	// at a sub-system's boundary where the end still fits, `\u2026Geosphere14` --
+	// and never the amount after the name.
+	const fit = (name, tail, px) => {
+		const most = Math.max(4, Math.floor(px / 6.2) - tail.length - 1);
+		if (name.length <= most) return `${name} ${tail}`;
+		const parts = name.split('.');
+		let end = '';
+		for (let i = parts.length - 1; i >= 0; i--) {
+			const next = end ? `${parts[i]}.${end}` : parts[i];
+			if (next.length + 1 > most) break;
+			end = next;
+		}
+		return `\u2026${end || name.slice(-(most - 1))} ${tail}`;
+	};
+	// At a slant, a box under another in its column is named only where it is
+	// tall enough to matter: its label would lie across the column above.
+	const first = new Set(columns.map((c) => c[0]).filter(Boolean));
+	let unnamed = 0;
 	for (const n of nodes.values()) {
 		const sink = n.kind === 'sink';
+		if (slanted && !sink && !first.has(n) && n.h < 14) { unnamed++; continue; }
+		const x = sink ? n.x + NODE + 5 : n.x + (slanted ? 3 : 0);
+		const y = sink ? n.y + Math.min(n.h, 22) / 2 + 4 : n.y - 3;
 		const text = svg('text', {
-			class: 'flows-label',
-			x: sink ? n.x + NODE + 5 : n.x,
-			y: sink ? n.y + Math.min(n.h, 22) / 2 + 4 : n.y - 3,
-			'text-anchor': 'start',
+			class: 'flows-label', x, y, 'text-anchor': 'start',
+			...(slanted && !sink ? { transform: `rotate(-40 ${x} ${y})` } : {}),
 		});
 		const amount = n.kind === 'place' ? n.now : n.size;
-		text.textContent = `${n.label} ${fmt(amount)}${n.kind === 'place' ? ' held' : ''}`;
+		const tail = `${fmt(amount)}${n.kind === 'place' ? ' held' : ''}`;
+		text.textContent = sink ? `${n.label} ${tail}`
+			: fit(n.label, tail, slanted ? 150 : across - 8);
 		nodeLayer.append(text);
 	}
 	g.append(nodeLayer);
-	return g;
+	if (!unnamed) return g;
+	const wrap = el('div', {});
+	wrap.append(g, el('p', { className: 'hint' },
+		`${unnamed.toLocaleString()} box${unnamed === 1 ? ' is' : 'es are'} too small to name here; `
+		+ 'every route is named in the table below.'));
+	return wrap;
 }
 
 /**
@@ -383,8 +458,15 @@ function stackChart(a, k, timeUnit, unit, tone) {
 		return out;
 	};
 	const places = [...a.places].sort((p, q) => peak(q.series) - peak(p.series));
+	// The largest one by one, the rest added up: a stack of a thousand thin
+	// layers is a picture of nothing, and a legend of a thousand names worse.
+	const shown = places.slice(0, MOST_LAYERS);
+	const rest = places.slice(MOST_LAYERS);
+	const restValues = new Float64Array(T);
+	for (const p of rest) for (let i = 0; i < T; i++) restValues[i] += p.series[i] || 0;
 	const layers = [
-		...places.map((p) => ({ label: p.label, cls: `series-${tone.get(p.key) ?? 1}`, values: p.series })),
+		...shown.map((p) => ({ label: p.label, cls: `series-${tone.get(p.key) ?? 1}`, values: p.series })),
+		...(rest.length ? [{ label: `the other ${rest.length.toLocaleString()}`, cls: 'is-rest', values: restValues }] : []),
 		{ label: ENDS.out, cls: 'is-out', values: sumKind('out') },
 		{ label: ENDS.decay, cls: 'is-decay', values: sumKind('decay') },
 	].filter((l) => l.values.some((v) => v > 0));

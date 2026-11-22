@@ -78,7 +78,7 @@ exercise `domain/` and `sim/` directly, which is why they can be plain Node.
 | `src/domain/suggest.js` | The names a mistyped one was probably meant to be, and the fix put into the one equation |
 | `src/domain/precision.js` | How well a calibration's values are known: standard errors, ranges and correlations from the residuals' derivatives; Student's t |
 | `src/sim/checkrun.js`, `src/ui/checkdialog.js` | Check the run: the run on show solved again with its tolerances a hundred times tighter, in a worker of its own, and set against itself |
-| `src/sim/flows.js`, `src/ui/flowsdialog.js` | Where it goes: one nuclide's account over a run -- each route's rate by the derivative's own arithmetic, added up by the trapezium rule -- and its flow diagram, stacked chart and table |
+| `src/sim/flows.js`, `src/ui/flowsdialog.js` | Where it goes: one nuclide's account over a run -- each route's rate by the derivative's own arithmetic, added up by the trapezium rule, and read a level up by sub-system (`groupAccount`) -- and its flow diagram, stacked chart and table |
 | `src/domain/runlog.js` | What a run was, written into its results archive |
 | `src/domain/pdf.js`, `src/domain/sample.js` | The distributions and the sampler |
 | `src/domain/unitcheck.js` | The unit algebra, the literal conversion and the clash messages |

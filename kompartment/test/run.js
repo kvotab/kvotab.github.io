@@ -18406,6 +18406,50 @@ test('where the inventory goes: each route by the run’s own arithmetic, totals
 	close(-other.amount, (2 * lost) / 3, 1e-3, 'the explicit term, as not accounted for');
 	assert(ex.family === 'not by nuclide', ex.family);
 
+	// Read a level up: compartments gathered into their sub-systems, the routes
+	// between them added up and those inside one left out -- and every group's
+	// books still close.
+	const nested = {
+		name: 'nested', simulation: {
+			start_time: 0, end_time: 10, output_points: 101, spacing: 'linear',
+			solver: 'ndf', rtol: 1e-9, abstol: 1e-12, time_unit: 'year',
+		},
+		systems: ['Near', 'Near.Vault', 'Far'],
+		compartments: [
+			{ name: 'Waste', initial: '100', system: 'Near.Vault' },
+			{ name: 'Water', initial: '0', system: 'Near.Vault' },
+			{ name: 'Rock', initial: '0', system: 'Far' },
+			{ name: 'Idle', initial: '0', system: 'Far' },
+		],
+		transfers: [
+			{ name: 'Leach', from: 'Near.Vault.Waste', to: 'Near.Vault.Water', rate: '0.3' },
+			{ name: 'Escape', from: 'Near.Vault.Water', to: 'Far.Rock', rate: '0.2' },
+			{ name: 'Out', from: 'Far.Rock', rate: '0.1' },
+		],
+	};
+	const acc = F.flowAccount(run(nested));
+	assert(!acc.places.some((p) => /Idle/.test(p.key)), 'a compartment that held nothing and moved nothing was kept');
+	const levels = F.groupingLevels(acc);
+	// Two levels down and one level down both leave two boxes: the higher is offered.
+	assert(JSON.stringify(levels) === JSON.stringify([{ depth: null, count: 3 }, { depth: 1, count: 2 }]),
+		JSON.stringify(levels));
+	const top = F.groupAccount(acc, 1);
+	assert(top.places.map((p) => p.key).sort().join() === 'Far,Near', top.places.map((p) => p.key).join());
+	const topAt = F.accountAt(top, top.t.length - 1);
+	assert(!topAt.routes.some((l) => l.name === 'Leach'), 'a route inside a group was drawn between groups');
+	const escape = topAt.routes.find((l) => l.name === 'Escape');
+	assert(escape && escape.from === 'Near' && escape.to === 'Far', JSON.stringify(escape));
+	for (const p of topAt.held) {
+		let balance = p.start;
+		for (const l of topAt.routes) {
+			if (l.to === p.key) balance += l.amount;
+			if (l.from === p.key) balance -= l.amount;
+		}
+		close(balance, p.now, 1e-9, `${p.key}'s books, a level up`);
+	}
+	close(topAt.totals.out, F.accountAt(acc, acc.t.length - 1).totals.out, 1e-12, 'what left is what left');
+	assert(F.groupAccount(acc, null) === acc, 'no level is the account itself');
+
 	// The editor: Where it goes asks the worker that holds the run, for the
 	// run on show, and draws what comes back.
 	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');

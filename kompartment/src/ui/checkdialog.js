@@ -48,6 +48,7 @@ export function openCheckRunDialog({ timeUnit = '', onStop, onCareful, isAboutSh
 		title: 'Check the run',
 		subtitle: `Solved again with both tolerances ${CAREFUL} times tighter, and set against itself`,
 		wide: true,
+		className: 'check-run-modal',
 		build(body) {
 			body.replaceChildren();
 			if (state.running) {

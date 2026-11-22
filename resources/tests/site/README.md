@@ -1392,7 +1392,7 @@ before then does nothing, leaving the example the page opened with.
 
 Kompartment's checks on a model and its run, in the page.
 
-    SITE_HTTP_PORT=8765 SITE_CDP_PORT=9222 python3 test-chrome-kompartment-checks.py    # expect 40/40
+    SITE_HTTP_PORT=8765 SITE_CDP_PORT=9222 python3 test-chrome-kompartment-checks.py    # expect 43/43
 
 Seven things a reader does to check a model or read its run. A model edited and
 then replaced by an example is put aside first: the line above the tabs names it
@@ -1415,7 +1415,11 @@ check stopped at once reports nothing and leaves the run on show answering the
 Table; and Run with the careful setting is one named edit
 (`src/sim/checkrun.js`, `src/ui/checkdialog.js`). Where it goes draws the
 biosphere example's account with its four transfers, answers another nuclide,
-and redraws on the slider (`src/sim/flows.js`, `src/ui/flowsdialog.js`). The
+and redraws on the slider; and a model of its own in sub-systems is offered
+each compartment and the top-level sub-systems, a level up the route inside a
+sub-system no longer one and the route between them named Near to Far
+(`src/sim/flows.js`, `src/ui/flowsdialog.js`). The windows that open small and
+fill later open at their full size, so their Close stays in reach. The
 buttons in the Simulation section are pressed from the script: the section
 starts folded away, and a mouse press at a folded button's place lands on the
 block tree. After each, the page has raised nothing.
