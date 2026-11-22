@@ -102,8 +102,7 @@ export function toTable(points) {
  *
  * @param {Array} points        [[x, y], ...] or [xs, ys]
  * @param {object} [options]    { interpolation, cyclic }
- * @returns {{at: (x: number) => number, slopeAt: (x: number) => number,
- *            length: number, first: number, last: number}}
+ * @returns {Table}
  */
 export function makeTable(points, { interpolation = 'linear', cyclic = false } = {}) {
 	if (!INTERPOLATIONS.includes(interpolation)) {
@@ -118,69 +117,108 @@ export function makeTable(points, { interpolation = 'linear', cyclic = false } =
 	for (let i = 0; i < n; i++) {
 		if (!Number.isFinite(x[i])) throw new LookupError('A lookup point has no x value');
 	}
+	return new Table(x, y, interpolation, cyclic);
+}
 
-	const first = x[0];
-	const last = x[n - 1];
-	const span = last - first;
-	const wrap = cyclic && span > 0
-		? (v) => {
-			// The arithmetic to match: a remainder that keeps its sign, put
-			// back on the table's own interval.
-			const a = (v - first) % span;
-			return a >= 0 ? a + first : a + span + first;
-		}
-		: (v) => v;
+// The rules as the reader compares them: their places in INTERPOLATIONS.
+const EXTRAPOLATE = 1;
+const BELOW = 2;
+const ABOVE = 3;
+const NEAREST = 4;
+
+/**
+ * Points, a rule and the reader of them.
+ *
+ * The generated code calls `TAB[k].at(ctx.t)` for each table it reads, and
+ * V8's optimising compiler inlines that call. V8 11.3 (Node 20), compiling
+ * such code in the background, can get the reader wrong when the reader
+ * compares the name of its rule: the code it builds reads a step table as
+ * straight lines between its points, and the model keeps that reading to the
+ * end of the run. It takes the inlining and the background compile, and a
+ * number compared in the name's place is enough to avoid it. So the rule is
+ * held as a number, its place in INTERPOLATIONS, and one reader serves every
+ * table, reading the table's own fields.
+ */
+class Table {
+	constructor(x, y, interpolation, cyclic) {
+		const n = x.length;
+		this.length = n;
+		this.first = x[0];
+		this.last = x[n - 1];
+		this.x = x;
+		this.y = y;
+		this.interpolation = interpolation;
+		this.cyclic = cyclic;
+		this.rule = INTERPOLATIONS.indexOf(interpolation);
+		this.span = this.last - this.first;
+		this.wraps = !!cyclic && this.span > 0;
+	}
+
+	/** Onto the table's own interval when it repeats, unchanged otherwise. */
+	wrap(v) {
+		if (!this.wraps) return v;
+		// The arithmetic to match: a remainder that keeps its sign, put
+		// back on the table's own interval.
+		const a = (v - this.first) % this.span;
+		return a >= 0 ? a + this.first : a + this.span + this.first;
+	}
 
 	/** The last index with x[i] <= v, clamped into [0, n - 2]. */
-	const segment = (v) => {
+	segment(v) {
+		const x = this.x;
 		let lo = 0;
-		let hi = n - 1;
+		let hi = this.length - 1;
 		while (lo < hi) {
 			const mid = (lo + hi + 1) >> 1;
 			if (x[mid] <= v) lo = mid;
 			else hi = mid - 1;
 		}
-		return Math.min(lo, n - 2);
-	};
+		return Math.min(lo, this.length - 2);
+	}
 
-	const between = (v, i) => {
+	between(v, i) {
+		const x = this.x;
+		const y = this.y;
 		const dx = x[i + 1] - x[i];
 		// Two points at the same x: the later one wins, which is how a table
 		// expresses a step.
 		if (dx === 0) return y[i + 1];
 		return y[i] + ((v - x[i]) / dx) * (y[i + 1] - y[i]);
-	};
+	}
 
-	const at = (raw) => {
-		const v = wrap(raw);
+	at(raw) {
+		const v = this.wrap(raw);
+		const y = this.y;
+		const n = this.length;
 		// A single point is that value everywhere. The convention is to return whatever
 		// its cache happened to hold, which for a table read at t0 is zero --
 		// a bug this tool does not reproduce.
 		if (n === 1) return y[0];
 
-		if (v <= first) {
-			if (interpolation !== 'extrapolate') return y[0];
-			return between(v, 0);
+		if (v <= this.first) {
+			if (this.rule !== EXTRAPOLATE) return y[0];
+			return this.between(v, 0);
 		}
-		if (v >= last) {
-			if (interpolation !== 'extrapolate') return y[n - 1];
-			return between(v, n - 2);
+		if (v >= this.last) {
+			if (this.rule !== EXTRAPOLATE) return y[n - 1];
+			return this.between(v, n - 2);
 		}
 
-		const i = segment(v);
-		switch (interpolation) {
-			case 'below':
+		const i = this.segment(v);
+		switch (this.rule) {
+			case BELOW:
 				return y[i];
-			case 'above':
-				return x[i] === v ? y[i] : y[i + 1];
-			case 'nearest': {
+			case ABOVE:
+				return this.x[i] === v ? y[i] : y[i + 1];
+			case NEAREST: {
+				const x = this.x;
 				const dx = x[i + 1] - x[i];
 				return dx === 0 || (v - x[i]) / dx < 0.5 ? y[i] : y[i + 1];
 			}
 			default:
-				return between(v, i);
+				return this.between(v, i);
 		}
-	};
+	}
 
 	/**
 	 * dy/dx at a point, which is what a Jacobian wants when the lookup key is
@@ -188,23 +226,24 @@ export function makeTable(points, { interpolation = 'linear', cyclic = false } =
 	 * rules, and at a point where the value jumps: a step has no slope, and
 	 * inventing one would put an entry of 1/0 into the iteration matrix.
 	 */
-	const slopeAt = (raw) => {
+	slopeAt(raw) {
+		const n = this.length;
 		if (n === 1) return 0;
-		if (interpolation === 'below' || interpolation === 'above'
-			|| interpolation === 'nearest') return 0;
-		const v = wrap(raw);
-		if (v < first || v > last) {
-			if (interpolation !== 'extrapolate') return 0;
-			const i = v < first ? 0 : n - 2;
+		const rule = this.rule;
+		if (rule === BELOW || rule === ABOVE || rule === NEAREST) return 0;
+		const v = this.wrap(raw);
+		const x = this.x;
+		const y = this.y;
+		if (v < this.first || v > this.last) {
+			if (rule !== EXTRAPOLATE) return 0;
+			const i = v < this.first ? 0 : n - 2;
 			const dx = x[i + 1] - x[i];
 			return dx === 0 ? 0 : (y[i + 1] - y[i]) / dx;
 		}
-		const i = segment(v);
+		const i = this.segment(v);
 		const dx = x[i + 1] - x[i];
 		return dx === 0 ? 0 : (y[i + 1] - y[i]) / dx;
-	};
-
-	return { at, slopeAt, length: n, first, last, x, y, interpolation, cyclic };
+	}
 }
 
 /**

@@ -20810,6 +20810,20 @@ test('a bad table is refused rather than read as zero', () => {
 	assert(/wibble/.test(caught.message), caught.message);
 });
 
+test('every table is read by one reader, from its own fields, comparing its rule as a number', () => {
+	// The generated code inlines `TAB[k].at(...)`, and V8 can compile a reader
+	// that compares its rule's name into code that reads a step table as
+	// straight lines: see `Table` in ../src/domain/lookup.js, and the
+	// step-table test with the .eco export.
+	const step = makeTable([[0, 1], [5, 3]], { interpolation: 'above' });
+	const line = makeTable([[0, 0], [10, 20]], { interpolation: 'extrapolate', cyclic: true });
+	assert(step.at === line.at && step.slopeAt === line.slopeAt, 'each table has a reader of its own');
+	const code = `${step.at}\n${step.slopeAt}`;
+	assert(!/['"`](?:linear|extrapolate|below|above|nearest)['"`]/.test(code), 'the reader compares the rule by its name');
+	assert(step.rule === INTERPOLATIONS.indexOf('above') && line.rule === INTERPOLATIONS.indexOf('extrapolate'),
+		`the rules are held as ${step.rule} and ${line.rule}`);
+});
+
 test('the interpolation* functions read their arguments as a table', () => {
 	// interpolationUseEndValues(XI, X1, Y1, X2, Y2, ...)
 	close(interpolateArgs([1.5, 1, 10, 2, 20], 'linear'), 15, 0);
@@ -24411,6 +24425,34 @@ await (async () => {
 				const tol = (paths ? 1e-6 : loose || stepped ? 1e-7 : 1e-12) * (scale || 1);
 				for (let i = 0; i < x.length; i++) {
 					assert(Math.abs(x[i] - y[i]) <= tol, `${name}: ${o.label} at ${a.t[i]} is ${y[i]}, was ${x[i]}`);
+				}
+			}
+		}
+	});
+
+	test('a step table reads as a step in every model new to the process, however its reader is compiled', async () => {
+		// V8, compiling a model's clock pass in the background with a table's
+		// reader inlined, can build code that reads the step table Above as
+		// straight lines between its points, and only in a model whose
+		// generated code is new to the process (the round trip above met it
+		// now and then). So each model here is new, by a clock expression no
+		// other one has, and Above is read at every output time.
+		const label = 'Above [Cs-137]';
+		for (let k = 0; k < 200; k++) {
+			const model = { ...fx.EVERY_KIND, expressions: [...(fx.EVERY_KIND.expressions ?? []), { name: `Clock_${k}`, equation: `time + ${k}` }] };
+			const out = await eco.exportEco(model);
+			const back = await importEcoFile(out.bytes);
+			const projects = [
+				['the original', fx.withoutBlocks(fx.openedModel(model), out.report.skipped.map((s) => s.name))],
+				['the re-imported model', fx.openedModel(back.project)],
+			];
+			for (const [which, project] of projects) {
+				const r = run(project);
+				const v = r.series(r.outputs().find((o) => o.label === label));
+				// 'above' over [[0, 1], [5, 3]]: 1 at the start, 3 from then on.
+				for (let i = 0; i < r.t.length; i++) {
+					const want = r.t[i] > 0 ? 3 : 1;
+					assert(v[i] === want, `model ${k}, ${which}: ${label} at ${r.t[i]} is ${v[i]}, not ${want}`);
 				}
 			}
 		}

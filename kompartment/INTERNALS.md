@@ -6799,6 +6799,32 @@ re-measured. The tangent now leaves out what the derivative does not read
 (*Less work per call*), but the ceiling is still judged on the whole of it, so
 the same models reach it as before.
 
+## One reader for every lookup table
+
+A lookup table is an instance of one class, `Table` in `src/domain/lookup.js`:
+its points, its rule held as a number (the rule's place in `INTERPOLATIONS`),
+and the methods `at` and `slopeAt`, which every table shares and which read
+only the table's own fields.
+
+The reason is V8. The generated code reads each table read at the clock with
+`TAB[k].at(ctx.t)`, and the optimising compiler inlines that call. V8 11.3, the
+engine in Node 20, compiling such code on its background thread, can build code
+that reads a step table as straight lines between its points when the reader
+compares the name of its rule, and the model keeps that code, and that reading,
+to the end of the run. It takes all three: the inlining, the background compile
+and the comparison of the name. With the inlining or the background compile
+turned off it is not seen, nor with the rule compared as a number, and only
+the last of the three is the code's to choose.
+
+Only a model whose generated code is new to the process meets it. Functions
+made by `new Function` from the same source share what V8 learns and compiles
+for them, so a model's code is compiled afresh only when it is new.
+
+`test/run.js` has two tests for it. One checks that every table has the one
+reader and that the reader compares no rule by its name. The other runs 200
+models new to the process, each with a clock expression of its own, and checks
+that their step table reads as a step at every output time.
+
 ## An LU that keeps its pivots
 
 A stiff run factorises I - h*J hundreds or thousands of times. The pattern
