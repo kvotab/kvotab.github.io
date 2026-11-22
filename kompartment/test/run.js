@@ -5103,6 +5103,115 @@ test('the tab keeps a draft of the model, and knows when it cannot', async () =>
 	assert(!autosave.sameModel(raw, null) && !autosave.sameModel(null, raw), 'null was compared');
 });
 
+test('a model replaced by another is put aside first, and the last five are kept between visits', async () => {
+	const A = await import('../src/ui/aside.js');
+	const { readFileSync } = await import('node:fs');
+	const tick = () => new Promise((r) => setTimeout(r, 15));
+
+	// Worth keeping: one edited since it was opened, or one from anywhere but
+	// the example list or New as they come -- those are one choice away.
+	assert(A.worthPuttingAside({ edited: true, source: { example: 'x.json' } }), 'an edited example');
+	assert(!A.worthPuttingAside({ edited: false, source: { example: 'x.json' } }), 'an example as it comes');
+	assert(!A.worthPuttingAside({ edited: false, source: { label: 'New model', blank: true } }), 'New as it comes');
+	assert(A.worthPuttingAside({ edited: false, source: { label: 'site.eco' } }), 'a file');
+	assert(A.worthPuttingAside({ edited: false, source: { label: 'Model from a link', link: true } }), 'a link');
+	assert(!A.worthPuttingAside({ edited: false, source: null }), 'nothing at all');
+	// One brought back, or a draft restored, whatever it was first called.
+	assert(A.worthPuttingAside({ edited: false, source: { label: 'New model', broughtBack: true } }),
+		'a model begun with New and brought back would be lost to the next replacement');
+	assert(A.worthPuttingAside({ edited: false, source: { label: 'New model', restored: true } }), 'a restored draft');
+
+	// In this tab alone, where there is no database: newest first, the same
+	// model again moved to the top rather than kept twice, five at most.
+	const tab = A.asideStore({ idb: null });
+	const first = tab.put({ text: '{"name":"A"}', title: 'A', label: 'a.json' });
+	tab.put({ text: '{"name":"B"}', title: 'B' });
+	tab.put({ text: '{"name":"A"}', title: 'A' });
+	assert(tab.list().map((e) => e.title).join() === 'A,B', tab.list().map((e) => e.title).join());
+	assert(!tab.list().some((e) => e.id === first.id), 'the first A kept its place beside the second');
+	for (const n of ['C', 'D', 'E', 'F']) tab.put({ text: `{"name":"${n}"}`, title: n });
+	assert(tab.list().map((e) => e.title).join() === 'F,E,D,C,A', `the oldest did not go: ${tab.list().map((e) => e.title)}`);
+	assert(tab.list().every((e) => !('text' in e) && e.bytes > 0), 'the list carries the models themselves');
+	const back = tab.take(tab.list()[1].id);
+	assert(back.text === '{"name":"E"}' && back.title === 'E', JSON.stringify(back));
+	assert(tab.list().map((e) => e.title).join() === 'F,D,C,A', 'what was taken is still listed');
+	assert(tab.take('nothing') === null, 'a stale id brought something back');
+	tab.remove(tab.list()[0].id);
+	assert(tab.list().map((e) => e.title).join() === 'D,C,A', 'removed');
+
+	// Between visits, through a database that outlives the store: a stand-in
+	// for the browser's, as far as the store asks of it.
+	const fakeIdb = () => {
+		const data = new Map();
+		return {
+			data,
+			open() {
+				const req = {};
+				queueMicrotask(() => {
+					req.result = {
+						transaction() {
+							const store = {
+								getAll: () => ({ result: [...data.values()].map((v) => structuredClone(v)) }),
+								put: (v) => { data.set(v.id, structuredClone(v)); return { result: v.id }; },
+								delete: (id) => { data.delete(id); return { result: undefined }; },
+							};
+							const tx = { objectStore: () => store, oncomplete: null, onerror: null, onabort: null };
+							setTimeout(() => tx.oncomplete?.(), 0);
+							return tx;
+						},
+					};
+					req.onupgradeneeded?.();
+					req.onsuccess?.();
+				});
+				return req;
+			},
+		};
+	};
+	const idb = fakeIdb();
+	const visit1 = A.asideStore({ idb });
+	for (let i = 0; i < 7; i++) visit1.put({ text: `{"n":${i}}`, title: `M${i}`, label: `m${i}.json` });
+	await tick();
+	assert(idb.data.size === 5, `${idb.data.size} kept for the next visit`);
+	const visit2 = A.asideStore({ idb });
+	const listed = await visit2.load();
+	assert(listed.map((e) => e.title).join() === 'M6,M5,M4,M3,M2', listed.map((e) => e.title).join());
+	assert(listed[0].label === 'm6.json', JSON.stringify(listed[0]));
+	const again = visit2.take(listed[0].id);
+	assert(again.text === '{"n":6}', JSON.stringify(again));
+	await tick();
+	assert(idb.data.size === 4 && ![...idb.data.values()].some((e) => e.text === '{"n":6}'),
+		'what was brought back stayed in the database');
+	// A model put aside before the database answered is joined to what it holds.
+	const visit3 = A.asideStore({ idb });
+	visit3.put({ text: '{"n":"early"}', title: 'early' });
+	const joined = await visit3.load();
+	assert(joined[0].title === 'early' && joined.length === 5, joined.map((e) => e.title).join());
+
+	// The editor: the model leaving is worked out before anything forgets it
+	// and put aside last; New, an example, a file and a restored draft all
+	// come through setModel; an edit puts the offer away; the list at the top
+	// brings one back; an unanswered draft is kept until it is answered.
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	assert(/function setModel\(raw, source\) \{\n(\t\/\/.*\n)+\tconst leaving = leavingModel\(\);/.test(app),
+		'setModel does not take the model leaving first');
+	assert(/\tif \(leaving\) \{\n\t\tconst entry = asideStore\.put\(leaving\);\n\t\tasideOffer = \{ id: entry\.id, title: entry\.title, by: sourceWords\(source\) \};/.test(app),
+		'the model leaving is not put aside');
+	assert(/aside\.worthPuttingAside\(\{ edited: undoStack\.canUndo, source: modelSource \}\)/.test(app),
+		'whether it was edited is not read off the undo history');
+	assert(/\$\('#new'\)\.addEventListener\('click', \(\) => setModel\(blankModel\(\), \{ label: 'New model', blank: true \}\)\);/.test(app),
+		'New does not come through setModel');
+	assert(/function modelChanged\(opts = \{\}\) \{\n\tmodelEdits \+= 1;\n(\t\/\/.*\n)+\tif \(asideOffer\) \{ asideOffer = null; renderAsideOffer\(\); \}/.test(app),
+		'an edit does not put the offer away');
+	assert(/if \(sel\.value\.startsWith\('aside:'\)\) \{[\s\S]*?bringBack\(id\);/.test(app), 'the list does not bring one back');
+	assert(/kept = asideStore\.put\(\{\n\t\t\t\ttext: JSON\.stringify\(held\.raw\),/.test(app)
+		&& /const worth = !\('edited' in m\) \|\| aside\.worthPuttingAside\(\{/.test(app)
+		&& /if \(kept\) asideStore\.take\(kept\.id\);/.test(app)
+		&& /if \(kept\) \{ asideStore\.remove\(kept\.id\); renderAsidePicker\(\); \}/.test(app),
+		'an unanswered draft is not kept until it is answered');
+	const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+	assert(/<div class="draft-offer" id="aside-offer" role="status" hidden><\/div>/.test(html), 'no line for the offer');
+});
+
 test('one lookup index answers exactly as the walk it replaces', async () => {
 	const ed = await import('../src/domain/edit.js');
 	const { readFileSync } = await import('node:fs');

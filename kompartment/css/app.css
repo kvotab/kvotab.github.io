@@ -513,18 +513,23 @@ main > #workspace { grid-column: 3; }
 
 #workspace {
 	display: grid;
-	/* tabs, error banner, the panels */
-	grid-template-rows: auto auto minmax(0, 1fr);
+	/* tabs, error banner, the draft's offer, the offer of a model put aside,
+	   the panels */
+	grid-template-rows: auto auto auto auto minmax(0, 1fr);
 	min-width: 0;
 	min-height: 0;
 }
 
 /* Assigned explicitly, because the banner is `hidden` most of the time and a
    display:none child is not a grid item: with positional placement the panels
-   would land on the banner's `auto` row and collapse. */
+   would land on the banner's `auto` row and collapse. The two offers have rows
+   of their own for the same reason: placed by position, the second line shown
+   went to a row after the panels, below the window. */
 #workspace > .tabs { grid-row: 1; }
 #workspace > #error { grid-row: 2; margin: 10px 14px 0; }
-#workspace > .work-body { grid-row: 3; }
+#workspace > #draft-offer { grid-row: 3; }
+#workspace > #aside-offer { grid-row: 4; }
+#workspace > .work-body { grid-row: 5; }
 
 /* --- sidebar ----------------------------------------------------------- */
 

@@ -84,6 +84,7 @@ exercise `domain/` and `sim/` directly, which is why they can be plain Node.
 | `src/domain/layout.js` | Laying an imported diagram out, since a file's positions are not read |
 | `src/ui/app.js` | The shell: tabs, toolbar, settings, notices |
 | `src/ui/scenarios.js` | Which scenarios run beside the selected one, and how their lines share a chart |
+| `src/ui/aside.js` | The models put aside when New, an example, a file or a restored draft replaced them; the last five kept in IndexedDB |
 | `src/ui/infopanel.js` | The (i) beside a setting and the panel it opens: what a setting is, on demand |
 | `src/ui/siminfo.js` | What each simulation setting is, for that panel |
 | `src/ui/panelinfo.js`, `src/ui/blockinfo.js`, `src/ui/dialoginfo.js` | The same for the left panel's parts and the Index lists and JSON tabs, each kind of block's settings window, and every dialog |

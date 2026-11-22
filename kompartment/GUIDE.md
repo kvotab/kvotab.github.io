@@ -2996,6 +2996,28 @@ It is a draft and not a save, and the difference matters:
   edited: the link still holds it, and somebody who opens one as an app should
   not lose a draft of their own they could not see being replaced.
 
+### A model that is replaced is put aside
+
+**New**, an example chosen from the list at the top, a file opened or dropped,
+a draft restored: each replaces the model in the tab, and undo does not reach
+back past that. So the model being replaced is **put aside** first, when it is
+worth keeping — one edited since it was opened, or one that came from anywhere
+but the example list or New as they come, which are one choice away. A line
+above the tabs names it, with **Bring it back**, which opens it again as it was
+and puts the model it replaces aside in its turn; the line goes when it is
+answered, or when the new model is edited.
+
+The list at the top keeps the last five put aside under **Put aside**, newest
+first with how long ago, and choosing one brings it back the same way. They are
+kept between visits too, in this browser's own database, which holds a large
+assessment as easily as a small model. A draft offered when the tab opens is
+kept there as well until the offer is answered — **Restore** brings it back,
+**Discard** lets it go — since the tab writes its own draft over it a moment
+later and the offer would otherwise be its only copy.
+
+What is put aside is the model: not its results, and not its undo history.
+**Save…** is still the way to keep a model past this browser.
+
 ## Edits that do not need solving again
 
 A run produces one thing: the inventory of every compartment over time. Every

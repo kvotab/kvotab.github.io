@@ -69,6 +69,7 @@ import { openShapeSettings } from './shapedialog.js';
 import { renderJacobianView } from './jacobianview.js';
 import { openHandoff, handoffName } from './handoff.js';
 import * as autosave from './autosave.js';
+import * as aside from './aside.js';
 import * as shared from './clipboard.js';
 import { workersFor } from '../worker/prob-pool.js';
 import { SPLIT_MODES } from '../sim/split.js';
@@ -787,9 +788,29 @@ const draftKeeper = autosave.autosaver({
 		+ ' Save it to a file to be sure of it.', 'warn'),
 });
 
+/**
+ * The models put aside when another took their place -- New, an example, a
+ * file, a draft restored -- the last five kept between visits. See ./aside.js.
+ */
+const asideStore = aside.asideStore();
+/**
+ * The line above the tabs that names the model just put aside and brings it
+ * back: `{ id, title, by }` while it stands, null once it is answered or the
+ * new model is edited.
+ */
+let asideOffer = null;
+
 /** What the draft is filed under, so the offer can name it. */
 function draftMeta() {
-	return { label: modelSource?.label ?? state.raw?.name ?? UNTITLED, name: state.raw?.name ?? '' };
+	return {
+		label: modelSource?.label ?? state.raw?.name ?? UNTITLED,
+		name: state.raw?.name ?? '',
+		// Whether it is worth keeping beside the models put aside, when the
+		// next visit opens on another: see `offerDraft` and ./aside.js.
+		edited: undoStack.canUndo,
+		example: modelSource?.example ?? null,
+		blank: !!modelSource?.blank,
+	};
 }
 /**
  * A run that was wanted while one was already going.
@@ -3386,6 +3407,9 @@ function setLoadingStage(stage, detail) {
  */
 function modelChanged(opts = {}) {
 	modelEdits += 1;
+	// Working on in the model that replaced one puts the offer to bring that
+	// one back away; it stays in the list at the top.
+	if (asideOffer) { asideOffer = null; renderAsideOffer(); }
 	// Any edit calls off a pending cut: a move whose source has been changed
 	// under it is a move nobody asked for. The paste clears it before it moves
 	// anything, so this does not cancel the move it is performing.
@@ -14822,6 +14846,9 @@ function applyModelEditor() {
 	// hand-edited model can differ from the one before it in every way at
 	// once and "Add 4 blocks" would be a third of the truth.
 	undoStack.record(state.raw, viewNow(), { label: 'Apply the edited JSON' });
+	// An edit like any other, here as in `modelChanged`: the offer to bring
+	// back the model this one replaced is put away, and the list keeps it.
+	if (asideOffer) { asideOffer = null; renderAsideOffer(); }
 	renderEditorViews();
 	renderModelEditor({ force: true });
 	renderUndoButtons();
@@ -14916,6 +14943,11 @@ function shortName(name, max = 30) {
  * at each of them: see noteModelSource.
  */
 function setModel(raw, source) {
+	// The model about to be replaced, put aside first where it is worth
+	// keeping -- edited since it was opened, or from anywhere but the example
+	// list or New as they come. Worked out before anything below forgets it:
+	// the undo history is what says whether it was edited.
+	const leaving = leavingModel();
 	const box = $('#import-report');
 	if (box) box.hidden = true;
 	noteModelSource(source);
@@ -15109,6 +15141,116 @@ function setModel(raw, source) {
 	// of the draft it would overwrite is not on screen, and that draft is
 	// their own work; the first edit is soon enough to replace it.
 	if (!source?.link) draftKeeper.note(state.raw, draftMeta());
+	// And the model it replaced, kept and offered back on the line above the
+	// tabs -- last, so nothing above takes the offer down as it renders.
+	if (leaving) {
+		const entry = asideStore.put(leaving);
+		asideOffer = { id: entry.id, title: entry.title, by: sourceWords(source) };
+	} else {
+		asideOffer = null;
+	}
+	renderAsideOffer();
+	renderAsidePicker();
+}
+
+/**
+ * The model in the tab as an entry to put aside, or null when it is not
+ * worth keeping: see `worthPuttingAside` in ./aside.js.
+ */
+function leavingModel() {
+	if (!state.raw) return null;
+	if (!aside.worthPuttingAside({ edited: undoStack.canUndo, source: modelSource })) return null;
+	let text;
+	try { text = JSON.stringify(state.raw); } catch { return null; }
+	return { text, title: modelTitle(state.raw, modelSource), label: modelSource?.label ?? '' };
+}
+
+/** What a model is called in the list and on the line: its name, or where it came from. */
+function modelTitle(raw, source) {
+	const name = String(raw?.name ?? '').trim();
+	if (name) return name;
+	if (source?.example) return exampleTitle(source.example);
+	return source?.label ?? UNTITLED;
+}
+
+function exampleTitle(file) {
+	return EXAMPLES.find((e) => e.file === file)?.title ?? file;
+}
+
+/** What took a model's place, as the line says it. */
+function sourceWords(source) {
+	if (source?.example) return `the example ${exampleTitle(source.example)}`;
+	if (source?.blank || source?.label === 'New model') return 'a new model';
+	if (source?.link) return 'the model from the link';
+	return shortName(source?.label ?? UNTITLED);
+}
+
+/**
+ * The line above the tabs: the model just put aside, and the way back to it.
+ * One line, beside the draft's offer and in its form, and gone as soon as
+ * it is answered or the model that replaced it is edited -- the model stays
+ * in the list at the top either way.
+ */
+function renderAsideOffer() {
+	const bar = $('#aside-offer');
+	if (!bar) return;
+	const o = asideOffer;
+	if (!o) { bar.replaceChildren(); bar.hidden = true; return; }
+	const back = el('button', { type: 'button', className: 'primary' }, 'Bring it back');
+	back.addEventListener('click', () => bringBack(o.id));
+	const away = el('button', { type: 'button', className: 'ghost' }, 'Dismiss');
+	away.addEventListener('click', () => { asideOffer = null; renderAsideOffer(); });
+	bar.replaceChildren(
+		el('span', { className: 'draft-what' },
+			el('b', {}, shortName(o.title)),
+			` was put aside when ${o.by} took its place \u2014 it is under Put aside in the list at the top.`),
+		back, away);
+	bar.hidden = false;
+}
+
+/**
+ * The list at the top, under its own heading: the models put aside, newest
+ * first, each with how long ago. Choosing one brings it back.
+ */
+function renderAsidePicker() {
+	const sel = $('#example');
+	if (!sel) return;
+	$('#aside-group')?.remove();
+	const kept = asideStore.list();
+	if (!kept.length) return;
+	const group = el('optgroup', { id: 'aside-group', label: 'Put aside' });
+	for (const e of kept) {
+		group.append(el('option', { value: `aside:${e.id}`, title: e.title },
+			`${shortName(e.title, 26)} \u00b7 ${autosave.howLongAgo(e.at)}`));
+	}
+	sel.append(group);
+	// Rebuilt, the list goes on naming the model that is loaded.
+	noteModelSource(modelSource);
+}
+
+/**
+ * A model put aside, brought back: taken out of the list and opened as it
+ * was, which puts the model it replaces aside in its turn.
+ */
+function bringBack(id) {
+	const entry = asideStore.take(id);
+	if (!entry) {
+		flash('That model is no longer kept.', 'warn');
+		renderAsidePicker();
+		return;
+	}
+	let raw;
+	try {
+		raw = JSON.parse(entry.text);
+	} catch {
+		flash(`${entry.title} could not be read back.`, 'warn');
+		renderAsidePicker();
+		return;
+	}
+	setModel(raw, { label: entry.label || entry.title, broughtBack: true });
+	flash(asideOffer
+		? `${entry.title} is back, and ${asideOffer.title} was put aside in its place.`
+		: `${entry.title} is back.`, 'info');
 }
 
 
@@ -15830,12 +15972,32 @@ export function boot() {
 		groups.get(label).append(el('option', { value: ex.file }, ex.title));
 	}
 	sel.append(...groups.values());
-	sel.addEventListener('change', () => loadExample(sel.value).catch((e) => {
-		// Nothing was replaced, so the picker goes back to naming what is
-		// still loaded instead of the example that never arrived.
-		noteModelSource(modelSource);
-		showError({ name: 'Load', message: e.message });
-	}));
+	sel.addEventListener('change', () => {
+		// A model put aside, from its own group at the foot of the list.
+		if (sel.value.startsWith('aside:')) {
+			const id = sel.value.slice('aside:'.length);
+			noteModelSource(modelSource);
+			bringBack(id);
+			return;
+		}
+		loadExample(sel.value).catch((e) => {
+			// Nothing was replaced, so the picker goes back to naming what is
+			// still loaded instead of the example that never arrived.
+			noteModelSource(modelSource);
+			showError({ name: 'Load', message: e.message });
+		});
+	});
+	// How long ago each was put aside, as of when the list is opened: the
+	// words alone, in place, so the list being opened is not rebuilt under it.
+	sel.addEventListener('focus', () => {
+		const at = new Map(asideStore.list().map((e) => [`aside:${e.id}`, e]));
+		for (const opt of $('#aside-group')?.children ?? []) {
+			const e = at.get(opt.value);
+			if (e) opt.textContent = `${shortName(e.title, 26)} \u00b7 ${autosave.howLongAgo(e.at)}`;
+		}
+	});
+	// What earlier visits put aside, once the database has answered.
+	asideStore.load().then(() => renderAsidePicker()).catch(() => {});
 
 	$('#run').addEventListener('click', () => runSimulation({ manual: true }));
 	$('#cancel').addEventListener('click', cancelSimulation);
@@ -15855,7 +16017,7 @@ export function boot() {
 	// Right-clicking it does the same: that is where a hand goes looking for
 	// "the other way to do this", and now there is only the one way.
 	$('#save').addEventListener('contextmenu', (ev) => { ev.preventDefault(); openSave(); });
-	$('#new').addEventListener('click', () => setModel(blankModel(), { label: 'New model' }));
+	$('#new').addEventListener('click', () => setModel(blankModel(), { label: 'New model', blank: true }));
 	// The table's own menu carries the export; there is no toolbar button.
 	$('#panel-table').addEventListener('contextmenu', tableMenu);
 	$('#table-mode').addEventListener('change', (ev) => {
@@ -16291,17 +16453,44 @@ function offerDraft(held) {
 	// thing again. `sameModel` does the cheap half of that comparison first,
 	// so a 35 MB assessment is not serialised on every cold start.
 	if (autosave.sameModel(held.raw, state.raw)) { bar.hidden = true; return; }
+	// The draft in storage is written over two seconds after the tab opens,
+	// by the model it opened on, so until the offer is answered this is the
+	// only copy -- and a reload lost it. Kept with the models put aside, for
+	// the next visit too, and taken out again whichever way it is answered.
+	let kept = null;
+	// Not a draft that is an example or New as they come: one choice away, as
+	// for a model being replaced. A draft written before it said is kept.
+	const m = held.meta ?? {};
+	const worth = !('edited' in m) || aside.worthPuttingAside({
+		edited: !!m.edited,
+		source: m.example ? { example: m.example } : { label: m.label, blank: !!m.blank },
+	});
+	if (worth) {
+		try {
+			kept = asideStore.put({
+				text: JSON.stringify(held.raw),
+				title: held.meta?.label || held.raw.name || UNTITLED,
+				label: held.meta?.label || held.raw.name || UNTITLED,
+			});
+			renderAsidePicker();
+		} catch { kept = null; }
+	}
 	const done = () => { bar.replaceChildren(); bar.hidden = true; };
 	const restore = el('button', { type: 'button', className: 'primary' }, 'Restore');
 	restore.addEventListener('click', () => {
 		done();
-		const source = { label: held.meta?.label || held.raw.name || UNTITLED };
+		if (kept) asideStore.take(kept.id);
+		const source = { label: held.meta?.label || held.raw.name || UNTITLED, restored: true };
 		setModel(held.raw, source);
 		flash('Restored what this tab was working on. It was never saved to a '
 			+ 'file — use Save… for that.', 'info');
 	});
 	const no = el('button', { type: 'button', className: 'ghost' }, 'Discard');
-	no.addEventListener('click', () => { done(); autosave.forget(); });
+	no.addEventListener('click', () => {
+		done();
+		autosave.forget();
+		if (kept) { asideStore.remove(kept.id); renderAsidePicker(); }
+	});
 	bar.replaceChildren(
 		el('span', { className: 'draft-what' },
 			'This tab was working on ',
