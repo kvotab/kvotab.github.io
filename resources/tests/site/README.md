@@ -1387,3 +1387,35 @@ where the cross is drawn needs a cross to look at).
 A model is pasted into the JSON tab with the tab open, and Apply clicked only
 once it is on: it stays off until the text has been checked, and a click
 before then does nothing, leaving the example the page opened with.
+
+## test-chrome-kompartment-checks.py
+
+Kompartment's checks on a model and its run, in the page.
+
+    SITE_HTTP_PORT=8765 SITE_CDP_PORT=9222 python3 test-chrome-kompartment-checks.py    # expect 40/40
+
+Seven things a reader does to check a model or read its run. A model edited and
+then replaced by an example is put aside first: the line above the tabs names it
+and what replaced it, Bring it back opens it with the edit in it, New puts it
+aside again, an edit of the new model puts the line away, and after a reload the
+list at the top has it under Put aside and brings it back; an example as it
+comes is not put aside (`kompartment/src/ui/aside.js`). A name an equation writes
+that no block has is offered the block one letter away in the problem strip; the
+button writes it in, the problem goes, and one undo takes it back
+(`src/domain/suggest.js`). The Jacobian check of a Langmuir availability at an
+empty compartment agrees, and says that entries one step put out met the
+generated value at smaller steps (`src/sim/jaccheck.js`). The Table's peaks mark
+a sink still rising at the end of the run, not a compartment that peaked inside
+it, and say so under the table (`src/ui/tableviews.js`). The optimisation window
+draws the ranges and the correlations it is handed, marks a correlation of 0.93,
+and offers to work them out for an answer that came without them
+(`src/ui/optdialog.js`). Check the run of a decay chain at a loose tolerance
+says it nearly holds or does not and names the compartment that moved; a second
+check stopped at once reports nothing and leaves the run on show answering the
+Table; and Run with the careful setting is one named edit
+(`src/sim/checkrun.js`, `src/ui/checkdialog.js`). Where it goes draws the
+biosphere example's account with its four transfers, answers another nuclide,
+and redraws on the slider (`src/sim/flows.js`, `src/ui/flowsdialog.js`). The
+buttons in the Simulation section are pressed from the script: the section
+starts folded away, and a mouse press at a folded button's place lands on the
+block tree. After each, the page has raised nothing.
