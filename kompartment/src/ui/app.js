@@ -11695,19 +11695,43 @@ function drawPeaksTable(wrap, meta, shown, times, chosen, timeUnit) {
 	table.append(el('thead', {}, el('tr', {}, ...headText.map((h) => el('th', {}, h)))));
 	const body = el('tbody');
 	const sheet = [headText];
+	// A curve still going up when the run ends has its highest at the last
+	// output time because that is where the run stopped: its peak, and the
+	// time of it, are the run's last value and may come later. Said in the
+	// row, beside the time, and counted under the table.
+	const rising = [];
 	meta.forEach((m, k) => {
 		const c = shown[k];
 		const row = c?.length ? peakRow(times, c, chosen) : null;
 		const cells = row ? [row.peak, row.at, row.total, ...row.values] : [NaN, NaN, NaN, ...chosen.map(() => NaN)];
-		body.append(el('tr', {},
+		if (row?.rising) rising.push(k);
+		body.append(el('tr', row?.rising ? { className: 'is-rising' } : {},
 			el('td', {}, m.label),
 			el('td', { className: 'unit' }, m.unit),
-			...cells.map((v) => el('td', {}, fmtValue(v)))));
+			...cells.map((v, i) => (i === 1 && row?.rising
+				? el('td', { className: 'peak-at-end' }, fmtValue(v),
+					el('span', { className: 'peak-rising' }, ' still rising'))
+				: el('td', {}, fmtValue(v))))));
 		sheet.push([m.label, m.unit, ...cells]);
 	});
+	// The copy says it too, in a column of its own, where any row is.
+	if (rising.length) {
+		sheet[0] = [...sheet[0], 'Still rising at the end'];
+		const at = new Set(rising);
+		for (let k = 0; k < meta.length; k++) sheet[k + 1].push(at.has(k) ? 'yes' : '');
+	}
 	table.append(body);
 	wrap.append(table);
 	tableSheet = () => sheet;
+	if (rising.length) {
+		const one = rising.length === 1;
+		wrap.append(el('p', { className: 'hint table-hint peak-rising-note' },
+			`${one ? 'One series is' : `${rising.length.toLocaleString()} series are`} still rising `
+			+ `when the run ends: ${one ? 'its' : 'their'} highest is at the last output time, `
+			+ `${times.length ? fmtValue(times[times.length - 1]) : ''} ${timeUnit}, because that is where `
+			+ `the run stops, and the curve${one ? '’s' : 's’'} own peak may come after it. A run that `
+			+ 'ends later finds it.'));
+	}
 	wrap.append(el('p', { className: 'hint table-hint' },
 		'The integral is the curve added up over the run, by the trapezium rule between its points. '
 		+ (chosen.length ? '' : 'Type times in At times for a column of each curve’s value there.')));

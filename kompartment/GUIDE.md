@@ -2871,7 +2871,14 @@ the same chips above it — and **Layout** says what its rows are:
   points and held flat beyond the run, as a derived value at a time is;
 - **peaks** — a row per series: its unit, its highest value, the time it got
   there, the curve added up over the run by the trapezium rule (in its unit times
-  the time unit), and its value at each time in **At times**;
+  the time unit), and its value at each time in **At times**. A curve whose
+  highest is at the last output time and still above the point before it is
+  **still rising** when the run ends: its time of peak says so, in amber, a line
+  under the table counts them, and **Copy** gives them a column of their own. Its
+  peak there is where the run stopped, not where the curve turned, and the
+  curve's own peak may come after the end of the run — a run that ends later
+  finds it. A curve that has levelled off at the end is not rising: its highest
+  is first reached earlier, and that is the time given;
 - **pivot** — an index list down the side and another, or the blocks, across the
   top; each cell the peak, the time of the peak, the integral or the value at a
   time of the series there. Series that differ only in a list on neither side

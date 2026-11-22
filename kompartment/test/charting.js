@@ -20,7 +20,7 @@ import {
 } from '../src/ui/chartplan.js';
 import { readNumber, readNumberList } from '../src/ui/readnum.js';
 import {
-	valuesAt, peakRow, cellValue, pivotChoices, pivotCells, toTSV,
+	valuesAt, peakRow, cellValue, pivotChoices, pivotCells, toTSV, risingAtEnd,
 } from '../src/ui/tableviews.js';
 import {
 	TimeChart, lineLook, MAX_SERIES, MOST_LINES, SERIES_DASHES,
@@ -411,6 +411,24 @@ test('a number is read with a decimal comma, and a list of times with its separa
 	assert(json(r.values) === json([1000, 10000, 1e5]), json(r));
 	r = readNumberList('1e3; soon; 1e4');
 	assert(json(r.values) === json([1e3, 1e4]) && json(r.bad) === json(['soon']), json(r));
+});
+
+test('a curve still rising when the run ends is said to be, in the peaks table and in its copy', () => {
+	// Its highest at the last output time because that is where the run
+	// stopped: the peak an assessment quotes may come after it.
+	const t = [0, 10, 20, 30];
+	assert(risingAtEnd(t, [0, 1, 2, 3]) === true, 'climbing to the end');
+	assert(risingAtEnd(t, [0, 4, 8, 2]) === false, 'peaked inside the run');
+	assert(risingAtEnd(t, [0, 4, 8, 8]) === false, 'levelled off: its highest is first reached at 20');
+	assert(risingAtEnd(t, [0, 0, 0, 0]) === false, 'flat');
+	assert(risingAtEnd(t, [5, 4, 3, 4]) === false, 'turned up at the end, below where it began');
+	assert(risingAtEnd(t, [0, 1, 2, NaN]) === false, 'a last value that is not a number');
+	assert(risingAtEnd([0], [1]) === false, 'one point');
+	assert(peakRow(t, [0, 1, 2, 3]).rising === true && peakRow(t, [0, 4, 8, 2]).rising === false, 'the row');
+	const app = src('../src/ui/app.js');
+	assert(/if \(row\?\.rising\) rising\.push\(k\);/.test(app), 'the table does not mark it');
+	assert(/el\('span', \{ className: 'peak-rising' \}, ' still rising'\)/.test(app), 'the row does not say it');
+	assert(/sheet\[0\] = \[\.\.\.sheet\[0\], 'Still rising at the end'\];/.test(app), 'the copy does not say it');
 });
 
 test('the peaks, a value between points, and a pivot that adds before it takes the number', () => {

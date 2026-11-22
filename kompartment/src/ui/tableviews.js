@@ -30,9 +30,28 @@ export function valuesAt(t, values, times) {
 }
 
 /**
+ * Whether a curve is still on its way up when the run ends: its highest at
+ * the last output time, and above the point before it.
+ *
+ * A peak there is where the run stopped, not where the curve turned, and the
+ * number an assessment quotes is the curve's own peak -- which may come after
+ * the end of the run. A curve that has levelled off at the end is not rising:
+ * its highest is reached at an earlier point, where `time_of_max` puts it.
+ */
+export function risingAtEnd(t, values) {
+	const n = Math.min(t?.length ?? 0, values?.length ?? 0);
+	if (n < 2) return false;
+	const last = values[n - 1];
+	const before = values[n - 2];
+	if (!Number.isFinite(last) || !Number.isFinite(before) || !(last > before)) return false;
+	return reduce('time_of_max', t, values) === t[n - 1];
+}
+
+/**
  * The numbers of one series, for a row of the peaks table.
  *
- * @returns {{peak: number, at: number, total: number, values: number[]}}
+ * @returns {{peak: number, at: number, total: number, values: number[], rising: boolean}}
+ *   `rising` when the curve is still going up at the end of the run
  */
 export function peakRow(t, values, times = []) {
 	const run = integral(t, values);
@@ -41,6 +60,7 @@ export function peakRow(t, values, times = []) {
 		at: reduce('time_of_max', t, values),
 		total: run.length ? run[run.length - 1] : NaN,
 		values: valuesAt(t, values, times),
+		rising: risingAtEnd(t, values),
 	};
 }
 

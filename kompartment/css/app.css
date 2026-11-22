@@ -2071,6 +2071,11 @@ textarea.model-desc {
 
 .table-peaks td.unit { text-align: left; color: var(--text-secondary); }
 
+/* A curve still rising when the run ends: its time of peak is where the run
+   stopped, said beside the number in the warning ink. */
+.table-peaks td.peak-at-end { color: var(--warn); }
+.table-peaks .peak-rising { font-size: 10.5px; white-space: nowrap; }
+
 /* --- table ------------------------------------------------------------- */
 
 table {
