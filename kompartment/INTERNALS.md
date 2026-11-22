@@ -3624,6 +3624,26 @@ initial state first, then three states with every compartment filled at 1e-3,
 nuclide in one box would otherwise report a clean bill on a matrix it had
 barely touched.
 
+**A disagreement is differenced again before it is reported** (`riddersColumn`).
+The group pass differences once, forward, at a step relative to the state — and
+at an empty compartment relative to the largest state in the model, which is
+where one difference goes wrong on an exact entry: a Langmuir availability
+`(A + a)/(A + b)` at `A = 0` turns over at `b`, and a step of 1e4 against
+`b = 1e-2` reads the flux's derivative a hundred times too large. Each column
+with a disagreement (24 per state, worst first; 6 past 8,000 states) is
+differenced again at ten steps shrinking by 1.4 and extrapolated to nought
+through a Neville tableau — `h`, `h^2`, ... taken away for a one-sided quotient
+at zero, `h^2`, `h^4`, ... for a central one elsewhere — stopping where the
+diagonal moves by more than twice the best error (Numerical Recipes' `dfridr`).
+Ten steps cover a factor of twenty, so the tableau is started again at 1e-2,
+1e-4 and 1e-6 of the check's step, and the estimate with the smallest error is
+kept; a start whose estimates all meet the generated entries ends the search.
+An entry within 0.1% of its estimate is dropped from the disagreements and
+counted in `refined`; one that is not keeps its place with the estimate as
+`numeric`, the tableau's error as `error` and the single difference as `first`.
+Planted errors are still reported: the tableau reaches the derivative, not the
+generated entry.
+
 **Two passes, because only one of them can use the colouring.** The values are
 swept group by group: a group's columns share no row, so one perturbation of
 all of them moves each row by the one entry of that group which owns it, and

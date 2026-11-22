@@ -125,6 +125,39 @@ const REL_STEP = 1e-6;
 const TOLERANCE = 1e-3;
 
 /**
+ * Ridders' method, for a disagreement looked at again: how many steps, how
+ * much smaller each is than the one before, and when rounding is taken to
+ * have won -- the tableau's diagonal moving by more than `RIDDERS_SAFE` times
+ * the best error it has reached. Numerical Recipes' `dfridr`, row for row.
+ */
+const RIDDERS_LEVELS = 10;
+const RIDDERS_SHRINK = 1.4;
+const RIDDERS_SAFE = 2;
+
+/**
+ * Where each run of the tableau starts, as fractions of the check's own step.
+ *
+ * Ten steps shrinking by 1.4 cover a factor of twenty, and that is enough
+ * where the step is a few times the scale the function bends on. It is not
+ * where the step is far above it, and at an empty compartment it can be: the
+ * step there is read off the largest state in the model, a millionth of an
+ * inventory of 1e10, while a Langmuir availability turns over at its own
+ * constant, which may be 1e-2. So the tableau is run again from starts some
+ * decades down, and the estimate it is surest of is the one kept.
+ */
+const RIDDERS_STARTS = [1, 1e-2, 1e-4, 1e-6];
+
+/**
+ * How many columns with a disagreement are looked at again per state, worst
+ * first. A column costs up to eighty evaluations of the derivative, which is
+ * nothing on a bundled model and two seconds on a 55,728-state one -- where
+ * fewer are taken, and a disagreement past the count is reported as the
+ * single difference found it.
+ */
+const RIDDERS_COLUMNS = 24;
+const RIDDERS_COLUMNS_LARGE = 6;
+
+/**
  * `f(t, y)` differenced along one column.
  *
  * Central where the state is away from zero, one-sided at zero -- a
@@ -155,6 +188,97 @@ function differenceColumn(dydt, t, y, j, f0, plus, minus, out) {
 	y[j] = yj;
 	for (let i = 0; i < out.length; i++) out[i] = (plus[i] - f0[i]) / h;
 	return h;
+}
+
+/**
+ * One column's entries, at the rows asked for, by Ridders' method.
+ *
+ * A difference quotient at one step is out where the function it differences
+ * bends on a scale not far above that step, however exact the generated entry
+ * is: a Langmuir availability `(A + a)/(A + b)` at an empty compartment, which
+ * turns over at `b`, differenced with a step read off the largest state in
+ * the model. That is a disagreement in the question, not in the matrix.
+ *
+ * So the column is differenced again at steps shrinking by `RIDDERS_SHRINK`,
+ * and each row's quotients are extrapolated to a step of nought through a
+ * Neville tableau -- taking away `h`, `h^2` and on for a one-sided quotient,
+ * `h^2`, `h^4` and on for a central one -- until rounding begins to grow
+ * faster than the extrapolation gains. Central where the state is away from
+ * zero, since a step a millionth of the state's own size never crosses it;
+ * one-sided at zero, for the reason `differenceColumn` gives. Each start in
+ * `RIDDERS_STARTS` runs the tableau afresh, and the estimate kept for a row
+ * is the one with the smallest error the tableau reached. A start whose
+ * estimates all meet the generated entries ends the search: what is being
+ * asked is whether they can be met, and they have been.
+ *
+ * @param {Int32Array|number[]} rows   the rows of column `j` to estimate
+ * @param {Float64Array} analytic      the generated entry at each of `rows`
+ * @returns {Array<{value: number, err: number}>} per row; `err` is Infinity
+ *   where no estimate could be made
+ */
+function riddersColumn(system, t, y, work, j, h0, rows, analytic, f0, plus, minus) {
+	const m = rows.length;
+	const oneSided = !(Math.abs(y[j]) > 0);
+	const factor = oneSided ? RIDDERS_SHRINK : RIDDERS_SHRINK * RIDDERS_SHRINK;
+	const best = Array.from({ length: m }, () => ({ value: NaN, err: Infinity }));
+	const meets = (r) => {
+		const v = best[r].value;
+		if (!Number.isFinite(v)) return false;
+		const size = Math.max(Math.abs(analytic[r]), Math.abs(v));
+		return size === 0 || Math.abs(analytic[r] - v) <= TOLERANCE * size;
+	};
+	for (const start of RIDDERS_STARTS) {
+		let h = h0 * start;
+		if (!(h > 0)) break;
+		const tableau = new Array(m).fill(null);
+		const done = new Uint8Array(m);
+		const value = new Float64Array(m).fill(NaN);
+		const err = new Float64Array(m).fill(Infinity);
+		for (let level = 0; level < RIDDERS_LEVELS; level++) {
+			work[j] = y[j] + h;
+			system.dydt(t, work, plus);
+			if (!oneSided) {
+				work[j] = y[j] - h;
+				system.dydt(t, work, minus);
+			}
+			work[j] = y[j];
+			let live = 0;
+			for (let r = 0; r < m; r++) {
+				if (done[r]) continue;
+				const i = rows[r];
+				const d = oneSided ? (plus[i] - f0[i]) / h : (plus[i] - minus[i]) / (2 * h);
+				if (!Number.isFinite(d)) { done[r] = 1; continue; }
+				const col = [d];
+				const prev = tableau[r];
+				if (prev) {
+					let fac = factor;
+					for (let k = 1; k <= level; k++) {
+						col[k] = (col[k - 1] * fac - prev[k - 1]) / (fac - 1);
+						fac *= factor;
+						const e = Math.max(Math.abs(col[k] - col[k - 1]), Math.abs(col[k] - prev[k - 1]));
+						if (e <= err[r]) { err[r] = e; value[r] = col[k]; }
+					}
+					// Rounding has taken over once the diagonal moves by more than
+					// twice the best error: smaller steps only add noise from here.
+					if (Math.abs(col[level] - prev[level - 1]) >= RIDDERS_SAFE * err[r]) {
+						done[r] = 1;
+						continue;
+					}
+				}
+				tableau[r] = col;
+				live++;
+			}
+			if (!live) break;
+			h /= RIDDERS_SHRINK;
+		}
+		for (let r = 0; r < m; r++) {
+			if (err[r] < best[r].err) best[r] = { value: value[r], err: err[r] };
+		}
+		let all = true;
+		for (let r = 0; r < m && all; r++) if (!meets(r)) all = false;
+		if (all) break;
+	}
+	return best;
 }
 
 /**
@@ -272,15 +396,11 @@ function compareAt(system, t, y, labels, opts) {
 		checked++;
 		const size = Math.max(Math.abs(a), Math.abs(d));
 		const rel = Math.abs(a - d) / size;
-		if (rel > TOLERANCE) {
-			disagreements.push({
-				row: i, col: j, rowLabel: labels[i], colLabel: labels[j],
-				analytic: a, numeric: d, relative: rel,
-			});
-		}
-		if (!worst || rel > worst.relative) {
-			worst = { row: i, col: j, rowLabel: labels[i], colLabel: labels[j], analytic: a, numeric: d, relative: rel };
-		}
+		const entry = { row: i, col: j, rowLabel: labels[i], colLabel: labels[j], analytic: a, numeric: d, relative: rel };
+		// The worst of those that agree; a disagreement is looked at again
+		// below before it is let stand, and is the worst if it does.
+		if (rel > TOLERANCE) disagreements.push(entry);
+		else if (!worst || rel > worst.relative) worst = entry;
 	};
 
 	// --- pass one: every entry of the sampled colour groups ------------------
@@ -314,6 +434,56 @@ function compareAt(system, t, y, labels, opts) {
 		opts.onProgress?.();
 	}
 
+	// --- a disagreement looked at again, by Ridders' method -------------------
+	// Before it is reported: one forward difference is out wherever the entry's
+	// function bends on a scale near its step, and the generated entry may be
+	// exact there. The tableau reaches the derivative; a matrix that is wrong
+	// stays wrong, and is then reported with the tableau's value -- the nearest
+	// to the derivative there is -- beside the single difference that found it.
+	let refined = 0;
+	let lookedAgain = 0;
+	if (disagreements.length) {
+		const byColumn = new Map();
+		for (const d of [...disagreements].sort((p, q) => q.relative - p.relative)) {
+			if (!byColumn.has(d.col)) byColumn.set(d.col, []);
+			byColumn.get(d.col).push(d);
+		}
+		const most = n > 8000 ? RIDDERS_COLUMNS_LARGE : RIDDERS_COLUMNS;
+		const standing = new Set();
+		for (const [j, list] of byColumn) {
+			if (lookedAgain >= most) break;
+			lookedAgain++;
+			const rows = list.map((d) => d.row);
+			const generated = Float64Array.from(list, (d) => d.analytic);
+			const est = riddersColumn(system, t, y, work, j, stepFor(j), rows, generated, f0, plus, minus);
+			list.forEach((d, r) => {
+				const { value, err } = est[r];
+				if (!Number.isFinite(value) || !Number.isFinite(err)) return;
+				const size = Math.max(Math.abs(d.analytic), Math.abs(value));
+				const rel = size > 0 ? Math.abs(d.analytic - value) / size : 0;
+				if (rel <= TOLERANCE) {
+					refined++;
+					standing.add(d);
+					if (!worst || rel > worst.relative) {
+						worst = { ...d, numeric: value, relative: rel, first: d.numeric };
+					}
+					return;
+				}
+				d.first = d.numeric;
+				d.numeric = value;
+				d.error = err;
+				d.relative = rel;
+			});
+		}
+		// Those that met the generated entry when looked at again are no longer
+		// disagreements; the rest keep their place, worst first below.
+		if (standing.size) {
+			const kept = disagreements.filter((d) => !standing.has(d));
+			disagreements.length = 0;
+			disagreements.push(...kept);
+		}
+	}
+
 	// --- pass two: what the pattern does not declare -------------------------
 	const { columns, sampled: colsSampled } = columnsToCheck(n, opts.mostColumns);
 	const inPattern = new Uint8Array(n);
@@ -341,10 +511,13 @@ function compareAt(system, t, y, labels, opts) {
 
 	disagreements.sort((p, q) => q.relative - p.relative);
 	outside.sort((p, q) => Math.abs(q.numeric) - Math.abs(p.numeric));
+	if (disagreements.length) worst = disagreements[0];
 	return {
 		checked,
 		unresolvable,
 		nonFinite,
+		refined,
+		lookedAgain,
 		columns: columns.length,
 		groups: chosen.length,
 		ofGroups: groups?.length ?? 0,

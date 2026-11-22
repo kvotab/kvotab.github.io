@@ -18064,6 +18064,65 @@ test('the Jacobian check finds a wrong matrix, a missing entry and a bad colouri
 	}
 });
 
+test('the Jacobian check differences a disagreement again at smaller steps before reporting it', async () => {
+	const { checkJacobian } = await import('../src/sim/jaccheck.js');
+	const { buildSystem: build } = await import('../src/sim/builder.js');
+
+	// A Langmuir availability (A + a)/(A + b) turns over at b. At an empty
+	// donor its flux's derivative is k*a/b exactly, and the generated entry
+	// says so -- but the check steps an empty compartment by a millionth of
+	// the largest state in the model, here 1e4 against b = 1e-2, and one
+	// difference there reads k*(h + a)/(h + b), a hundred times the
+	// derivative. Differenced again at smaller steps and extrapolated to
+	// nought, it meets the generated entry; a matrix that is wrong does not.
+	const model = () => ({
+		name: 'langmuir at nought',
+		simulation: {
+			start_time: 0, end_time: 10, output_points: 3, spacing: 'linear',
+			solver: 'ndf', rtol: 1e-8, abstol: 1e-12, time_unit: 'year',
+		},
+		parameters: [{ name: 'k', value: 0.1, index_lists: [] }],
+		compartments: [
+			{ name: 'Big', initial: '1e10', index_lists: [] },
+			{ name: 'A', initial: '0', index_lists: [] },
+			{ name: 'B', initial: '0', index_lists: [] },
+		],
+		transfers: [{
+			name: 'T', from: 'A', to: 'B', rate: 'k', index_lists: [],
+			availability: { scheme: 'langmuir', top: '1e-4', bottom: '1e-2' },
+		}],
+	});
+	const c = checkJacobian(model());
+	assert(c.available, c.reason);
+	assert(c.verdict === 'agrees', `an exact entry read as ${c.verdict}: `
+		+ `${JSON.stringify(c.at.flatMap((s) => s.disagreements)[0] ?? {})}`);
+	assert(c.at[0].refined >= 1 && c.at[0].lookedAgain >= 1,
+		`nothing at the start needed a second look: ${JSON.stringify({ refined: c.at[0].refined, again: c.at[0].lookedAgain })}`);
+	// The worst agreement is the second look's, not the single difference's.
+	assert(c.at[0].worst && c.at[0].worst.relative <= 1e-3, JSON.stringify(c.at[0].worst));
+
+	// The same entry made half as large again in the generated matrix: the
+	// second look reaches the true derivative, k*a/b, and the entry stands,
+	// reported with that value and the single difference beside it.
+	const sys = build(new Project(model()));
+	const colA = sys.layout.states.find((s) => s.name === 'A').base;
+	const rowB = sys.layout.states.find((s) => s.name === 'B').base;
+	const realJvp = sys.jacobian.jvp;
+	sys.jacobian.jvp = (t, y, v, out) => {
+		const o = realJvp(t, y, v, out);
+		if (v[colA]) o[rowB] *= 1.5;
+		return o;
+	};
+	const wrong = checkJacobian(model(), { system: sys });
+	assert(wrong.verdict === 'differs', `a 50% error read as ${wrong.verdict}`);
+	const d = wrong.at[0].disagreements.find((x) => x.row === rowB && x.col === colA);
+	assert(d, `the planted entry was not reported at the start: ${JSON.stringify(wrong.at[0].disagreements)}`);
+	close(d.numeric, 0.1 * 1e-4 / 1e-2, 1e-5, 'the second look reaches k*a/b');
+	assert(Number.isFinite(d.first) && d.first > 50 * d.numeric,
+		`the single difference, a hundred times the derivative, is not beside it: ${d.first}`);
+	close(d.relative, 1 / 3, 1e-4, 'and the entry is a third out of the derivative');
+});
+
 test('the Jacobian check says what it could not judge, and stays affordable', async () => {
 	const { checkJacobian, MANY_COLUMNS } = await import('../src/sim/jaccheck.js');
 	const { readFileSync } = await import('node:fs');

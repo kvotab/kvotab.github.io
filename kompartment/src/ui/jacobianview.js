@@ -347,16 +347,29 @@ function renderCheck({ drawn, check, busy, progress, onCheck }) {
 			` differing by more than 0.1%. ${num(c.unresolvable)} were below what a `
 			+ 'difference can resolve and were not judged.',
 		);
+		// What the second look settled: entries one difference put out, which
+		// smaller steps extrapolated to nought brought back to the generated value.
+		if (c.refined) {
+			line.append(` ${num(c.refined)} more differed at the first step and met the `
+				+ 'generated value when differenced again at smaller steps.');
+		}
 		if (c.worst && !c.disagreements.length && c.checked) {
 			line.append(` Worst agreement: ${c.worst.relative.toExponential(1)} relative, at `
 				+ `d[${c.worst.rowLabel}]/d${c.worst.colLabel}.`);
 		}
 		checks.append(line);
 		for (const d of c.disagreements.slice(0, 8)) {
+			// Looked at again: the tableau's value is the derivative's nearest
+			// estimate, with how sure of it the tableau was, and the single
+			// difference that first found the entry out after it.
+			const again = Number.isFinite(d.first)
+				? ` (at smaller steps, ±${d.error.toExponential(1)}; one step gave ${d.first.toExponential(4)})`
+				: '';
 			checks.append(el('p', { className: 'jac-bad' },
 				`d[${d.rowLabel}] / d${d.colLabel}: generated `,
 				el('b', {}, d.analytic.toExponential(4)),
 				', differenced ', el('b', {}, d.numeric.toExponential(4)),
+				again,
 				` — ${pct(d.relative)} apart.`));
 		}
 		for (const o of c.outside.slice(0, 8)) {
@@ -379,7 +392,9 @@ function renderCheck({ drawn, check, busy, progress, onCheck }) {
 		+ 'perturbation is larger than the rounding of that derivative; below that a '
 		+ 'difference quotient is noise and says nothing either way. Most of a decay '
 		+ 'chain is unresolvable at the starting state, which is why the comparison '
-		+ 'is made at several.'));
+		+ 'is made at several. An entry that differs is differenced again at steps '
+		+ 'shrinking towards nought before it is reported, so that a function bending '
+		+ 'on a scale near the step is not taken for a wrong entry.'));
 
 	const again = el('button', { type: 'button' }, 'Check again');
 	again.addEventListener('click', () => onCheck?.());

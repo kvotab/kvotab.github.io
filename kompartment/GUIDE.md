@@ -3238,7 +3238,7 @@ different fixes:
 |---|---|
 | **The colouring is wrong** | Two columns in one colour group share a row, so the values read back through it are sums. Nothing about the matrix itself is wrong; the scheme for filling it is. |
 | **An entry is missing** | Differencing finds a value where the pattern has no entry. This is the one that matters most: **the solver never evaluates an entry the pattern does not have**, so no tolerance recovers it, and the run converges to something else. |
-| **An entry differs** | The pattern is right and a value is out by more than 0.1%. |
+| **An entry differs** | The pattern is right and a value is out by more than 0.1%, still, when it is differenced again at smaller steps. |
 | **Agrees** | Every entry that a difference can resolve matches. |
 
 **Where it is checked.** Not at one point, and not only at the start. The
@@ -3256,6 +3256,18 @@ derivative is smaller than that derivative's own rounding says nothing either
 way. Calling those a disagreement would bury the real ones; calling them
 agreement would be a lie. Most of a decay chain is unresolvable at the starting
 state, which is exactly why several states are used.
+
+**A disagreement is looked at again before it is reported.** One difference is
+out wherever the function it differences bends on a scale near its step, however
+exact the entry is — a Langmuir availability at an empty compartment turns over
+at its own constant, while the step there is a millionth of the largest
+inventory in the model. So an entry that differs is differenced again at steps
+shrinking towards nought and extrapolated to a step of nought (Ridders' method),
+from the check's own step and from several decades below it. An entry that then
+meets the generated value is counted as such, and the report says how many did;
+one that does not is reported with the extrapolated value — the nearest to the
+derivative a difference can come — how sure of it the extrapolation was, and
+the single difference that found it out.
 
 **The colouring is what makes it affordable.** A group of columns shares no
 row, so perturbing all of them at once moves each row by the one entry of that
