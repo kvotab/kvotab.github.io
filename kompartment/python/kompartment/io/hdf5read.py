@@ -92,9 +92,7 @@ class _OutOfBounds(HDF5ReadError):
         super().__init__(message)
 
 
-#: The longest ``Float64Array`` and the longest ``Array`` the application's
-#: JavaScript engine (V8) will make.
-MAX_TYPED_ARRAY_LENGTH = 2 ** 32
+#: The longest ``Array`` JavaScript will make.
 MAX_ARRAY_LENGTH = 2 ** 32 - 1
 
 
@@ -704,8 +702,13 @@ def _read_values(r: _Reader, typ: Dict[str, Any], space: Dict[str, Any],
     n = int(count)
     p = where['address']
     cls = typ['cls']
-    if cls in ('float', 'int') and n > MAX_TYPED_ARRAY_LENGTH:
-        raise _OutOfBounds(f'Invalid typed array length: {js_string(count)}')
+    # Numbers lie inside the file, or the dataset is damaged: asked before
+    # anything is read, as the application asks it before it makes an array
+    # for them, so that a damaged count is reported in the same words.
+    if cls in ('float', 'int'):
+        width = (4 if typ['size'] == 4 else 8) if cls == 'float' else typ['size']
+        if p + n * max(1, width) > r.n:
+            raise HDF5ReadError(f'its {js_string(count)} values run past the end of the file')
     if cls in ('string', 'vlenstr') and n > MAX_ARRAY_LENGTH:
         raise _OutOfBounds('Invalid array length')
     if cls == 'float':

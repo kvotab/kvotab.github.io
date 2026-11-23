@@ -23471,6 +23471,43 @@ await (async () => {
 		assert(caught instanceof ZipError, 'expected a ZipError');
 		assert(/does not look like a ZIP/.test(caught.message), caught?.message);
 	});
+
+	test('an entry the platform\'s inflater refuses is read again by the bundled one, which says why in its own words', async () => {
+		// The platform's inflater for raw DEFLATE says what it likes, or
+		// nothing -- Node 26's message for a bad block is empty -- and Node
+		// 20.10 has none. So a stand-in that refuses everything, given to a
+		// copy of the module of its own, since the module asks only once.
+		const was = globalThis.DecompressionStream;
+		globalThis.DecompressionStream = class {
+			constructor(format) {
+				if (format !== 'deflate-raw') throw new TypeError(`no ${format}`);
+				const t = new TransformStream({ transform() {}, flush(c) { c.error(new TypeError('')); } });
+				this.readable = t.readable;
+				this.writable = t.writable;
+			}
+		};
+		try {
+			const own = await import('../src/io/zip.js?a-platform-inflater-that-refuses');
+			// A good entry comes back whole, read at once and as a stream...
+			const name = 'p/model/model.xml';
+			const read = await own.unzip(zipDeflated);
+			assert(entryText(read.get(name)) === MODEL_XML, 'the entry was lost');
+			const result = await makeZip([{ name: 'p/r.dta', bytes: new TextEncoder().encode(MODEL_XML), deflate: true }]);
+			const chunks = [];
+			for await (const c of (await own.unzip(result, { large: () => true })).stream('p/r.dta')) chunks.push(...c);
+			assert(new TextDecoder().decode(Uint8Array.from(chunks)) === MODEL_XML, 'the streamed entry was lost');
+			// ...and a damaged one is said in the bundled inflater's words,
+			// the same as where there is no platform inflater at all.
+			const damaged = zipDeflated.slice();
+			damaged[30 + name.length] = 0x07; // a last block of the reserved type 3
+			const why = async (z) => { try { await z.unzip(damaged); return 'it read'; } catch (e) { return e.message; } };
+			const theirs = await why(own);
+			assert(theirs === `Could not decompress '${name}': Invalid block type`, theirs);
+			assert(await why({ unzip }) === theirs, await why({ unzip }));
+		} finally {
+			globalThis.DecompressionStream = was;
+		}
+	});
 })();
 
 // =========================================================================
@@ -41163,6 +41200,32 @@ test('HDF5 written the other way round reads here too', async () => {
 	let said = '';
 	try { await readHDF5(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9])); } catch (e) { said = e.message; }
 	assert(/not an HDF5 file/.test(said), said);
+});
+
+test('values that run past the end of an HDF5 file are said to, before an array is made for them', async () => {
+	// A damaged count can ask for more numbers than an engine will allocate,
+	// and each engine refuses that in words of its own, or makes the array
+	// and fails at the first read past the end. So the reader asks first.
+	const { readHDF5 } = await import('../src/io/hdf5read.js');
+	const { writeHDF5, dataset, group, put } = await import('../src/io/hdf5.js');
+	const root = group();
+	put(root, ['x'], dataset(Float64Array.from([1, 2, 3, 4, 5, 6, 7])));
+	const good = writeHDF5(root);
+	// The dataspace of the seven values: version 2, one dimension, simple.
+	const space = [2, 1, 0, 1, 7, 0, 0, 0, 0, 0, 0, 0];
+	const at = good.findIndex((_, i) => space.every((b, k) => good[i + k] === b));
+	assert(at > 0 && good.findIndex((_, i) => i > at && space.every((b, k) => good[i + k] === b)) < 0,
+		'the dataspace is not where it was looked for');
+	const said = async (bytes) => (await readHDF5(bytes)).problems.join(' | ');
+	assert(await said(good) === '', await said(good));
+	// Two to the fortieth values, which no file here holds.
+	const huge = good.slice();
+	huge[at + 4] = 0;
+	huge[at + 9] = 1;
+	assert(await said(huge) === '/x: its 1099511627776 values run past the end of the file', await said(huge));
+	// And the file cut short inside the values, which the writer puts last.
+	assert(await said(good.subarray(0, good.length - 4)) === '/x: its 7 values run past the end of the file',
+		await said(good.subarray(0, good.length - 4)));
 });
 
 test('a point of a lookup table can carry its own distribution', async () => {

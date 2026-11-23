@@ -606,6 +606,16 @@ function readValues(r, type, space, where) {
 	const n = space.count;
 	if (!n || where.address == null) return [];
 	const p = where.address;
+	// Numbers lie inside the file, or the dataset is damaged. That is asked
+	// before an array is made for them: a damaged count can ask for more than
+	// an engine will allocate, and each refuses it in words of its own -- or
+	// makes it, untouched, and fails only at the first read past the end.
+	if (type.cls === 'float' || type.cls === 'int') {
+		const width = type.cls === 'float' ? (type.size === 4 ? 4 : 8) : type.size;
+		if (p + n * Math.max(1, width) > r.u8.length) {
+			throw new HDF5ReadError(`its ${n} values run past the end of the file`);
+		}
+	}
 	// Numbers come back in a typed array rather than a plain one. A file of a
 	// thousand realisations over four hundred times is 394,000 values in one
 	// dataset and fifty-three such datasets; as boxed JS numbers that is a

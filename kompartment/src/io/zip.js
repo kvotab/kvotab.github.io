@@ -425,6 +425,19 @@ function hasNativeRawDeflate() {
 }
 
 /**
+ * Whether an error is the platform's inflater refusing the data, rather than
+ * this module's own cap. The platform says why in words of its own, or in
+ * none -- Node 26's says nothing at all of a bad block or of data that stops
+ * short -- and it refuses bytes after the end of the stream, which the bundled
+ * inflater leaves alone, as zlib does. So the bundled inflater reads such an
+ * entry again: it gives the entry back, or says what is wrong with it in the
+ * same words on every platform.
+ */
+function platformRefused(e) {
+	return !(e instanceof ZipError) && !(e instanceof InflateError);
+}
+
+/**
  * How much this entry may produce: the smaller of the per-entry cap and what
  * is left of the archive's budget, with the directory's own claim refused
  * before a byte is decompressed. A declared size costs nothing to inspect and
@@ -487,7 +500,12 @@ async function inflateEntry(raw, expectedSize, name, budget) {
 			const stream = new Blob([raw]).stream()
 				.pipeThrough(new DecompressionStream('deflate-raw'))
 				.pipeThrough(cappedAt(limit, name));
-			buf = new Uint8Array(await new Response(stream).arrayBuffer());
+			try {
+				buf = new Uint8Array(await new Response(stream).arrayBuffer());
+			} catch (e) {
+				if (!platformRefused(e)) throw e;
+				buf = inflateRawJS(raw, expectedSize, limit);
+			}
 		} else {
 			buf = inflateRawJS(raw, expectedSize, limit);
 		}
@@ -553,7 +571,12 @@ async function* inflateStream(raw, expectedSize, name, limit) {
 			} catch (e) {
 				done = true;
 				if (e instanceof ZipError) throw e;
-				throw new ZipError(`Could not decompress '${name}': ${e.message}`);
+				if (!platformRefused(e)) throw new ZipError(`Could not decompress '${name}': ${e.message}`);
+				// The bundled inflater reads it again from the start: what it
+				// gives beyond what has been handed over is the rest.
+				const whole = inflateSync(raw, expectedSize, name, limit);
+				if (whole.length > total) yield whole.subarray(total);
+				return;
 			}
 			if (next.done) break;
 			total += next.value.byteLength;
