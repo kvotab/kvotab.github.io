@@ -1630,6 +1630,18 @@ test('a log-double-triangular is skbrnt\'s Logdt, number for number', async () =
 	}
 });
 
+test('a data workbook of 200,000 rows of one series reads back', async () => {
+	// A parameter given over time is a row a time, and each sheet's rows were
+	// gathered by spreading them into one call, which runs past the stack at
+	// some 125,000.
+	const DF = await import('../src/io/datafile.js');
+	const rows = Array.from({ length: 200000 }, (_, k) => ({ id: 'Release.rate', unit: 'Bq/year', time: k, value: k % 97, pdf: null }));
+	const back = await DF.readDataWorkbook(await DF.writeDataWorkbook(rows, { name: 'd' }));
+	const last = back.rows[back.rows.length - 1];
+	assert(back.rows.length === 200000 && last.id === 'Release.rate' && last.time === 199999 && last.value === 199999 % 97,
+		`${back.rows.length} rows, the last ${JSON.stringify(last)}`);
+});
+
 test('dy/dp is the derivative it claims to be', async () => {
 	const { runSensitivity, parameterSlots, elasticity, slotLabel } =
 		await import('../src/sim/localsens.js');
@@ -5548,6 +5560,15 @@ test('a distribution reads, draws and writes back as Ecolego spells it', async (
 	// before its numbers, and complaining would make it untypable.
 	assert(P.pdfProblems(P.parsePDF('logn(gm,gsd)', 'Logn4')).length === 0,
 		'a distribution being filled in is reported as broken');
+});
+
+test('a list of 200,000 values is drawn over their own range', async () => {
+	// A list holds a value a realisation; its range was taken by spreading the
+	// values into one call, which runs past the stack at some 125,000.
+	const P = await import('../src/domain/pdf.js');
+	const values = Array.from({ length: 200000 }, (_, k) => 1 + (k * 37 % 1000) / 10);
+	const span = P.supportOf({ kind: 'pg', values, params: {} });
+	assert(span && span[0] === 1 && span[1] === 100.9, JSON.stringify(span));
 });
 
 test('a parameter has somewhere to keep a distribution whether or not it is indexed', async () => {
@@ -18471,6 +18492,15 @@ test('where the inventory goes: each route by the run’s own arithmetic, totals
 		'the worker does not work the account out');
 });
 
+test('the flows chart’s time axis starts at the first time past zero, of 200,000', async () => {
+	// The run's output times were spread into one call, which runs past the
+	// stack at some 125,000: the chart, and the dialog under it, did not draw.
+	const { firstTimePastZero } = await import('../src/ui/flowsdialog.js');
+	const t = Float64Array.from({ length: 200000 }, (_, i) => (i ? 10 ** (i / 20000) : 0));
+	assert(firstTimePastZero(t) === t[1], String(firstTimePastZero(t)));
+	assert(firstTimePastZero([0, 0]) === 0 && firstTimePastZero([]) === 0);
+});
+
 test('the Jacobian check says what it could not judge, and stays affordable', async () => {
 	const { checkJacobian, MANY_COLUMNS } = await import('../src/sim/jaccheck.js');
 	const { readFileSync } = await import('node:fs');
@@ -21268,6 +21298,28 @@ test('a lookup table’s picture keeps its numbers out of the part that is stret
 			JSON.stringify(y.map((n) => [n.className, n.textContent])));
 		const empty = pointsPreview([]);
 		assert(/is-empty/.test(empty.className) && empty.textContent === 'no points', empty.textContent);
+	} finally {
+		if (previous === undefined) delete globalThis.document;
+		else globalThis.document = previous;
+	}
+});
+
+test('a lookup table of 200,000 points: its sparkline, its picture and its line in the tree', async () => {
+	// Each took the table's ranges by spreading its points into one call,
+	// which runs past the stack at some 125,000.
+	const { pointsPreview } = await import('../src/ui/lookup-editor.js');
+	const { summariseTable } = await import('../src/ui/summary.js');
+	const pts = Array.from({ length: 200000 }, (_, k) => [k, (k * 37 % 1000) / 10]);
+	const d = sparkPath(pts, 0, 0, 100, 20);
+	assert(d.startsWith('M 0.0 ') && / 100\.0 [\d.]+$/.test(d), d.slice(0, 20) + ' … ' + d.slice(-20));
+	assert(summariseTable({ points: pts }) === '200000 points, 0 to 200000', summariseTable({ points: pts }));
+	const node = (tag) => ({ tagName: tag, kids: [], attrs: {}, className: '', setAttribute(k, v) { this.attrs[k] = String(v); },
+		append(...kids) { for (const k of kids) this.kids.push(k); } });
+	const previous = globalThis.document;
+	globalThis.document = { createElement: node, createElementNS: (ns, t) => node(t), createTextNode: (t) => ({ t }) };
+	try {
+		const box = pointsPreview(pts);
+		assert(box.attrs['aria-label'] === 'The table: x from 0 to 200000, y from 0 to 99.9', box.attrs['aria-label']);
 	} finally {
 		if (previous === undefined) delete globalThis.document;
 		else globalThis.document = previous;

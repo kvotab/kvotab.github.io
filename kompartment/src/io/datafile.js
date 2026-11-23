@@ -639,8 +639,10 @@ export async function readDataWorkbook(bytes) {
 	for (const sheet of book.sheets) {
 		if (sources.has(sheet.name.toLowerCase()) && !hasIdColumn(sheet.rows)) continue;
 		const got = fromSheet(sheet.rows, { sheet: sheet.name, lists });
-		rows.push(...got.rows);
-		problems.push(...got.problems);
+		// One by one: a series given a row a time, spread into one call, ran
+		// past the stack at some 125,000 rows.
+		for (const r of got.rows) rows.push(r);
+		for (const p of got.problems) problems.push(p);
 	}
 	return { rows, problems };
 }

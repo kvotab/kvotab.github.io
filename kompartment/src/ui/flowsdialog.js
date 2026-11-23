@@ -443,6 +443,17 @@ function flowPicture(now, tone) {
 }
 
 /**
+ * The first of a run's output times past zero, where a logarithmic time axis
+ * starts; 0 when there is none. By a loop: the times spread into one call ran
+ * past the stack at some 125,000.
+ */
+export function firstTimePastZero(times) {
+	let lo = Infinity;
+	for (const v of times) if (v > 0 && v < lo) lo = v;
+	return lo === Infinity ? 0 : lo;
+}
+
+/**
  * Where it is over the whole run: each compartment's inventory, stacked, and
  * what has left and decayed on top; a line at the time shown.
  */
@@ -484,8 +495,7 @@ function stackChart(a, k, timeUnit, unit, tone) {
 	}
 	// A time axis on a logarithm where the run spans decades, as its output
 	// grid usually does.
-	const positive = a.t.filter((v) => v > 0);
-	const lo = positive.length ? Math.min(...positive) : 0;
+	const lo = firstTimePastZero(a.t);
 	const hi = a.t[T - 1];
 	const logX = lo > 0 && hi / lo > 1e3;
 	const plotW = W - L - R;

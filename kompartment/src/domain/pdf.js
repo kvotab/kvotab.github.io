@@ -805,7 +805,10 @@ export function supportOf(spec) {
 		case 'pg': {
 			const v = spec.values ?? [];
 			if (!v.length) return null;
-			lo = Math.min(...v); hi = Math.max(...v);
+			// By a loop: a value a realisation, spread into one call, ran past
+			// the stack at some 125,000.
+			lo = Infinity; hi = -Infinity;
+			for (const x of v) { lo = Math.min(lo, x); hi = Math.max(hi, x); }
 			if (lo === hi) { lo -= Math.abs(lo) * 0.1 + 1; hi += Math.abs(hi) * 0.1 + 1; }
 			break;
 		}

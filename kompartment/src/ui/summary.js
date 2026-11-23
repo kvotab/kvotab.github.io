@@ -11,9 +11,15 @@
 export function summariseTable(b) {
 	const pts = b.points ?? [];
 	if (!pts.length) return b.entries?.length ? `${b.entries.length} entries` : 'no points';
-	const xs = pts.map((p) => Number(p[0]));
-	const lo = Math.min(...xs);
-	const hi = Math.max(...xs);
+	// The span by a loop: a table's points spread into one call ran past the
+	// stack at some 125,000.
+	let lo = Infinity;
+	let hi = -Infinity;
+	for (const p of pts) {
+		const x = Number(p[0]);
+		lo = Math.min(lo, x);
+		hi = Math.max(hi, x);
+	}
 	const num = (v) => (Number.isFinite(v) ? String(Number(v.toPrecision(4))) : '?');
 	return pts.length === 1
 		? `1 point at ${num(lo)}`

@@ -113,12 +113,18 @@ export function sparkPath(points, x, y, w, h, interpolation = 'linear') {
 	if (!pts.length) return null;
 	if (pts.length === 1) return `M ${x} ${y + h / 2} L ${x + w} ${y + h / 2}`;
 
-	const xs = pts.map((p) => p[0]);
-	const ys = pts.map((p) => p[1]);
-	const x0 = Math.min(...xs);
-	const x1 = Math.max(...xs);
-	const y0 = Math.min(...ys);
-	const y1 = Math.max(...ys);
+	// The ranges by a loop: a table's points spread into one call ran past the
+	// stack at some 125,000.
+	let x0 = Infinity;
+	let x1 = -Infinity;
+	let y0 = Infinity;
+	let y1 = -Infinity;
+	for (const [px, py] of pts) {
+		if (px < x0) x0 = px;
+		if (px > x1) x1 = px;
+		if (py < y0) y0 = py;
+		if (py > y1) y1 = py;
+	}
 	const sx = x1 > x0 ? w / (x1 - x0) : 0;
 	const sy = y1 > y0 ? h / (y1 - y0) : 0;
 	const at = (p) => [
@@ -220,10 +226,18 @@ export function pointsPreview(points, interpolation = 'linear') {
 	}
 	plot.append(svgEl('path', { class: 'lk-preview-line', d }));
 
-	const xs = points.map((p) => Number(p[0])).filter(Number.isFinite);
-	const ys = points.map((p) => Number(p[1])).filter(Number.isFinite);
 	const num = (v) => String(Number(v.toPrecision(4)));
-	const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+	// Each axis's finite values, their ends by a loop, as for the path.
+	let x0 = Infinity;
+	let x1 = -Infinity;
+	let y0 = Infinity;
+	let y1 = -Infinity;
+	for (const p of points) {
+		const px = Number(p[0]);
+		const py = Number(p[1]);
+		if (Number.isFinite(px)) { if (px < x0) x0 = px; if (px > x1) x1 = px; }
+		if (Number.isFinite(py)) { if (py < y0) y0 = py; if (py > y1) y1 = py; }
+	}
 	const tick = (cls, v) => el('span', { className: `lk-preview-tick ${cls}` }, num(v));
 	return el('div', {
 		className: 'lk-preview',
