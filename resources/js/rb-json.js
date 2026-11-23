@@ -13,7 +13,9 @@
        array of objects    a table, when each object holds only numbers,
                            strings, booleans and nulls: a group with a
                            dataset per member, its values over all of them,
-                           as a struct array's field is one in a MAT-file
+                           as a struct array's field is one in a MAT-file --
+                           when they share their members enough to fill a
+                           quarter of it (docIsTable)
        any other array     a group of its elements, [0], [1], ...
        number, string,     a dataset of one value; true and false and null
        true, false, null   as their words
@@ -33,7 +35,11 @@
 /* How far a file may take the page. */
 const DOC_MAX_NODES = 200000;      // groups and datasets written for one file
 const DOC_MAX_DEPTH = 64;          // values within values
-const JSON_MAX_NESTING = 10000;    // what the lenient reading follows before it stops
+// What the lenient reading follows before it stops. It follows a value into
+// another by calling itself, and a page's stack holds some 2,500 of those
+// before it overflows -- fewer while the page is still new: well under that,
+// where Python's json module stops.
+const JSON_MAX_NESTING = 1000;
 
 /**
  * Whether bytes handed over are a JSON file: by its name, or -- for bytes
@@ -120,6 +126,22 @@ function docIndexNames(n, first, wrap) {
 }
 
 /**
+ * Whether records -- objects of values, elements of text -- are shown as a
+ * table, a column for each name any of them has and a row for each: when at
+ * least a quarter of its cells would hold a value. Records that share few
+ * names would make a table of gaps as wide as all their names together --
+ * 500 of 20 names each their own made 10,000 columns and held the page for
+ * 17 seconds, 2,000 of 50 never finished -- and are shown each as itself.
+ *
+ * @param {number} rows - The records
+ * @param {number} columns - The names, over all of them
+ * @param {number} values - The values they hold
+ */
+function docIsTable(rows, columns, values) {
+  return rows * columns <= 4 * values;
+}
+
+/**
  * A column of a table, its values over the rows: numbers when each is a
  * number or missing -- a missing one NaN, and said to be -- else text, a
  * missing one empty.
@@ -196,6 +218,10 @@ function jsonParseLenient(text) {
     }
   };
   const NUMBER = /-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/y;
+  // The next quote or backslash, whichever comes first: looking for each on
+  // its own went to the string's end for the quote after every escape, and a
+  // string of a few megabytes with many held the page for minutes.
+  const STOP = /["\\]/g;
   const string = () => {
     const start = i++;
     let out = '';
@@ -203,7 +229,13 @@ function jsonParseLenient(text) {
       if (i >= n) fail('a string that never ends', start);
       const c = text[i];
       if (c === '"') { i++; return out; }
-      if (c !== '\\') { const next = text.indexOf('"', i); const esc = text.indexOf('\\', i); const stop = Math.min(next < 0 ? n : next, esc < 0 ? n : esc); out += text.slice(i, stop); i = stop; continue; }
+      if (c !== '\\') {
+        STOP.lastIndex = i;
+        const stop = STOP.exec(text) ? STOP.lastIndex - 1 : n;
+        out += text.slice(i, stop);
+        i = stop;
+        continue;
+      }
       const e = text[i + 1];
       i += 2;
       if (e === 'u') {
@@ -362,15 +394,23 @@ function jsonArrayNode(a, ctx, depth) {
   if (n >= 2 && a.every(jsonIsRecord)) {
     const keys = [];
     const seen = new Set();
-    for (const row of a) for (const k of Object.keys(row)) if (!seen.has(k)) { seen.add(k); keys.push(k); }
-    const group = easGroup({ JSON_type: 'array', length: n,
-      note: `${docCount(n, 'object')} of numbers and text: each member a column, its values over all of them in order.` });
-    for (const key of keys) {
-      if (docFull(ctx)) break;
-      const col = docColumn(a.map(row => (Object.prototype.hasOwnProperty.call(row, key) ? row[key] : undefined)), 'JSON_type');
-      matPut(group, easLinkName(key === '' ? '""' : key), docDataset(ctx, col.attrs, [n], col.dtype, col.make));
+    let values = 0;
+    for (const row of a) {
+      for (const k of Object.keys(row)) {
+        values++;
+        if (!seen.has(k)) { seen.add(k); keys.push(k); }
+      }
     }
-    return group;
+    if (docIsTable(n, keys.length, values)) {
+      const group = easGroup({ JSON_type: 'array', length: n,
+        note: `${docCount(n, 'object')} of numbers and text: each member a column, its values over all of them in order.` });
+      for (const key of keys) {
+        if (docFull(ctx)) break;
+        const col = docColumn(a.map(row => (Object.prototype.hasOwnProperty.call(row, key) ? row[key] : undefined)), 'JSON_type');
+        matPut(group, easLinkName(key === '' ? '""' : key), docDataset(ctx, col.attrs, [n], col.dtype, col.make));
+      }
+      return group;
+    }
   }
   const group = easGroup({ JSON_type: 'array', length: n });
   const names = docIndexNames(n, 0, s => `[${s}]`);

@@ -17,7 +17,9 @@
                                 of text alone each once -- a table: a group
                                 named by the tag with a dataset for each
                                 attribute and element, its values over all
-                                of them in order
+                                of them in order -- when they share their
+                                names enough to fill a quarter of it
+                                (rb-json.js docIsTable)
 
    A comma is no separator between numbers, as 2,5 is two and a half where
    a decimal comma is written. Comments, processing instructions and the
@@ -103,22 +105,38 @@ function xmlTextDataset(ctx, text, attrs) {
   return docDataset(ctx, attrs, [], 'S', () => [text]);
 }
 
+/** Whether records fill a table enough to be one (docIsTable): a column for each attribute and element. */
+function xmlFillsTable(els) {
+  const names = new Set();
+  let values = 0;
+  for (const el of els) {
+    for (const a of el.attributes) names.add(`@${a.name}`);
+    for (const c of el.children) names.add(c.tagName);
+    values += el.attributes.length + el.children.length;
+  }
+  return docIsTable(els.length, names.size, values);
+}
+
 /** Elements of one tag that are records, as a table: a column for each attribute and element. */
 function xmlTable(els, ctx) {
   const keys = [];
   const seen = new Set();
   const add = (k) => { if (!seen.has(k)) { seen.add(k); keys.push(k); } };
-  for (const el of els) {
+  // Each record's elements by tag, found once: looked for again for every
+  // column, each record was gone through once a column.
+  const byTag = els.map((el) => {
+    const kids = new Map();
     for (const a of el.attributes) add(`@${a.name}`);
-    for (const c of el.children) add(c.tagName);
-  }
+    for (const c of el.children) { add(c.tagName); kids.set(c.tagName, c); }
+    return kids;
+  });
   const group = easGroup({ note: `${docCount(els.length, `element ${els[0].tagName}`, `elements ${els[0].tagName}`)}: each attribute and element a column, its values over all of them in order.` });
   for (const key of keys) {
     if (docFull(ctx)) break;
-    const raw = els.map((el) => {
+    const raw = els.map((el, r) => {
       if (key.startsWith('@')) return el.hasAttribute(key.slice(1)) ? el.getAttribute(key.slice(1)).trim() : undefined;
-      for (const c of el.children) if (c.tagName === key) return xmlOwnText(c);
-      return undefined;
+      const c = byTag[r].get(key);
+      return c ? xmlOwnText(c) : undefined;
     });
     const present = raw.filter(v => v !== undefined && v !== '');
     const numbers = present.length && present.every(v => xmlNumber(v) !== undefined);
@@ -161,7 +179,7 @@ function xmlNode(el, ctx, depth) {
     if (els.length === 1) {
       const node = xmlNode(els[0], ctx, depth + 1);
       if (node) matPut(group, easLinkName(tag), node);
-    } else if (els.every(xmlIsRecord)) {
+    } else if (els.every(xmlIsRecord) && xmlFillsTable(els)) {
       if (!docFull(ctx)) matPut(group, easLinkName(tag), xmlTable(els, ctx));
     } else {
       const names = docIndexNames(els.length, 1, s => `${tag}[${s}]`);

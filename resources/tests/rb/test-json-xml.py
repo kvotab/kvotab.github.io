@@ -83,6 +83,17 @@ def deep_json(levels):
     return '{"a":' * levels + '1' + '}' * levels
 
 
+# What once held the page or ran it out of stack: a long string of many
+# escapes read leniently (each escape went through the rest of the string: a
+# million of them would take minutes, past the 30 seconds a file is given),
+# nesting past what the lenient reading follows, and records that share no
+# names, which made a table of mostly gaps, a column for every name.
+ESCAPES = '// a comment, so read leniently\n' + json.dumps({'text': 'line\n' * 1000000})
+NESTED = '// a comment, so read leniently\n' + '[' * 4000 + '1' + ']' * 4000
+OWN_KEYS = json.dumps([{f'k{r}_{c}': c for c in range(20)} for r in range(500)])
+OWN_TAGS = '<r>' + ''.join('<e>' + ''.join(f'<t{r}_{c}>{c}</t{r}_{c}>' for c in range(20)) + '</e>' for r in range(500)) + '</r>'
+
+
 CIF = """ <cif>
 <!-- ============== Case: Testing Case C0029 ============== -->
  <run> <timeout> 3000 </timeout> </run>
@@ -211,6 +222,10 @@ async def main():
         'external.xml': EXTERNAL.encode('utf-8'),
         'hostile.json': json.dumps(HOSTILE_JSON).encode('utf-8'),
         'hostile.xml': HOSTILE_XML.encode('utf-8'),
+        'escapes.json': ESCAPES.encode('utf-8'),
+        'nested.json': NESTED.encode('utf-8'),
+        'own-keys.json': OWN_KEYS.encode('utf-8'),
+        'own-tags.xml': OWN_TAGS.encode('utf-8'),
     }
     for name, data in written.items():
         with open(os.path.join(tmp, name), 'wb') as fh:
@@ -285,6 +300,21 @@ async def main():
             await pick_files(page, [at('bad.json')])
             check('broken JSON is refused, saying where', ('a comma or ] expected at line 2, column 6' in await banner(page),
                                                           await page.ev('fileOrder.length')), (True, before))
+            opened = await pick_files(page, [at('escapes.json'), at('own-keys.json')])
+            check('a string of a million escapes, read leniently, opens', opened[-2:], ['escapes.json', 'own-keys.json'])
+            e = await page.ev(DUMP % json.dumps('escapes.json'), timeout=60)
+            check('  the string whole', (len(value(e, '/text')), value(e, '/text')[:10], e['root'].get('JSON_format')),
+                  (5000000, 'line\nline\n', 'JSON, read leniently'))
+            k = await page.ev(DUMP % json.dumps('own-keys.json'), timeout=60)
+            rows = [p for p in k['tree'] if p.count('/') == 2]
+            check('500 objects that share no member are each shown as itself, not a table of 10,000 columns',
+                  (len(rows), rows[0], attr(k, '/own-keys', 'note'), value(k, '/own-keys/[499]/k499_19')),
+                  (500, '/own-keys/[000]', None, 19))
+            before = await page.ev('fileOrder.length')
+            await pick_files(page, [at('nested.json')])
+            check('nesting past what the lenient reading follows is refused, saying where',
+                  ('values nested too deeply at line 2, column 1002' in await banner(page), await page.ev('fileOrder.length')),
+                  (True, before))
             check('JSON handed over under an .h5 name is read as JSON',
                   await ingest(page, 'handoff.h5', written['array.json']), ['handoff.h5'])
             check('an address ending in .json or .xml keeps its name',
@@ -328,6 +358,11 @@ async def main():
             check('read in the encoding the file declares, or its byte-order mark says',
                   (value(m, '/doc/name'), value(l1, '/doc/name'), l1['root'].get('XML_encoding'), value(u16, '/r/t'), value(u16, '/r/n')),
                   ('Ångström', 'Ångström', 'ISO-8859-1', 'héllo', [1, 2, 3]))
+            await pick_files(page, [at('own-tags.xml')])
+            o = await page.ev(DUMP % json.dumps('own-tags.xml'), timeout=60)
+            rows = [p for p in o['tree'] if p.count('/') == 2]
+            check('500 records that share no element are each shown as itself, not a table of 10,000 columns',
+                  (len(rows), rows[0], value(o, '/r/e[500]/t499_19')), (500, '/r/e[001]', 19))
 
             before = await page.ev('fileOrder.length')
             await pick_files(page, [at('bad.xml')])
