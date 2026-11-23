@@ -119,6 +119,39 @@ def status_has(needle):
     return f"document.getElementById('sfStatus').textContent.includes({json.dumps(needle)})"
 
 
+def xlsx(sheets, rels=True):
+    """A workbook of sheets [(name, rows)], each row a list of (cell, value)
+    pairs: text written inline as it is given (entities and all), numbers
+    as numbers. Without rels, no xl/_rels/workbook.xml.rels."""
+    import io
+    import zipfile
+    ns = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+    rns = 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
+        z.writestr('[Content_Types].xml', '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                   '<Default Extension="xml" ContentType="application/xml"/></Types>')
+        z.writestr('xl/workbook.xml', f'<?xml version="1.0"?><workbook {ns} {rns}><sheets>'
+                   + ''.join(f'<sheet name="{n}" sheetId="{k + 1}" r:id="rId{k + 1}"/>' for k, (n, _) in enumerate(sheets)) + '</sheets></workbook>')
+        if rels:
+            z.writestr('xl/_rels/workbook.xml.rels', '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                       + ''.join(f'<Relationship Id="rId{k + 1}" Target="worksheets/sheet{k + 1}.xml"/>' for k in range(len(sheets))) + '</Relationships>')
+        for k, (_, rows) in enumerate(sheets):
+            cells = lambda row: ''.join(f'<c r="{ref}"><v>{v}</v></c>' if isinstance(v, (int, float)) else f'<c r="{ref}" t="inlineStr"><is><t>{v}</t></is></c>' for ref, v in row)
+            z.writestr(f'xl/worksheets/sheet{k + 1}.xml', f'<?xml version="1.0"?><worksheet {ns}><sheetData>'
+                       + ''.join(f'<row>{cells(row)}</row>' for row in rows) + '</sheetData></worksheet>')
+    return out.getvalue()
+
+
+# A workbook read as a reference by the page's own reader (SFIO, with the page's JSZip).
+READ_REF = """(async (b64) => {
+  const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  try { const r = await SFIO.readReference({ name: 'x.xlsx', buffer: bytes.buffer }); return `read ${r.format}: ${r.elements.join(' ')}`; }
+  catch (e) { return `${e.name}: ${e.message}`; }
+})(%s)"""
+SOLUBILITIES = [[('A1', 'Sr'), ('B1', 'U')], [('A2', 1e-3), ('B2', 1e-9)], [('A3', 2e-3), ('B3', 2e-9)]]
+
+
 async def main():
     ver = json.load(urllib.request.urlopen(f'http://127.0.0.1:{CDP}/json/version'))
     async with websockets.connect(ver['webSocketDebuggerUrl'], max_size=200 * 1024 * 1024) as bws:
@@ -216,6 +249,24 @@ async def main():
             check('with 20 elements compared', await page.ev("document.querySelectorAll('#sfCompareTable tbody tr').length"), 20)
             check('every KS distance 0 against itself', await page.ev("Array.from(document.querySelectorAll('#sfCompareTable tbody tr')).every((tr) => tr.children[9].textContent === '0.0000')"), True)
             os.unlink(mat_path)
+
+            # --- workbooks that are damaged or odd -----------------------------
+            # A cell past column XFD once filled its row out to it: ZZZZZZZZZ1
+            # held the page, then said "Invalid array length", and no other
+            # sheet was read. A missing relations part, and a character past
+            # Unicode's last, were said in the browser's words.
+            ref = lambda sheets, **kw: page.ev(READ_REF % json.dumps(base64.b64encode(xlsx(sheets, **kw)).decode()))
+            check('a sheet with a cell past column XFD is passed over, and the next sheet read',
+                  await ref([('Bad', [[('A1', 'Sr'), ('ZZZZZZZZZ1', 1)]]), ('Solubilities', SOLUBILITIES)]), 'read Excel, sheet “Solubilities”: Sr U')
+            check('... and alone, said',
+                  await ref([('Bad', [[('A1', 'Sr'), ('B1', 'U')], [('A2', 1), ('ZZZZZZZZZ2', 2)]])]),
+                  'Error: x.xlsx: no element columns or fields found (expected names such as Sr, Ra, U, Np); a sheet could not be read: '
+                  'Bad: a cell, ZZZZZZZZZ2, lies past column XFD, the last Excel has')
+            check('a workbook without the part that says where its sheets are: said',
+                  await ref([('Solubilities', SOLUBILITIES)], rels=False),
+                  'Error: not an Excel workbook (no xl/_rels/workbook.xml.rels, which says where its sheets are)')
+            check('a character past Unicode\'s last is the replacement character, and the sheet read',
+                  await ref([('Solubilities', [SOLUBILITIES[0] + [('C1', 'note &#1114112;')]] + SOLUBILITIES[1:])]), 'read Excel, sheet “Solubilities”: Sr U')
 
             # --- the (i) panel ---------------------------------------------
             await page.ev("document.querySelector('[data-info=\"set:draw\"]').click()")

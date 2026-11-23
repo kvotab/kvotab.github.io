@@ -285,6 +285,56 @@ const solidLog = (plan, res, el, id) => {
   const ref = IO.solubilitiesFromRows(IO.parseDelimited('Sr,U,foo\n1e-3,1e-9,5\n2e-3,2e-9,6\n'));
   check('reference columns by element name', Object.keys(ref).join() === 'Sr,U' && ref.U[1] === 2e-9);
 
+  /* Damaged MAT files, and ones MATLAB writes with text in them: each read
+     in a process of its own, given ten seconds, since a damaged field-name
+     length once kept the reader going round for ever. Before, these held
+     the page, took gigabytes, or said the engine's words ("Offset is
+     outside the bounds of the DataView"), and any MATLAB file with a text
+     variable was refused ("unsupported numeric type 16"). */
+  const childProcess = require('child_process');
+  const os = require('os');
+  const says = (label, bytes, want) => { const got = said(bytes); check(label, got === want, got); };
+  const said = (bytes) => {
+    const file = path.join(os.tmpdir(), `sf-damaged-${process.pid}.mat`);
+    fs.writeFileSync(file, bytes);
+    const r = childProcess.spawnSync(process.execPath, ['-e', `
+      const IO = require(${JSON.stringify(path.join(jsDir, 'sf-io.js'))});
+      const b = require('fs').readFileSync(${JSON.stringify(file)});
+      IO.readReference({ name: 'x.mat', buffer: b.buffer.slice(b.byteOffset, b.byteOffset + b.length) })
+        .then((r) => console.log('read ' + r.elements.join(' ')), (e) => console.log(e.name + ': ' + e.message));
+    `], { timeout: 10000, encoding: 'utf8' });
+    fs.unlinkSync(file);
+    return r.error && r.error.code === 'ETIMEDOUT' ? 'held over 10 s' : (r.stdout || r.stderr).trim();
+  };
+  const pad8 = (b) => Buffer.concat([b, Buffer.alloc((8 - (b.length % 8)) % 8)]);
+  const elem = (type, data, size = data.length) => { const h = Buffer.alloc(8); h.writeUInt32LE(type, 0); h.writeUInt32LE(size, 4); return Buffer.concat([h, pad8(data)]); };
+  const i32 = (a) => { const b = Buffer.alloc(4 * a.length); a.forEach((x, k) => b.writeInt32LE(x, 4 * k)); return b; };
+  const matrix = (cls, dims, name, parts) => { const f = Buffer.alloc(8); f.writeUInt32LE(cls, 0); const body = Buffer.concat([elem(6, f), elem(5, i32(dims)), elem(1, Buffer.from(name)), ...parts]); return elem(14, body); };
+  const headerOf = (b) => Buffer.from(b).subarray(0, 128);
+  const csol = Buffer.from(IO.writeMatStructArray('CSOL', ['U', 'Np'], cols, 3));
+  const units = matrix(4, [1, 9], 'units', [elem(16, Buffer.from('mol/kg Å'))]);
+  says('a MAT file with a text variable beside its solubilities (UTF-8, as MATLAB writes text) is read',
+    Buffer.concat([csol, units]), 'read U Np');
+  const fieldless = Buffer.concat([headerOf(csol), matrix(2, [1, 1], 'S', [elem(5, i32([0])), elem(1, Buffer.from('U\0\0\0Np\0\0'))])]);
+  says('a struct whose field names are 0 bytes long: said, where it went round for ever',
+    fieldless, "Error: x.mat: no element columns or fields found (expected names such as Sr, Ra, U, Np); a variable could not be read: MAT: a struct's field names do not fit their length");
+  const huge = Buffer.concat([headerOf(csol), matrix(6, [1, 1], 'U', [elem(9, Buffer.alloc(8), 0xffffffff)])]);
+  says('a value that says it is 4 GB long: said before anything is made for it',
+    huge, 'Error: x.mat: no element columns or fields found (expected names such as Sr, Ra, U, Np); a variable could not be read: MAT: a value runs past the variable that holds it');
+  const z = Buffer.alloc(8); z.writeUInt32LE(15, 0); z.writeUInt32LE(40, 4);
+  says('a compressed variable that is damaged: said in the page\'s words, not the browser\'s',
+    Buffer.concat([headerOf(csol), z, Buffer.alloc(40, 7)]), 'Error: x.mat: no element columns or fields found (expected names such as Sr, Ra, U, Np); a variable could not be read: MAT: a compressed variable is damaged');
+  const long = Buffer.alloc(2 * 200000);
+  for (let k = 0; k < 200000; k++) long.writeUInt16LE(97 + (k % 26), 2 * k);
+  const text = await IO.readMat(Buffer.concat([headerOf(csol), matrix(4, [1, 200000], 't', [elem(4, long)])]));
+  check('a char array of 200,000 characters is read whole, where spreading it ran past the stack', text.t && text.t.text.length === 200000 && text.t.text.slice(0, 3) === 'abc');
+  const zlib = require('zlib');
+  const packed = zlib.deflateSync(Buffer.concat([matrix(6, [1, 262144], 'U', [elem(9, Buffer.alloc(8 * 262144))])]));
+  const bomb = Buffer.concat([headerOf(csol), (() => { const h = Buffer.alloc(8); h.writeUInt32LE(15, 0); h.writeUInt32LE(packed.length, 4); return h; })(), packed]);
+  const capped = await IO.readMat(bomb, { maxUnpacked: 1 << 20 });
+  check('a compressed variable that unpacks to more than may be read is not unpacked (here 2 MB over 1 MB)',
+    capped.unread.join() === 'MAT: its variables unpack to more than the 1 MB this page reads' && !capped.U, capped.unread.join());
+
   /* ----------------------------------------------------------------------
      8. With the SR-Site files on this machine (see make-local-fixtures.py)
      ---------------------------------------------------------------------- */

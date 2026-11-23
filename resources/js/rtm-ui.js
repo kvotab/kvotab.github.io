@@ -16392,10 +16392,14 @@ END
     if (!file) return;
     let data = {};
     let format = '';
+    let unread = [];
     try {
       if (/\.mat$/i.test(file.name)) {
         if (!self.SFIO) await loadScript(SF_IO_SRC);
-        data = batchMatValues(await self.SFIO.readMat(new Uint8Array(await file.arrayBuffer())));
+        // A variable that cannot be read is left out, and why is kept.
+        const vars = await self.SFIO.readMat(new Uint8Array(await file.arrayBuffer()));
+        data = batchMatValues(vars);
+        unread = vars.unread || [];
         format = 'a MATLAB file';
       } else if (/\.(h5|hdf5|hdf)$/i.test(file.name)) {
         if (!self.SFIO) await loadScript(SF_IO_SRC);
@@ -16413,7 +16417,7 @@ END
         data = batchColumnValues(batchTableOf(batchCsvRows(await pqFileText(file)), file.name));
         format = 'a table';
       }
-      if (!Object.keys(data).length) throw new Error('it has no column or field of numbers');
+      if (!Object.keys(data).length) throw new Error(`it has no column or field of numbers${unread.length ? ` (${unread.slice(0, 2).join('; ')})` : ''}`);
     } catch (e) {
       setStatus(`${file.name} could not be read as a reference: ${e.message}`, 'error');
       return;
@@ -16711,7 +16715,7 @@ ${charts.length ? `<script>\n${charts.map((ch, i) => `Plotly.newPlot('chart${i}'
   const SF_TABLE = "Simple Functions' reference waters (TR-10-61)";
   /** SimpleFunctions.html's file reader and writer, for a batch's MATLAB or HDF5 reference and its CSOL file: at the
       stamp SimpleFunctions.html loads it with, as SFData's and SFModel's are, so that a new copy reaches both pages. */
-  const SF_IO_SRC = 'resources/js/sf-io.js?v=20261117a';
+  const SF_IO_SRC = 'resources/js/sf-io.js?v=20261123';
   /** The elements SR-Site's and the PSAR's CSOL files gave no solubility limit, 1e17 in every realisation. */
   const CSOL_UNLIMITED = ['Ac', 'C', 'Ca', 'Cd', 'Cl', 'Cs', 'Eu', 'H', 'I', 'Mo', 'Rn'];
   /** What each column the Simple Functions read holds, in words. */

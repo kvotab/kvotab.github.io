@@ -68,18 +68,24 @@
      --------------------------------------------------------------------- */
   const XML_ENTITIES = { '&lt;': '<', '&gt;': '>', '&amp;': '&', '&quot;': '"', '&apos;': "'" };
   function unxml(s) {
-    return s.replace(/&(lt|gt|amp|quot|apos);/g, (m) => XML_ENTITIES[m]).replace(/&#(\d+);/g, (m, d) => String.fromCodePoint(Number(d)));
+    // A character past Unicode's last is no character: the replacement one.
+    return s.replace(/&(lt|gt|amp|quot|apos);/g, (m) => XML_ENTITIES[m])
+      .replace(/&#(\d+);/g, (m, d) => (Number(d) <= 0x10ffff ? String.fromCodePoint(Number(d)) : '�'));
   }
   function attrs(tag) {
     const out = {};
     for (const m of tag.matchAll(/([\w:]+)="([^"]*)"/g)) out[m[1]] = m[2];
     return out;
   }
+  // Excel's last column, XFD: a cell past it is no cell Excel can make, and
+  // the row would be filled out to it -- ZZZZZZZZZ1 asked for 5.6 * 10^12.
+  const MAX_COLUMNS = 16384;
   function colIndex(ref) {
     const m = /^([A-Z]+)/.exec(ref);
     if (!m) return 0;
     let c = 0;
     for (const ch of m[1]) c = c * 26 + (ch.charCodeAt(0) - 64);
+    if (c > MAX_COLUMNS) throw new Error(`a cell, ${ref.slice(0, 20)}, lies past column XFD, the last Excel has`);
     return c - 1;
   }
   function sheetRows(xml, shared) {
@@ -115,12 +121,45 @@
    * The first sheet of a workbook, in the order `rank` gives, for which
    * `accept(rows)` returns something truthy: {name, rows, value, sheets}.
    */
+  // A part of a workbook unpacks to no more than this: a small workbook can
+  // unpack to gigabytes, and a string past half a gigabyte is more than the
+  // browser makes.
+  const MAX_PART = 256 * 1024 * 1024;
+
+  /** A part of the workbook as text, unpacked a piece at a time up to MAX_PART. */
+  function partText(f) {
+    return new Promise((resolve, reject) => {
+      const chunks = [];
+      let total = 0;
+      const s = f.internalStream('uint8array');
+      s.on('data', (c) => {
+        if (total < 0) return;
+        total += c.length;
+        if (total > MAX_PART) {
+          total = -1;
+          s.pause();
+          reject(new Error(`${f.name} unpacks to more than the ${MAX_PART / 1048576} MB this page reads of a part of a workbook`));
+          return;
+        }
+        chunks.push(c);
+      }).on('error', reject).on('end', () => {
+        if (total < 0) return;
+        const out = new Uint8Array(total);
+        let at = 0;
+        for (const c of chunks) { out.set(c, at); at += c.length; }
+        resolve(new TextDecoder('utf-8').decode(out));
+      }).resume();
+    });
+  }
+
   async function findSheet(buf, accept, rank) {
     const zip = await jszip().loadAsync(buf);
     const wbFile = zip.file('xl/workbook.xml');
     if (!wbFile) throw new Error('not an Excel workbook (no xl/workbook.xml)');
-    const wbXml = await wbFile.async('string');
-    const relXml = await zip.file('xl/_rels/workbook.xml.rels').async('string');
+    const wbXml = await partText(wbFile);
+    const relFile = zip.file('xl/_rels/workbook.xml.rels');
+    if (!relFile) throw new Error('not an Excel workbook (no xl/_rels/workbook.xml.rels, which says where its sheets are)');
+    const relXml = await partText(relFile);
     const rels = {};
     for (const m of relXml.matchAll(/<Relationship\b([^>]*)\/?>/g)) { const a = attrs(m[1]); rels[a.Id] = a.Target; }
     const sheets = [];
@@ -131,7 +170,7 @@
     let shared = [];
     const ssFile = zip.file('xl/sharedStrings.xml');
     if (ssFile) {
-      const ss = await ssFile.async('string');
+      const ss = await partText(ssFile);
       shared = Array.from(ss.matchAll(/<si>([\s\S]*?)<\/si>/g), (m) => unxml((m[1].match(/<t[^>]*>([\s\S]*?)<\/t>/g) || []).map((t) => t.replace(/<[^>]+>/g, '')).join('')));
     }
     const order = sheets.map((s, i) => i);
@@ -140,7 +179,14 @@
     for (const i of order) {
       const f = zip.file(sheets[i].path);
       if (!f) continue;
-      const rows = sheetRows(await f.async('string'), shared);
+      // A sheet that cannot be read is said, and the next one tried.
+      let rows;
+      try {
+        rows = sheetRows(await partText(f), shared);
+      } catch (e) {
+        errors.push(`${sheets[i].name}: ${e.message}`);
+        continue;
+      }
       if (!rows.length) continue;
       try {
         const value = accept(rows);
@@ -180,15 +226,54 @@
   /* ---------------------------------------------------------------------
      Inflate (zlib), for compressed MAT elements
      --------------------------------------------------------------------- */
-  async function inflate(bytes) {
+  // What a file's variables may unpack to, all together: what the page
+  // reads of a file. A few kilobytes can unpack to gigabytes.
+  const MAX_UNPACKED = 1 << 30;
+
+  /** Why a MAT file, or a variable of one, cannot be read, in the page's words. */
+  function matDamaged(why) {
+    return new Error(`MAT: ${why}`);
+  }
+
+  /**
+   * zlib data unpacked, no more than `budget.left` bytes (taken from it):
+   * damaged data is said to be, in the page's words, not the browser's.
+   */
+  async function inflate(bytes, budget = { left: MAX_UNPACKED, limit: MAX_UNPACKED }) {
+    const tooMuch = () => matDamaged(`its variables unpack to more than the ${budget.limit >= 1 << 30 ? `${budget.limit / (1 << 30)} GB` : `${budget.limit / (1 << 20)} MB`} this page reads`);
     if (typeof DecompressionStream === 'function') {
-      const ds = new DecompressionStream('deflate');
-      const stream = new Blob([bytes]).stream().pipeThrough(ds);
-      return new Uint8Array(await new Response(stream).arrayBuffer());
+      const reader = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate')).getReader();
+      const chunks = [];
+      let total = 0;
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          total += value.byteLength;
+          if (total > budget.left) throw tooMuch();
+          chunks.push(value);
+        }
+      } catch (e) {
+        reader.cancel().catch(() => {});
+        if (e && /^MAT: /.test(e.message)) throw e;
+        throw matDamaged('a compressed variable is damaged');
+      }
+      budget.left -= total;
+      const out = new Uint8Array(total);
+      let at = 0;
+      for (const c of chunks) { out.set(c, at); at += c.byteLength; }
+      return out;
     }
     if (typeof require === 'function') {
       const zlib = require('zlib');
-      return new Uint8Array(zlib.inflateSync(Buffer.from(bytes)));
+      let out;
+      try {
+        out = zlib.inflateSync(Buffer.from(bytes), { maxOutputLength: Math.max(1, budget.left) });
+      } catch (e) {
+        throw e && e.code === 'ERR_BUFFER_TOO_LARGE' ? tooMuch() : matDamaged('a compressed variable is damaged');
+      }
+      budget.left -= out.length;
+      return new Uint8Array(out);
     }
     throw new Error('this browser cannot decompress (no DecompressionStream); save the MAT file with -v6 or as CSV');
   }
@@ -224,58 +309,102 @@
     return out;
   }
 
-  /** One data element at `off`: {type, nbytes, dataOff, next}. */
-  function tagAt(dv, off, le) {
+  /**
+   * One data element at `off`, inside what ends at `end`: {type, nbytes,
+   * dataOff, next}. Every size is a number from the file, checked against
+   * what holds it before anything is read or made for it.
+   */
+  function tagAt(dv, off, le, end) {
+    if (off + 8 > end) throw matDamaged('a variable is cut short');
     const w0 = dv.getUint32(off, le);
     if ((w0 >>> 16) !== 0) {
       // Small data element: two bytes size, two bytes type, four bytes of data.
       const type = w0 & 0xffff;
       const nbytes = w0 >>> 16;
+      if (nbytes > 4) throw matDamaged('a value is longer than its tag allows');
       return { type, nbytes, dataOff: off + 4, next: off + 8 };
     }
     const nbytes = dv.getUint32(off + 4, le);
+    if (nbytes > end - off - 8) throw matDamaged('a value runs past the variable that holds it');
     const pad = w0 === MI.COMPRESSED ? 0 : (8 - (nbytes % 8)) % 8;
-    return { type: w0, nbytes, dataOff: off + 8, next: off + 8 + nbytes + pad };
+    return { type: w0, nbytes, dataOff: off + 8, next: Math.min(end, off + 8 + nbytes + pad) };
   }
 
-  function parseMatrix(dv, off, end, le) {
+  /**
+   * The text of a char array, in whichever of its forms MATLAB wrote it:
+   * UTF-8 for ASCII text, UTF-16 or UTF-32 otherwise, or code units as
+   * numbers. Made a piece at a time: spread at once, a long text ran past
+   * the stack.
+   */
+  function textOf(dv, t, le) {
+    if (t.type === MI.UTF8) return new TextDecoder('utf-8').decode(new Uint8Array(dv.buffer, dv.byteOffset + t.dataOff, t.nbytes));
+    let s = '';
+    if (t.type === MI.UTF32) {
+      for (let i = 0; i + 4 <= t.nbytes; i += 4) {
+        const cp = dv.getUint32(t.dataOff + i, le);
+        s += cp <= 0x10ffff ? String.fromCodePoint(cp) : '�';
+      }
+      return s;
+    }
+    const codes = readNumbers(dv, t.dataOff, t.type === MI.UTF16 ? MI.UINT16 : t.type, t.nbytes, le);
+    for (let i = 0; i < codes.length; i += 8192) {
+      s += String.fromCharCode.apply(null, Array.from(codes.subarray(i, i + 8192), (c) => c & 0xffff));
+    }
+    return s;
+  }
+
+  const MAX_DEPTH = 64;
+
+  function parseMatrix(dv, off, end, le, depth = 0) {
     if (off >= end) return { cls: 'empty' };
+    if (depth > MAX_DEPTH) throw matDamaged(`its arrays are nested more than ${MAX_DEPTH} deep`);
     // Array flags
-    let t = tagAt(dv, off, le);
+    let t = tagAt(dv, off, le, end);
+    if (t.nbytes < 4) throw matDamaged('an array has no array flags');
     const flags = dv.getUint32(t.dataOff, le);
     const cls = flags & 0xff;
     const complex = !!(flags & 0x0800);
     off = t.next;
     // Dimensions
-    t = tagAt(dv, off, le);
+    t = tagAt(dv, off, le, end);
     const dims = Array.from(readNumbers(dv, t.dataOff, t.type, t.nbytes, le));
+    if (dims.some((d) => !Number.isInteger(d) || d < 0)) throw matDamaged('an array has a size below zero');
     off = t.next;
     // Name
-    t = tagAt(dv, off, le);
+    t = tagAt(dv, off, le, end);
     let name = '';
     for (let i = 0; i < t.nbytes; i++) name += String.fromCharCode(dv.getUint8(t.dataOff + i));
     off = t.next;
     const numel = dims.reduce((a, b) => a * b, 1);
+    // An element of a cell or struct is a value of its own, eight bytes at
+    // the least: a count its bytes cannot hold is refused before it is
+    // counted out.
+    const fits = (count) => {
+      if (count * 8 > end - off) throw matDamaged(`${name ? `the array ${name}` : 'an array'} says it holds more than its bytes can`);
+    };
     if (cls >= MX.DOUBLE && cls <= MX.UINT64) {
-      t = tagAt(dv, off, le);
+      t = tagAt(dv, off, le, end);
       const re = readNumbers(dv, t.dataOff, t.type, t.nbytes, le);
       return { cls: 'numeric', name, dims, data: re, complex };
     }
     if (cls === MX.CHAR) {
-      t = tagAt(dv, off, le);
-      const codes = readNumbers(dv, t.dataOff, t.type, t.nbytes, le);
-      return { cls: 'char', name, dims, text: String.fromCharCode(...codes) };
+      // An empty one may have no data at all.
+      const text = off < end ? textOf(dv, tagAt(dv, off, le, end), le) : '';
+      return { cls: 'char', name, dims, text };
     }
     if (cls === MX.STRUCT || cls === MX.OBJECT) {
-      if (cls === MX.OBJECT) { t = tagAt(dv, off, le); off = t.next; }
-      t = tagAt(dv, off, le);
-      const flen = dv.getInt32(t.dataOff, le);
+      if (cls === MX.OBJECT) { t = tagAt(dv, off, le, end); off = t.next; }
+      t = tagAt(dv, off, le, end);
+      const flen = t.nbytes >= 4 ? dv.getInt32(t.dataOff, le) : 0;
       off = t.next;
-      t = tagAt(dv, off, le);
+      t = tagAt(dv, off, le, end);
+      // The names, each `flen` bytes: a length of nothing or less went
+      // round the same name for ever.
+      if (t.nbytes && !(flen > 0)) throw matDamaged('a struct\'s field names do not fit their length');
       const fields = [];
       for (let k = 0; k * flen < t.nbytes; k++) {
         let s = '';
-        for (let i = 0; i < flen; i++) {
+        for (let i = 0; i < flen && k * flen + i < t.nbytes; i++) {
           const c = dv.getUint8(t.dataOff + k * flen + i);
           if (!c) break;
           s += String.fromCharCode(c);
@@ -283,23 +412,29 @@
         if (s) fields.push(s);
       }
       off = t.next;
+      fits(numel * fields.length);
+      // A struct of no fields holds nothing in its elements, however many
+      // its size says: none is made.
       const elements = [];
-      for (let e = 0; e < numel; e++) {
-        const obj = {};
-        for (const f of fields) {
-          const mt = tagAt(dv, off, le);
-          obj[f] = mt.type === MI.MATRIX && mt.nbytes ? parseMatrix(dv, mt.dataOff, mt.dataOff + mt.nbytes, le) : { cls: 'empty' };
-          off = mt.next;
+      if (fields.length || numel === 1) {
+        for (let e = 0; e < numel; e++) {
+          const obj = {};
+          for (const f of fields) {
+            const mt = tagAt(dv, off, le, end);
+            obj[f] = mt.type === MI.MATRIX && mt.nbytes ? parseMatrix(dv, mt.dataOff, mt.dataOff + mt.nbytes, le, depth + 1) : { cls: 'empty' };
+            off = mt.next;
+          }
+          elements.push(obj);
         }
-        elements.push(obj);
       }
       return { cls: 'struct', name, dims, fields, elements };
     }
     if (cls === MX.CELL) {
+      fits(numel);
       const cells = [];
       for (let e = 0; e < numel; e++) {
-        const mt = tagAt(dv, off, le);
-        cells.push(mt.nbytes ? parseMatrix(dv, mt.dataOff, mt.dataOff + mt.nbytes, le) : { cls: 'empty' });
+        const mt = tagAt(dv, off, le, end);
+        cells.push(mt.nbytes ? parseMatrix(dv, mt.dataOff, mt.dataOff + mt.nbytes, le, depth + 1) : { cls: 'empty' });
         off = mt.next;
       }
       return { cls: 'cell', name, dims, cells };
@@ -307,8 +442,13 @@
     return { cls: 'unsupported', name, dims, mxClass: cls };
   }
 
-  /** Every top-level variable of a MAT file: {name: parsed matrix}. */
-  async function readMat(buffer) {
+  /**
+   * Every top-level variable of a MAT file: {name: parsed matrix}. One that
+   * cannot be read is left out, and the rest are read; why each was left
+   * out is in the result's `unread` (not one of its keys). Its compressed
+   * variables unpack to no more than `maxUnpacked` bytes in all.
+   */
+  async function readMat(buffer, { maxUnpacked = MAX_UNPACKED } = {}) {
     const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
     if (bytes.length < 128) throw new Error('too short for a MAT file');
     const head = String.fromCharCode(...bytes.slice(0, 116));
@@ -319,24 +459,38 @@
     const ei = String.fromCharCode(bytes[126], bytes[127]);
     const le = ei === 'IM';
     const vars = {};
+    const unread = [];
+    Object.defineProperty(vars, 'unread', { value: unread, enumerable: false });
+    const budget = { left: maxUnpacked, limit: maxUnpacked };
     let off = 128;
-    let dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     while (off + 8 <= bytes.length) {
-      const t = tagAt(dv, off, le);
-      if (t.type === MI.COMPRESSED) {
-        const inner = await inflate(bytes.subarray(t.dataOff, t.dataOff + t.nbytes));
-        const idv = new DataView(inner.buffer, inner.byteOffset, inner.byteLength);
-        const it = tagAt(idv, 0, le);
-        if (it.type === MI.MATRIX) {
-          const m = parseMatrix(idv, it.dataOff, it.dataOff + it.nbytes, le);
+      let t;
+      try {
+        t = tagAt(dv, off, le, bytes.length);
+      } catch (e) {
+        unread.push(e.message);
+        break;
+      }
+      try {
+        if (t.type === MI.COMPRESSED) {
+          const inner = await inflate(bytes.subarray(t.dataOff, t.dataOff + t.nbytes), budget);
+          const idv = new DataView(inner.buffer, inner.byteOffset, inner.byteLength);
+          const it = tagAt(idv, 0, le, inner.length);
+          if (it.type === MI.MATRIX) {
+            const m = parseMatrix(idv, it.dataOff, it.dataOff + it.nbytes, le);
+            vars[m.name || `var${Object.keys(vars).length + 1}`] = m;
+          }
+        } else if (t.type === MI.MATRIX) {
+          const m = parseMatrix(dv, t.dataOff, t.dataOff + t.nbytes, le);
           vars[m.name || `var${Object.keys(vars).length + 1}`] = m;
         }
-      } else if (t.type === MI.MATRIX) {
-        const m = parseMatrix(dv, t.dataOff, t.dataOff + t.nbytes, le);
-        vars[m.name || `var${Object.keys(vars).length + 1}`] = m;
+      } catch (e) {
+        if (!/^MAT: /.test(e && e.message)) throw e;
+        unread.push(e.message);
+        if (/unpack to more than/.test(e.message)) break;
       }
       off = t.next;
-      dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     }
     return vars;
   }
@@ -453,8 +607,11 @@
     const buf = file.buffer || (typeof file.arrayBuffer === 'function' ? await file.arrayBuffer() : null);
     let found = {};
     let format = '';
+    let unread = [];
     if (/\.mat$/i.test(name)) {
-      found = solubilitiesFromMat(await readMat(buf));
+      const vars = await readMat(buf);
+      found = solubilitiesFromMat(vars);
+      unread = vars.unread || [];
       format = 'MATLAB MAT file';
     } else if (/\.(h5|hdf5|hdf)$/i.test(name)) {
       found = await solubilitiesFromH5(buf);
@@ -468,6 +625,7 @@
     } else if (/\.(xlsx|xlsm)$/i.test(name)) {
       const got = await findSheet(buf, (rows) => { const f = solubilitiesFromRows(rows); return Object.keys(f).length ? f : null; });
       found = got.value || {};
+      unread = got.errors;
       format = `Excel, sheet “${got.name}”`;
     } else {
       const text = typeof file.text === 'function' ? await file.text() : new TextDecoder().decode(buf);
@@ -475,7 +633,11 @@
       format = 'table';
     }
     const els = Object.keys(found);
-    if (!els.length) throw new Error(`${name}: no element columns or fields found (expected names such as Sr, Ra, U, Np)`);
+    if (!els.length) {
+      const what = format === 'MATLAB MAT file' ? ['a variable', 'variables'] : ['a sheet', 'sheets'];
+      const why = unread.length ? `; ${unread.length === 1 ? what[0] : `${unread.length} ${what[1]}`} could not be read: ${unread.slice(0, 3).join('; ')}` : '';
+      throw new Error(`${name}: no element columns or fields found (expected names such as Sr, Ra, U, Np)${why}`);
+    }
     return { name, format, data: found, elements: ELEMENTS.filter((e) => els.includes(e)) };
   }
 
