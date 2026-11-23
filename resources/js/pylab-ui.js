@@ -55,6 +55,14 @@
 
   function accelText(a) { return a ? (PL.util.isMac ? `⌘${a.toUpperCase()}` : `Ctrl+${a.toUpperCase()}`) : ''; }
 
+  /* A node's children made these, through a fragment: a list's items, a text's lines or a folder's
+     files spread into replaceChildren run past the stack at some 125,000. */
+  function setKids(node, kids) {
+    const f = document.createDocumentFragment();
+    for (const k of kids) f.append(k);
+    node.replaceChildren(f);
+  }
+
   const iconCache = new Map();
   /* A tool's or a button's picture: RGBA bytes as a data URL. */
   function iconURL(cd) {
@@ -596,7 +604,7 @@
           break;
         }
         case 'text': {
-          rec.text.replaceChildren(...lines.map((l) => el('div', null, l || ' ')));
+          setKids(rec.text, lines.map((l) => el('div', null, l || ' ')));
           const url = iconURL(c.cdata);
           rec.img.hidden = !url;
           if (url) { rec.img.src = url; rec.img.width = c.cdata.w; rec.img.height = c.cdata.h; }
@@ -620,7 +628,7 @@
           const key = JSON.stringify(lines);
           if (key !== rec.optKey) {
             rec.optKey = key;
-            sel.replaceChildren(...lines.map((l, i) => el('option', { value: String(i) }, l)));
+            setKids(sel, lines.map((l, i) => el('option', { value: String(i) }, l)));
           }
           if (style === 'listbox') sel.size = Math.max(2, lines.length);
           const want = new Set((c.value || []).map((v) => Number(v) - 1));
@@ -917,11 +925,11 @@
           const items = c.items || [];
           const key = JSON.stringify(items);
           if (c.editable) {
-            if (key !== rec.optKey) { rec.optKey = key; rec.list.replaceChildren(...items.map((x) => el('option', { value: x }))); }
+            if (key !== rec.optKey) { rec.optKey = key; setKids(rec.list, items.map((x) => el('option', { value: x }))); }
             const v = (c.selected || []).length ? items[c.selected[0]] : (c.typed ?? '');
             if (document.activeElement !== rec.input) rec.input.value = v;
           } else {
-            if (key !== rec.optKey) { rec.optKey = key; rec.input.replaceChildren(...items.map((x, i) => el('option', { value: String(i) }, x))); }
+            if (key !== rec.optKey) { rec.optKey = key; setKids(rec.input, items.map((x, i) => el('option', { value: String(i) }, x))); }
             rec.input.selectedIndex = (c.selected || []).length ? c.selected[0] : -1;
           }
           rec.input.disabled = c.enable !== 'on';
@@ -930,7 +938,7 @@
         case 'listbox': {
           const items = c.items || [];
           const key = JSON.stringify(items);
-          if (key !== rec.optKey) { rec.optKey = key; rec.input.replaceChildren(...items.map((x, i) => el('option', { value: String(i) }, x))); }
+          if (key !== rec.optKey) { rec.optKey = key; setKids(rec.input, items.map((x, i) => el('option', { value: String(i) }, x))); }
           const want = new Set(c.selected || []);
           [...rec.input.options].forEach((o, i) => { o.selected = want.has(i); });
           rec.input.disabled = c.enable !== 'on';
@@ -1097,7 +1105,9 @@
       const key = JSON.stringify([c.data, c.columnName, c.rowName, c.columnWidth, c.editable, c.bg, c.fg, c.striping, c.enable, c.fontSize]);
       if (key === rec.key) return;
       rec.key = key;
-      const ncol = Math.max(0, ...c.data.map((r) => r.length), Array.isArray(c.columnName) ? c.columnName.length : 0);
+      // the widest row by a loop: a length a row, spread into one call, ran past the stack at some 125,000 rows
+      let ncol = Array.isArray(c.columnName) ? c.columnName.length : 0;
+      for (const r of c.data) if (r.length > ncol) ncol = r.length;
       const colName = (j) => (c.columnName === 'numbered' ? String(j + 1) : (c.columnName[j] ?? ''));
       const rowName = (i) => (c.rowName === 'numbered' ? String(i + 1) : (c.rowName[i] ?? ''));
       const showRows = c.rowName === 'numbered' || (Array.isArray(c.rowName) && c.rowName.length);
@@ -1230,7 +1240,7 @@
       const rows = [];
       if (d !== '/') rows.push({ name: '..', dir: true, up: true });
       for (const it of res.items || []) if (it.dir || (!dirOnly && test(it.name))) rows.push(it);
-      list.replaceChildren(...rows.map((it) => {
+      setKids(list, rows.map((it) => {
         const row = el('div', { class: `pl-pick-row${it.dir ? ' is-dir' : ''}`, role: 'option', tabindex: '-1' }, el('span', { class: 'ic', 'aria-hidden': 'true' }, it.dir ? '▸' : ''), el('span', null, it.name));
         const path = it.up ? d.replace(/\/[^/]*$/, '') || '/' : `${d.replace(/\/$/, '')}/${it.name}`;
         row.addEventListener('click', (ev) => {
@@ -1301,8 +1311,8 @@
     }),
 
     listdlg: (app, req) => {
-      const sel = el('select', { multiple: req.multiple, size: String(Math.min(14, Math.max(4, req.items.length))), class: 'pl-ask-list' },
-        ...req.items.map((t, i) => el('option', { value: String(i) }, t)));
+      const sel = el('select', { multiple: req.multiple, size: String(Math.min(14, Math.max(4, req.items.length))), class: 'pl-ask-list' });
+      setKids(sel, req.items.map((t, i) => el('option', { value: String(i) }, t)));
       for (const i of req.initial || []) if (sel.options[i]) sel.options[i].selected = true;
       const all = req.multiple ? el('button', { type: 'button', class: 'pl-btn' }, 'Select all') : null;
       if (all) all.addEventListener('click', () => { for (const o of sel.options) o.selected = true; });

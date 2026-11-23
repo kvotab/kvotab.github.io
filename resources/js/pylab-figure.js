@@ -60,6 +60,14 @@
 
   function vec(a) { return a ? a.data : new Float64Array(0); }
 
+  /* The least and the greatest of values, as Math.min and Math.max give them (NaN when one is), by a
+     loop: a line's or a surface's values spread into one call run past the stack at some 125,000. */
+  function extent(a) {
+    let lo = Infinity, hi = -Infinity;
+    for (const v of a) { const x = +v; if (x !== x) return [NaN, NaN]; if (x < lo) lo = x; if (x > hi) hi = x; }
+    return [lo, hi];
+  }
+
   /* Is (px, py) inside the panel or tab that holds the axes (anywhere, when the figure does)? */
   function inBox(ax, px, py) {
     const b = ax && ax._box;
@@ -295,7 +303,8 @@
   function tickLabels(ticks, log) {
     if (!ticks.length) return { labels: [], exp: null };
     if (log) return { labels: ticks.map((t) => `10^{${Math.round(Math.log10(t))}}`), exp: null };
-    const m = Math.max(...ticks.map(Math.abs));
+    let m = -Infinity;   // by a loop: ticks set to as many values as the data's, spread into one call, ran past the stack at some 125,000
+    for (const t of ticks) m = Math.max(m, Math.abs(t));
     let exp = null;
     let vals = ticks;
     if (m > 0) {
@@ -1005,7 +1014,9 @@
       const right = ax.yy.right;
       const b = ax._box || { x: 0, w: W };
       const yt = this.ticksFor(right, 'y', r, false);
-      let need = 5 + Math.max(0, ...yt.labels.map((s) => textSize(ctx, s, right.fontSize * PT).width));
+      let wide = 0;   // the widest label by a loop: a label a tick, spread into one call, ran past the stack at some 125,000
+      for (const s of yt.labels) wide = Math.max(wide, textSize(ctx, s, right.fontSize * PT).width);
+      let need = 5 + wide;
       if (right.ylabel && right.ylabel.string && right.ylabel.visible !== false) need += 10 + right.ylabel.fontSize * PT * 1.1 * 1.2;
       const over = r.x + r.w + need + 4 - (b.x + b.w);
       return over > 0 && r.w - over > r.w / 2 ? Object.assign({}, r, { w: r.w - over }) : r;
@@ -3093,14 +3104,16 @@
         } else {
           xs = vec(decode(c.x || c.xData));
           ys = vec(decode(c.y || c.yData));
-          if (c.type === 'series' && c.kind === 'bar' && xs.length && ys.length) ys = ys.concat([c.baseValue || 0]);
+          // the bars reach down to their base, added to their heights as an array (a typed array has no concat)
+          if (c.type === 'series' && c.kind === 'bar' && xs.length && ys.length) ys = [...ys, c.baseValue || 0];
         }
         const X = xs.filter((v) => Number.isFinite(v)).map((v) => fr.fx(v)).filter(Number.isFinite);
         const Y = ys.filter((v) => Number.isFinite(v)).map((v) => fr.fy(v)).filter(Number.isFinite);
         if (!X.length || !Y.length) return f.rect;
         const r = f.rect;
-        const x0 = Math.max(r.x, Math.min(...X)), x1 = Math.min(r.x + r.w, Math.max(...X));
-        const y0 = Math.max(r.y, Math.min(...Y)), y1 = Math.min(r.y + r.h, Math.max(...Y));
+        const [xlo, xhi] = extent(X), [ylo, yhi] = extent(Y);
+        const x0 = Math.max(r.x, xlo), x1 = Math.min(r.x + r.w, xhi);
+        const y0 = Math.max(r.y, ylo), y1 = Math.min(r.y + r.h, yhi);
         return x1 >= x0 && y1 >= y0 ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null;
       }
       return null;
@@ -3197,7 +3210,8 @@
       if (c.type === 'image' || c.type === 'surface') {
         const xs = vec(decode(c.x)), ys = vec(decode(c.y));
         if (!xs.length || !ys.length) return false;
-        const X = [fr.fx(Math.min(...xs)), fr.fx(Math.max(...xs))], Y = [fr.fy(Math.min(...ys)), fr.fy(Math.max(...ys))];
+        const ex = extent(xs), ey = extent(ys);
+        const X = [fr.fx(ex[0]), fr.fx(ex[1])], Y = [fr.fy(ey[0]), fr.fy(ey[1])];
         return px >= Math.min(...X) && px <= Math.max(...X) && py >= Math.min(...Y) && py <= Math.max(...Y);
       }
       return false;

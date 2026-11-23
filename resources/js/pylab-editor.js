@@ -253,7 +253,8 @@
       this._mapLines((lines) => {
         const doOn = on === undefined ? !lines.filter((l) => l.trim()).every((l) => /^\s*%/.test(l)) : on;
         if (doOn) {
-          const lead = Math.min(...lines.filter((l) => l.trim()).map((l) => /^\s*/.exec(l)[0].length).concat([1e9]));
+          let lead = 1e9;   // the least indent by a loop: a line each, spread into one call, ran past the stack at some 125,000 lines
+          for (const l of lines) if (l.trim()) lead = Math.min(lead, /^\s*/.exec(l)[0].length);
           return lines.map((l) => (l.trim() ? l.slice(0, lead === 1e9 ? 0 : lead) + '% ' + l.slice(lead === 1e9 ? 0 : lead) : l));
         }
         return lines.map((l) => l.replace(/^(\s*)% ?/, '$1'));
