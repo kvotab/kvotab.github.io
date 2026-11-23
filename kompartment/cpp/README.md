@@ -199,7 +199,7 @@ write it as they normalised it.
 | | |
 |---|---|
 | `src/util/` | An ordered JSON value, numbers written and read as JavaScript writes and reads them (`toFixed`, `toExponential` and `toPrecision` too, to the exact digit), the parity switch, the Julia package's errors, the C library's `sin`, `cos` and `asin`, the lock for caches threads share |
-| `src/lang/` | The equation language: tokens, the parser, the functions, V8's `exp`, `log` and `pow` to the bit |
+| `src/lang/` | The equation language: tokens, the parser, the functions, the application's own `exp`, `log` and `pow` to the bit |
 | `src/model/` | Names, the decay data (ICRP 107 as the application carries it, compiled in by `tools/embed_data.py`), index lists, the simulation's settings |
 | `src/engine/project.*` | A model file read and checked, refusals word for word |
 | `src/engine/builder*` | The layout of states, parameters and algebraic slots; statements as trees; phases, jumps, events |

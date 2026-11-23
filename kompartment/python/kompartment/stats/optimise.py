@@ -29,7 +29,8 @@ arithmetic in the application's order: the simplex, the Gauss elimination and
 the population are plain double-precision loops, the random stream is
 :func:`kompartment.stats.sample.rng` (mulberry32, bit for bit), a point is
 recognised as seen before by the same ``toPrecision(12)`` text, and the
-logarithmic space and scale use V8's own ``Math.log`` and ``Math.exp``. Run on
+logarithmic space and scale use the application's own ``log`` and ``exp``
+(:mod:`kompartment.jsmath`). Run on
 the same function, the three methods here visit the same points in the same
 order and stop at the same evaluation as the application's.
 

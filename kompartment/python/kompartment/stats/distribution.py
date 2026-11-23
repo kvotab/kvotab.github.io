@@ -9,8 +9,8 @@ Wolfowitz band on the whole distribution function, which holds for any shape.
 
 The percentile at ``p`` is the value at position ``p * (n - 1)`` of the sorted
 sample, linearly interpolated (a spreadsheet's PERCENTILE). The arithmetic is
-the application's, in the same order, with V8's logarithms and exponentials
-(see :mod:`.pdf`); the skewness uses the platform's ``pow`` and agrees to the
+the application's, in the same order, with its own logarithms and
+exponentials (see :mod:`.pdf`); the skewness uses the platform's ``pow`` and agrees to the
 last bit or two.
 """
 

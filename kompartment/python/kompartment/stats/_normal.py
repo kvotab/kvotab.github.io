@@ -4,8 +4,8 @@ Exact ports of ``erf`` and ``erfc`` (``src/parser/functions.js``) and of ``phi``
 ``probit`` and ``normalQuantile`` (``src/domain/pdf.js``), so that everything
 built on them -- quantiles, samples, sensitivity designs -- comes out as the
 application's does. Scalars in, scalars out; the arithmetic is the same step
-for step. (``math.exp`` and ``math.log`` may differ from V8's in the last bit,
-so agreement is to a few ulps, not bit for bit.)
+for step. (``math.exp`` and ``math.log`` may differ from the application's in
+the last bit, so agreement is to a few ulps, not bit for bit.)
 """
 
 from __future__ import annotations

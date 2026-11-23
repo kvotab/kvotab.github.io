@@ -15,8 +15,8 @@ three-parameter shape; a shape that cannot be as skewed as the sample is given
 the most skewness it can have, and says so. The fits are ranked by
 Anderson-Darling's A², Kolmogorov-Smirnov's D or AIC.
 
-The arithmetic is the application's, in the same order, with V8's logarithms
-and exponentials (see :mod:`.pdf`), so a search takes the same steps and ends
+The arithmetic is the application's, in the same order, with its own
+logarithms and exponentials (see :mod:`.pdf`), so a search takes the same steps and ends
 at the same numbers. Powers (``x ** 1.5``, ``x ** 3``) go through the
 platform's ``pow``, which V8 can differ from in the last bit; the moment fits
 and skewnesses that use them agree to a few units in the last place.

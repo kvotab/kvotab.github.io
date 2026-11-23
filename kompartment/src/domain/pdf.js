@@ -63,6 +63,7 @@
  */
 
 import { erfc } from '../parser/functions.js';
+import * as fdlibm from './fdlibm.js';
 
 /**
  * A kind's description, or null: looked up by the kind's own name only. A
@@ -399,23 +400,23 @@ export function phi(z) {
 function logSpace(spec) {
 	const p = spec.params ?? {};
 	if (spec.kind === 'Logn4') {
-		return { mu: Math.log(p.gm), sigma: Math.log(p.gsd) };
+		return { mu: fdlibm.log(p.gm), sigma: fdlibm.log(p.gsd) };
 	}
 	if (spec.kind === 'logn') {
 		// Logn.muprim / sigmaprim: an arithmetic mean and sd carried into log
 		// space, which is where the curve is a normal one.
 		return {
-			mu: Math.log((p.mean * p.mean) / Math.sqrt(p.sd * p.sd + p.mean * p.mean)),
-			sigma: Math.sqrt(Math.log(1 + (p.sd * p.sd) / (p.mean * p.mean))),
+			mu: fdlibm.log((p.mean * p.mean) / Math.sqrt(p.sd * p.sd + p.mean * p.mean)),
+			sigma: Math.sqrt(fdlibm.log(1 + (p.sd * p.sd) / (p.mean * p.mean))),
 		};
 	}
 	if (spec.kind === 'logn5') {
 		const z1 = probit(p.p1);
 		const z2 = probit(p.p2);
 		if (z1 == null || z2 == null || z1 === z2) return null;
-		const sigma = (Math.log(p.x2) - Math.log(p.x1)) / (z2 - z1);
+		const sigma = (fdlibm.log(p.x2) - fdlibm.log(p.x1)) / (z2 - z1);
 		if (!(sigma > 0)) return null;
-		return { mu: Math.log(p.x1) - sigma * z1, sigma };
+		return { mu: fdlibm.log(p.x1) - sigma * z1, sigma };
 	}
 	return null;
 }
@@ -459,16 +460,16 @@ export function cdfAt(spec, x) {
 		case 'logu': {
 			if (x <= p.min) return 0;
 			if (x >= p.max) return 1;
-			return (Math.log(x) - Math.log(p.min)) / (Math.log(p.max) - Math.log(p.min));
+			return (fdlibm.log(x) - fdlibm.log(p.min)) / (fdlibm.log(p.max) - fdlibm.log(p.min));
 		}
 		case 'logt': {
 			// The triangular CDF, in `ln x`.
-			const la = Math.log(p.min);
-			const lb = Math.log(p.max);
-			const lc = Math.log(p.mode);
+			const la = fdlibm.log(p.min);
+			const lb = fdlibm.log(p.max);
+			const lc = fdlibm.log(p.mode);
 			if (x <= p.min) return 0;
 			if (x >= p.max) return 1;
-			const lx = Math.log(x);
+			const lx = fdlibm.log(x);
 			return lx <= lc
 				? ((lx - la) ** 2) / ((lc - la) * (lb - la))
 				: 1 - ((lb - lx) ** 2) / ((lb - la) * (lb - lc));
@@ -477,10 +478,10 @@ export function cdfAt(spec, x) {
 			// The double triangular's CDF, in `ln x`.
 			if (x <= p.min) return 0;
 			if (x >= p.max) return 1;
-			const la = Math.log(p.min);
-			const lb = Math.log(p.max);
-			const lc = Math.log(p.mode);
-			const lx = Math.log(x);
+			const la = fdlibm.log(p.min);
+			const lb = fdlibm.log(p.max);
+			const lc = fdlibm.log(p.mode);
+			const lx = fdlibm.log(x);
 			return lx <= lc
 				? ((lx - la) ** 2) / (2 * (lc - la) ** 2)
 				: 1 - ((lb - lx) ** 2) / (2 * (lb - lc) ** 2);
@@ -490,7 +491,7 @@ export function cdfAt(spec, x) {
 		case 'Logn4': case 'logn': case 'logn5': {
 			if (x <= 0) return 0;
 			const ls = logSpace(spec);
-			return ls ? phi((Math.log(x) - ls.mu) / ls.sigma) : 0;
+			return ls ? phi((fdlibm.log(x) - ls.mu) / ls.sigma) : 0;
 		}
 		default:
 			return 0;
@@ -517,33 +518,33 @@ export function quantile(spec, u) {
 			return u <= 0.5 ? a + Math.sqrt(2 * u) * (c - a) : b - (b - c) * Math.sqrt(2 * (1 - u));
 		}
 		case 'logu':
-			return Math.exp(Math.log(p.min) + u * (Math.log(p.max) - Math.log(p.min)));
+			return fdlibm.exp(fdlibm.log(p.min) + u * (fdlibm.log(p.max) - fdlibm.log(p.min)));
 		case 'logt': {
 			// The triangular quantile in `ln x`, carried back by `exp`.
-			const la = Math.log(p.min);
-			const lb = Math.log(p.max);
-			const lc = Math.log(p.mode);
+			const la = fdlibm.log(p.min);
+			const lb = fdlibm.log(p.max);
+			const lc = fdlibm.log(p.mode);
 			const split = (lc - la) / (lb - la);
 			const lx = u <= split
 				? la + Math.sqrt(u * (lb - la) * (lc - la))
 				: lb - Math.sqrt((1 - u) * (lb - la) * (lb - lc));
-			return Math.exp(lx);
+			return fdlibm.exp(lx);
 		}
 		case 'logdt': {
 			// The double triangular's quantile in `ln x`, carried back by `exp`.
-			const la = Math.log(p.min);
-			const lb = Math.log(p.max);
-			const lc = Math.log(p.mode);
+			const la = fdlibm.log(p.min);
+			const lb = fdlibm.log(p.max);
+			const lc = fdlibm.log(p.mode);
 			const lx = u <= 0.5
 				? la + Math.sqrt(2 * u) * (lc - la)
 				: lb - (lb - lc) * Math.sqrt(2 * (1 - u));
-			return Math.exp(lx);
+			return fdlibm.exp(lx);
 		}
 		case 'norm':
 			return p.mean + p.sd * probit(u);
 		case 'Logn4': case 'logn': case 'logn5': {
 			const ls = logSpace(spec);
-			return ls ? Math.exp(ls.mu + ls.sigma * probit(u)) : NaN;
+			return ls ? fdlibm.exp(ls.mu + ls.sigma * probit(u)) : NaN;
 		}
 		default:
 			return NaN;
@@ -578,18 +579,18 @@ function bareDensity(spec, x) {
 		case 'norm': {
 			const { mean: mu, sd } = p;
 			if (!(sd > 0)) return 0;
-			return Math.exp(-0.5 * ((x - mu) / sd) ** 2) / (Math.sqrt(2 * Math.PI) * sd);
+			return fdlibm.exp(-0.5 * ((x - mu) / sd) ** 2) / (Math.sqrt(2 * Math.PI) * sd);
 		}
 		case 'logu': {
 			const a = p.min; const b = p.max;
 			if (!(a > 0 && b > a) || x < a || x > b) return 0;
-			return 1 / (x * (Math.log(b) - Math.log(a)));
+			return 1 / (x * (fdlibm.log(b) - fdlibm.log(a)));
 		}
 		case 'logt': {
 			const a = p.min; const b = p.max; const c = p.mode;
 			if (!(a > 0 && b > 0 && c > 0) || x <= 0) return 0;
-			const la = Math.log(a); const lb = Math.log(b); const lc = Math.log(c);
-			const lx = Math.log(x);
+			const la = fdlibm.log(a); const lb = fdlibm.log(b); const lc = fdlibm.log(c);
+			const lx = fdlibm.log(x);
 			if (x > a && x <= c && a !== c) return (1 / x) * ((2 * (lx - la)) / (lc - la) / (lb - la));
 			if (x > a && x > c && x <= b && b !== c) return (1 / x) * ((2 * (lb - lx)) / (lb - lc) / (lb - la));
 			return 0;
@@ -599,8 +600,8 @@ function bareDensity(spec, x) {
 			// mode unless it is the geometric middle of the range.
 			const a = p.min; const b = p.max; const c = p.mode;
 			if (!(a > 0 && b > 0 && c > 0) || x <= 0) return 0;
-			const la = Math.log(a); const lb = Math.log(b); const lc = Math.log(c);
-			const lx = Math.log(x);
+			const la = fdlibm.log(a); const lb = fdlibm.log(b); const lc = fdlibm.log(c);
+			const lx = fdlibm.log(x);
 			if (x > a && x <= c && a !== c) return (lx - la) / (lc - la) ** 2 / x;
 			if (x > a && x > c && x <= b && b !== c) return (lb - lx) / (lb - lc) ** 2 / x;
 			return 0;
@@ -608,8 +609,8 @@ function bareDensity(spec, x) {
 		case 'Logn4': {
 			const { gm, gsd } = p;
 			if (!(gm > 0 && gsd > 1) || x <= 0) return 0;
-			const s = Math.log(gsd);
-			return Math.exp(-0.5 * ((Math.log(x) - Math.log(gm)) / s) ** 2)
+			const s = fdlibm.log(gsd);
+			return fdlibm.exp(-0.5 * ((fdlibm.log(x) - fdlibm.log(gm)) / s) ** 2)
 				/ (x * Math.sqrt(2 * Math.PI) * s);
 		}
 		case 'logn': {
@@ -617,16 +618,16 @@ function bareDensity(spec, x) {
 			// log space, which is where the curve is a normal one.
 			const { mean, sd } = p;
 			if (!(mean > 0 && sd > 0) || x <= 0) return 0;
-			const mu = Math.log((mean * mean) / Math.sqrt(sd * sd + mean * mean));
-			const sigma = Math.sqrt(Math.log(1 + (sd * sd) / (mean * mean)));
-			return Math.exp(-0.5 * ((Math.log(x) - mu) / sigma) ** 2)
+			const mu = fdlibm.log((mean * mean) / Math.sqrt(sd * sd + mean * mean));
+			const sigma = Math.sqrt(fdlibm.log(1 + (sd * sd) / (mean * mean)));
+			return fdlibm.exp(-0.5 * ((fdlibm.log(x) - mu) / sigma) ** 2)
 				/ (x * Math.sqrt(2 * Math.PI) * sigma);
 		}
 		case 'logn5': {
 			const fit = quantileFit(p);
 			if (!fit) return 0;
 			if (x <= 0) return 0;
-			return Math.exp(-0.5 * ((Math.log(x) - fit.mu) / fit.sigma) ** 2)
+			return fdlibm.exp(-0.5 * ((fdlibm.log(x) - fit.mu) / fit.sigma) ** 2)
 				/ (x * Math.sqrt(2 * Math.PI) * fit.sigma);
 		}
 		default:
@@ -688,9 +689,9 @@ function quantileFit({ p1, x1, p2, x2 }) {
 	if (!(x1 > 0 && x2 > 0)) return null;
 	const z1 = probit(p1); const z2 = probit(p2);
 	if (z1 == null || z2 == null || z1 === z2) return null;
-	const sigma = (Math.log(x2) - Math.log(x1)) / (z2 - z1);
+	const sigma = (fdlibm.log(x2) - fdlibm.log(x1)) / (z2 - z1);
 	if (!(sigma > 0)) return null;
-	return { mu: Math.log(x1) - sigma * z1, sigma };
+	return { mu: fdlibm.log(x1) - sigma * z1, sigma };
 }
 
 /**
@@ -715,7 +716,7 @@ export function probit(p) {
 	const lo = 0.02425;
 	let x;
 	if (q < lo) {
-		const t = Math.sqrt(-2 * Math.log(q));
+		const t = Math.sqrt(-2 * fdlibm.log(q));
 		x = (((((c[0] * t + c[1]) * t + c[2]) * t + c[3]) * t + c[4]) * t + c[5])
 			/ ((((d[0] * t + d[1]) * t + d[2]) * t + d[3]) * t + 1);
 	} else if (q <= 1 - lo) {
@@ -724,7 +725,7 @@ export function probit(p) {
 		x = (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * t
 			/ (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
 	} else {
-		const t = Math.sqrt(-2 * Math.log(1 - q));
+		const t = Math.sqrt(-2 * fdlibm.log(1 - q));
 		x = -(((((c[0] * t + c[1]) * t + c[2]) * t + c[3]) * t + c[4]) * t + c[5])
 			/ ((((d[0] * t + d[1]) * t + d[2]) * t + d[3]) * t + 1);
 	}
@@ -742,7 +743,7 @@ export function normalQuantile(p) {
 	let x = probit(p);
 	for (let i = 0; i < 2; i++) {
 		const e = phi(x) - p;
-		const d = Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI);
+		const d = fdlibm.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI);
 		if (!(d > 0)) break;
 		x -= e / d;
 	}
@@ -785,20 +786,20 @@ export function supportOf(spec) {
 		case 'logu': case 'logt': case 'logdt': lo = p.min; hi = p.max; break;
 		case 'norm': lo = p.mean - 4 * p.sd; hi = p.mean + 4 * p.sd; break;
 		case 'Logn4': {
-			const s = Math.log(p.gsd);
-			lo = p.gm * Math.exp(-4 * s); hi = p.gm * Math.exp(4 * s);
+			const s = fdlibm.log(p.gsd);
+			lo = p.gm * fdlibm.exp(-4 * s); hi = p.gm * fdlibm.exp(4 * s);
 			break;
 		}
 		case 'logn': {
-			const mu = Math.log((p.mean * p.mean) / Math.sqrt(p.sd * p.sd + p.mean * p.mean));
-			const sigma = Math.sqrt(Math.log(1 + (p.sd * p.sd) / (p.mean * p.mean)));
-			lo = Math.exp(mu - 4 * sigma); hi = Math.exp(mu + 4 * sigma);
+			const mu = fdlibm.log((p.mean * p.mean) / Math.sqrt(p.sd * p.sd + p.mean * p.mean));
+			const sigma = Math.sqrt(fdlibm.log(1 + (p.sd * p.sd) / (p.mean * p.mean)));
+			lo = fdlibm.exp(mu - 4 * sigma); hi = fdlibm.exp(mu + 4 * sigma);
 			break;
 		}
 		case 'logn5': {
 			const fit = quantileFit(p);
 			if (!fit) return null;
-			lo = Math.exp(fit.mu - 4 * fit.sigma); hi = Math.exp(fit.mu + 4 * fit.sigma);
+			lo = fdlibm.exp(fit.mu - 4 * fit.sigma); hi = fdlibm.exp(fit.mu + 4 * fit.sigma);
 			break;
 		}
 		case 'pg': {
@@ -864,7 +865,7 @@ export function curveOf(spec, { points = 240, bins = 32 } = {}) {
 	const xs = [];
 	for (let i = 0; i < points; i++) {
 		const f = i / (points - 1);
-		xs.push(useLog ? Math.exp(Math.log(lo) + f * (Math.log(hi) - Math.log(lo)))
+		xs.push(useLog ? fdlibm.exp(fdlibm.log(lo) + f * (fdlibm.log(hi) - fdlibm.log(lo)))
 			: lo + f * (hi - lo));
 	}
 	const ys = xs.map((x) => bareDensity(spec, x));

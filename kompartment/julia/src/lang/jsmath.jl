@@ -6,9 +6,10 @@
 # Julia's own `exp` and `^` are as accurate, but round differently in the
 # last place for a few per cent of arguments.
 #
-# And V8's own `Math.exp`, `Math.log`, `Math.log10`, `Math.pow`, `Math.log1p`
-# and `Math.expm1` -- V8 carries ports of fdlibm (src/base/ieee754.cc) -- for
-# the few numbers that are compared with the application's to the last digit:
+# And the application's own `exp`, `log`, `log10`, `pow`, `log1p` and `expm1`
+# -- fdlibm's routines, which it computes itself (src/domain/fdlibm.js) rather
+# than ask the browser -- for the few numbers that are compared with the
+# application's to the last digit:
 # the output times of a logarithmic grid, above all, where a time column that
 # differs in its seventeenth digit makes two result files that cannot be
 # joined on time.

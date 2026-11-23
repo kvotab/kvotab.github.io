@@ -38,6 +38,7 @@
  */
 
 import { kindInfo, densityAt, cumulativeAt } from './pdf.js';
+import * as fdlibm from './fdlibm.js';
 
 export const FIT_METHODS = [
 	['mle', 'maximum likelihood', 'The parameters under which this sample is the most probable.'],
@@ -170,13 +171,13 @@ function rampMgf(s) {
 		}
 		return 2 * sum;
 	}
-	return (2 * (1 - Math.exp(-s) * (1 + s))) / (s * s);
+	return (2 * (1 - fdlibm.exp(-s) * (1 + s))) / (s * s);
 }
 
 /** e^(−t)·E[e^(sV)], kept finite however large `s` is (s ≤ t). */
 function rampMgfUp(s, t) {
-	if (s < 0.5) return Math.exp(-t) * rampMgf(-s);
-	return (2 * (Math.exp(s - t) * (s - 1) + Math.exp(-t))) / (s * s);
+	if (s < 0.5) return fdlibm.exp(-t) * rampMgf(-s);
+	return (2 * (fdlibm.exp(s - t) * (s - 1) + fdlibm.exp(-t))) / (s * s);
 }
 
 /** E[e^(−t(1−Z))] for the peak shape. */
@@ -187,7 +188,7 @@ function peakScaled(t, r, double) {
 
 /** E[e^(−t(1−U))] for U uniform. */
 function flatScaled(t) {
-	return t < 1e-12 ? 1 : -Math.expm1(-t) / t;
+	return t < 1e-12 ? 1 : -fdlibm.expm1(-t) / t;
 }
 
 /** The squared coefficient of variation and the skewness of X = e^(L·Z). */
@@ -200,14 +201,14 @@ function logMoments(scaled, L) {
 
 /** The spread L at which the squared CV is `cv2`, or null out of reach. */
 function spreadFor(scaled, cv2) {
-	let a = Math.log(1e-5); let b = Math.log(1400);
-	if (!(logMoments(scaled, Math.exp(b)).cv2 >= cv2)) return null;
-	if (logMoments(scaled, Math.exp(a)).cv2 >= cv2) return Math.exp(a);
+	let a = fdlibm.log(1e-5); let b = fdlibm.log(1400);
+	if (!(logMoments(scaled, fdlibm.exp(b)).cv2 >= cv2)) return null;
+	if (logMoments(scaled, fdlibm.exp(a)).cv2 >= cv2) return fdlibm.exp(a);
 	for (let it = 0; it < 80; it++) {
 		const m = (a + b) / 2;
-		if (logMoments(scaled, Math.exp(m)).cv2 < cv2) a = m; else b = m;
+		if (logMoments(scaled, fdlibm.exp(m)).cv2 < cv2) a = m; else b = m;
 	}
-	return Math.exp((a + b) / 2);
+	return fdlibm.exp((a + b) / 2);
 }
 
 /* -------------------------------------------------------------------------
@@ -239,16 +240,16 @@ function triangleProfile(z, a, b, double) {
 	const n = z.length;
 	const w = b - a;
 	let right = 0;
-	for (let i = 0; i < n; i++) right += Math.log1p(-(z[i] - a) / w);
-	const base = double ? -n * Math.log(w) : n * Math.LN2 - n * Math.log(w);
+	for (let i = 0; i < n; i++) right += fdlibm.log1p(-(z[i] - a) / w);
+	const base = double ? -n * fdlibm.log(w) : n * Math.LN2 - n * fdlibm.log(w);
 	const p = double ? 2 : 1;
 	let best = { ll: -Infinity, at: -1, below: false };
 	if (!double) best = { ll: base + right, at: -1, below: false }; // the mode at `a`
 	let left = 0;
 	for (let r = 0; r < n; r++) {
 		const u = (z[r] - a) / w;
-		const lu = Math.log(u);
-		const lv = Math.log1p(-u);
+		const lu = fdlibm.log(u);
+		const lv = fdlibm.log1p(-u);
 		const smaller = z[0] < z[r];
 		const larger = z[n - 1] > z[r];
 		if (double && larger && (r === 0 || smaller)) {
@@ -326,14 +327,14 @@ function triangleMle(y, double) {
 	const span = y[n - 1] - lo;
 	const z = Float64Array.from(y, (v) => (v - lo) / span);
 	const clamp = (v) => Math.min(6, Math.max(-28, v));
-	const cost = ([al, be]) => -triangleProfile(z, -Math.exp(clamp(al)), 1 + Math.exp(clamp(be)), double).ll;
+	const cost = ([al, be]) => -triangleProfile(z, -fdlibm.exp(clamp(al)), 1 + fdlibm.exp(clamp(be)), double).ll;
 	let best = null;
 	for (const s of [-4, -1.5]) {
 		const got = nelderMead(cost, [s, s]);
 		if (!best || got.value < best.value) best = got;
 	}
-	const a = -Math.exp(clamp(best.x[0]));
-	const b = 1 + Math.exp(clamp(best.x[1]));
+	const a = -fdlibm.exp(clamp(best.x[0]));
+	const b = 1 + fdlibm.exp(clamp(best.x[1]));
 	const { at, below } = triangleProfile(z, a, b, double);
 	return { min: lo + a * span, max: lo + b * span, at, below };
 }
@@ -353,7 +354,7 @@ function modeOf(found, sorted, min, max) {
  * The fits.
  * ---------------------------------------------------------------------- */
 
-const logsOf = (x) => Float64Array.from(x, Math.log);
+const logsOf = (x) => Float64Array.from(x, fdlibm.log);
 
 /**
  * One shape fitted to `sorted` by `method`.
@@ -401,14 +402,14 @@ function fitShape(id, sorted, method) {
 		case 'logn': {
 			if (mom) return spec('logn', { mean: x.mean, sd: x.sd });
 			const l = sampleMoments(logsOf(sorted));
-			return spec('Logn4', { gm: Math.exp(l.mean), gsd: Math.exp(l.sd) });
+			return spec('Logn4', { gm: fdlibm.exp(l.mean), gsd: fdlibm.exp(l.sd) });
 		}
 		case 'logu': {
 			if (!mom) return spec('logu', { min: sorted[0], max: sorted[n - 1] }, { edges: true });
 			const L = spreadFor(flatScaled, x.m2 / (x.mean * x.mean));
 			if (L == null) return { why: 'would need a range of more than 600 decades' };
-			const la = Math.log(x.mean) - L - Math.log(flatScaled(L));
-			return spec('logu', { min: Math.exp(la), max: Math.exp(la + L) });
+			const la = fdlibm.log(x.mean) - L - fdlibm.log(flatScaled(L));
+			return spec('logu', { min: fdlibm.exp(la), max: fdlibm.exp(la + L) });
 		}
 		case 'triang': case 'dtriang': {
 			const double = id === 'dtriang';
@@ -431,8 +432,8 @@ function fitShape(id, sorted, method) {
 			if (!mom) {
 				// The triangle in the logarithms, which is where it is one.
 				const found = triangleMle(logsOf(sorted), double);
-				const min = Math.exp(found.min);
-				const max = Math.exp(found.max);
+				const min = fdlibm.exp(found.min);
+				const max = fdlibm.exp(found.max);
 				return spec(id, { min, max, mode: modeOf(found, sorted, min, max) });
 			}
 			// Two unknowns of the shape, the spread L and the peak r, from the
@@ -449,8 +450,8 @@ function fitShape(id, sorted, method) {
 			const { r, clamped } = solveShape(skewAt, x.skew, rlo, rhi);
 			const L = spreadAt(r);
 			if (L == null) return { why: 'would need a range of more than 600 decades' };
-			const la = Math.log(x.mean) - L - Math.log(peakScaled(L, r, double));
-			return spec(id, { min: Math.exp(la), max: Math.exp(la + L), mode: Math.exp(la + r * L) }, clamped
+			const la = fdlibm.log(x.mean) - L - fdlibm.log(peakScaled(L, r, double));
+			return spec(id, { min: fdlibm.exp(la), max: fdlibm.exp(la + L), mode: fdlibm.exp(la + r * L) }, clamped
 				? { note: 'no shape of this kind has both the sample’s spread and its skewness — the nearest' } : {});
 		}
 		default:
@@ -474,7 +475,7 @@ export function ksPValue(d, n) {
 	const a2 = -2 * lambda * lambda;
 	let fac = 2; let sum = 0; let before = 0;
 	for (let j = 1; j <= 100; j++) {
-		const term = fac * Math.exp(a2 * j * j);
+		const term = fac * fdlibm.exp(a2 * j * j);
 		sum += term;
 		if (Math.abs(term) <= 0.001 * before || Math.abs(term) <= 1e-8 * sum) return Math.min(1, Math.max(0, sum));
 		fac = -fac;
@@ -492,9 +493,9 @@ export function adPValue(a2) {
 	if (!Number.isFinite(a2)) return 0;
 	const z = a2;
 	const below = z < 2
-		? (Math.exp(-1.2337141 / z) / Math.sqrt(z))
+		? (fdlibm.exp(-1.2337141 / z) / Math.sqrt(z))
 			* (2.00012 + (0.247105 - (0.0649821 - (0.0347962 - (0.011672 - 0.00168691 * z) * z) * z) * z) * z)
-		: Math.exp(-Math.exp(1.0776 - (2.30695 - (0.43424 - (0.082433 - (0.008056 - 0.0003146 * z) * z) * z) * z) * z));
+		: fdlibm.exp(-fdlibm.exp(1.0776 - (2.30695 - (0.43424 - (0.082433 - (0.008056 - 0.0003146 * z) * z) * z) * z) * z));
 	return Math.min(1, Math.max(0, 1 - below));
 }
 
@@ -517,7 +518,7 @@ export function scoreFit(sorted, spec, k, { edges = false } = {}) {
 	for (let i = 0; i < n; i++) {
 		const f = densityAt(spec, sorted[i]);
 		if (!(f > 0)) outside++;
-		ll += Math.log(f);
+		ll += fdlibm.log(f);
 	}
 	if (Number.isNaN(ll)) ll = -Infinity;
 	const F = [];
@@ -530,7 +531,7 @@ export function scoreFit(sorted, spec, k, { edges = false } = {}) {
 	let d = 0; let a2 = 0;
 	for (let i = 0; i < m; i++) {
 		d = Math.max(d, (i + 1) / m - F[i], F[i] - i / m);
-		a2 += (2 * i + 1) * (Math.log(F[i]) + Math.log1p(-F[m - 1 - i]));
+		a2 += (2 * i + 1) * (fdlibm.log(F[i]) + fdlibm.log1p(-F[m - 1 - i]));
 	}
 	a2 = m ? -m - a2 / m : NaN;
 	if (Number.isNaN(a2) || a2 === -Infinity) a2 = Infinity;

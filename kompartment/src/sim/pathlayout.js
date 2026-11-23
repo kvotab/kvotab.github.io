@@ -24,6 +24,7 @@
 import { Project } from '../domain/project.js';
 import { buildSystem } from './builder.js';
 import { FarfPath } from './farfield.js';
+import * as fdlibm from '../domain/fdlibm.js';
 import {
 	CONTINUES, FARF_DEFAULTS, GRIDS, isSemiAnalytic, layerDepths, matchedGrid, structureProblem, wettedSurface, zeroin,
 	rockSettingProblem, FarfError,
@@ -154,7 +155,7 @@ export function referenceLayers(penDep, nm, aw, first = null) {
 	if (d0 == null || !Number.isFinite(d0) || d0 <= 0) {
 		const geo = (x) => {
 			let s = 0;
-			for (let k = 1; k <= nm; k++) s += x * Math.exp(k);
+			for (let k = 1; k <= nm; k++) s += x * fdlibm.exp(k);
 			return s - penDep;
 		};
 		d0 = zeroin(geo, 1e-12 / Math.E, 2 / aw / Math.E) * Math.E;

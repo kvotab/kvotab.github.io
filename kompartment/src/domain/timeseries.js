@@ -24,6 +24,8 @@
  * series that overlap therefore cost nothing.
  */
 
+import * as fdlibm from './fdlibm.js';
+
 /** The kinds of series a list can hold. */
 export const SERIES_KINDS = ['log', 'linear', 'times'];
 
@@ -87,11 +89,11 @@ export function seriesTimes(spec, t0, t1) {
 		// starts at zero needs a second series for its first year.
 		if (from <= 0) from = 1;
 		if (!(to > from)) return [];
-		const step = (Math.log10(to) - Math.log10(from)) / (n - 1);
+		const step = (fdlibm.log10(to) - fdlibm.log10(from)) / (n - 1);
 		if (!(step > 0)) return [];
-		const logFrom = Math.log10(from);
+		const logFrom = fdlibm.log10(from);
 		for (let c = 0; c < n * 4 + 8; c++) {
-			const v = 10 ** (logFrom + step * c);
+			const v = fdlibm.pow(10, logFrom + step * c);
 			if (v > last * (1 + SAME)) break;
 			if (v >= t0) out.push(v);
 		}

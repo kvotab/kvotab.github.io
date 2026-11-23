@@ -27,6 +27,7 @@
 import { run, Results } from '../sim/runner.js';
 import { buildSystem } from '../sim/builder.js';
 import { valuesAtStart } from '../sim/atstart.js';
+import * as fdlibm from '../domain/fdlibm.js';
 import { Project } from '../domain/project.js';
 import {
 	runProbabilistic, runRealization, designFor, valueSet, quantiles, meanOf, medianSpread, timeMajor,
@@ -1466,7 +1467,7 @@ function distributionMeasures(r, values, times, at, rows, mask, { translate = 'n
 		dropped = before - use.length;
 	}
 	const raw = Float64Array.from(use, (i) => values[i * times + at]);
-	const y = translate === 'log' ? raw.map(Math.log)
+	const y = translate === 'log' ? raw.map((v) => fdlibm.log(v))
 		: translate === 'rank' ? averageRanks(raw) : raw;
 	const n = y.length;
 	if (n < 20) return { ok: false, used: n, dropped, translate, rows: [] };
@@ -1516,7 +1517,7 @@ function distributionMeasures(r, values, times, at, rows, mask, { translate = 'n
 	});
 	// Where RSA split, in the output's own units rather than in logs or ranks.
 	const sorted = Float64Array.from(raw).sort();
-	const threshold = translate === 'log' ? Math.exp(split.threshold)
+	const threshold = translate === 'log' ? fdlibm.exp(split.threshold)
 		: translate === 'rank' ? (sorted[(n - 1) >> 1] + sorted[n >> 1]) / 2
 			: split.threshold;
 	return {

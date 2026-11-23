@@ -17,12 +17,12 @@ Every function is the JavaScript one step for step, down to the order of the
 operations, so that a value drawn here is the value the application draws. Two
 things make that more than a transcription:
 
-- **The arithmetic is V8's.** ``Math.exp`` and ``Math.log`` in the application
-  are V8's ports of fdlibm, which differ from the platform's ``libm`` in the
-  last bit for about one argument in ten (``exp``). The private ``_exp``,
-  ``_log``, ``_log1p`` and ``_expm1`` here are ports of the same fdlibm
-  routines, checked bit for bit against Node, and everything in this module
-  uses them. The normal CDF and quantile (``phi``, ``probit``,
+- **The arithmetic is the application's.** Its exponentials and logarithms
+  are its own fdlibm routines (``src/domain/fdlibm.js``), which differ from the
+  platform's ``libm`` in the last bit for about one argument in ten (``exp``).
+  The private ``_exp``, ``_log``, ``_log1p`` and ``_expm1`` here are the same
+  routines (:mod:`kompartment.jsmath`), bit for bit, and everything in this
+  module uses them. The normal CDF and quantile (``phi``, ``probit``,
   ``normal_quantile``) come from :mod:`kompartment.stats._normal` and use
   Python's ``math``; where a result passes through them it agrees with the
   application to the last bit or two rather than exactly.
@@ -364,8 +364,8 @@ def _four_figures(v: float) -> str:
 
 
 # ---------------------------------------------------------------------------
-# V8's Math.exp, Math.log, Math.log1p and Math.expm1 (fdlibm, as V8 ports it),
-# from the package's one copy: ../jsmath.py. Under the names used here.
+# The application's exp, log, log1p and expm1 (its fdlibm.js), from the
+# package's one copy: ../jsmath.py. Under the names used here.
 # ---------------------------------------------------------------------------
 
 from ..jsmath import exp as _exp, expm1 as _expm1, log as _log, log1p as _log1p  # noqa: E402

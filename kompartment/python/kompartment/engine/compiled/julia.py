@@ -752,8 +752,9 @@ def _initial_step(f, model, pycb, ctr, t0, u0, f0, tdir, order, rtol, atol, dtma
 
 
 # --- OrdinaryDiffEq's starting step (``controller.initial_step_sciml``) ---------------------------------
-# Its p-th root goes through V8's ``Math.log10`` (``kompartment.jsmath``), as
-# fdlibm writes it: here bit for bit, by the high and low words of a double.
+# Its p-th root goes through ``Math.log10``, which V8 computes with fdlibm's routine
+# in Node 20 (``kompartment.jsmath``): here bit for bit, by the high and low words
+# of a double.
 
 _LN2_HI = 6.93147180369123816490e-01
 _LN2_LO = 1.90821492927058770002e-10
@@ -779,7 +780,7 @@ def _signed32(v):
 
 @njit(**_OPTS)
 def _v8_log(x):
-    """``jsmath.log``: V8's ``Math.log``."""
+    """``jsmath.log``: fdlibm's, as V8 computes ``Math.log`` in Node 20."""
     w = np.empty(1)
     u = w.view(np.uint32)
     w[0] = x
@@ -838,7 +839,7 @@ def _v8_log(x):
 
 @njit(**_OPTS)
 def _v8_log10(x):
-    """``jsmath.log10``: V8's ``Math.log10``."""
+    """``jsmath.log10``: fdlibm's, as V8 computes ``Math.log10`` in Node 20."""
     w = np.empty(1)
     u = w.view(np.uint32)
     w[0] = x

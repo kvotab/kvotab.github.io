@@ -54,6 +54,7 @@
  */
 
 import { rng } from './sample.js';
+import * as fdlibm from './fdlibm.js';
 
 export class OptimiseError extends Error {
 	constructor(message) {
@@ -80,7 +81,7 @@ export const SCALES = {
 			+ 'as at 1e3. Needs both to be above zero.',
 		of: (got, want) => {
 			if (!(got > 0) || !(want > 0)) return NaN;
-			return Math.log(got) - Math.log(want);
+			return fdlibm.log(got) - fdlibm.log(want);
 		},
 	},
 };
@@ -97,8 +98,8 @@ export const SPACES = {
 		label: 'logarithmic',
 		blurb: 'searched in the logarithm, which is how a rate constant known only '
 			+ 'to within orders of magnitude has to be searched.',
-		to: (v) => Math.log(v),
-		from: (u) => Math.exp(u),
+		to: (v) => fdlibm.log(v),
+		from: (u) => fdlibm.exp(u),
 		ok: (lo, hi) => lo > 0 && hi > 0,
 	},
 };

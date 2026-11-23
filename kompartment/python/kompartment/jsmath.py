@@ -1,22 +1,20 @@
-"""V8's ``Math.exp``, ``Math.log``, ``Math.log10``, ``Math.log1p``,
-``Math.expm1`` and ``**``, as the application's numbers come out of them.
+"""The application's own ``exp``, ``log``, ``log10``, ``log1p``, ``expm1`` and
+``pow`` (``src/domain/fdlibm.js``), as its numbers come out of them.
 
-V8 does not call the C library for these: it carries its own ports of fdlibm
-(``src/base/ieee754.cc``), and they differ from the platform's ``libm`` in the
-last bit for a fraction of arguments -- about one in ten for exp, one in 250
-for log1p, one in 1,500 for log. Nothing a model computes depends on that bit,
-but some things are compared with the application's to the last digit: the
-output times (a time column that differs in its seventeenth digit makes two
-result files that cannot be joined on time), and the statistics of a sample --
-densities, quantiles, fits -- which the tests check bit for bit. Those use
-these; the equations of a model use numpy.
+The application does not ask the browser for these where a number is compared
+to the last digit: ``Math.exp`` and its kin are not exact, and each JavaScript
+engine rounds some arguments differently from the others (and from the
+platform's ``libm``). It computes them with fdlibm's routines instead, step for
+step, and this module is the same routines in Python. Nothing a model computes
+depends on that last bit, but some things are compared with the application's
+to the last digit: the output times (a time column that differs in its
+seventeenth digit makes two result files that cannot be joined on time), and
+the statistics of a sample -- densities, quantiles, fits -- which the tests
+check bit for bit. Those use these; the equations of a model use numpy.
 
-``exp``, ``log``, ``log10``, ``log1p`` and ``expm1`` agree with V8 bit for bit
-(checked on 100,000 arguments across their ranges); ``log_array`` and
+All six agree with the application's bit for bit, whatever browser or Node it
+runs on (``tests/test_stats_sampling.py``, ``PageMath``); ``log_array`` and
 ``log1p_array`` are ``log`` and ``log1p`` over a numpy array, value for value.
-``pow`` is fdlibm's, which V8 no longer uses unchanged: it agrees on about 96%
-of arguments and is one unit in the last place off on the rest -- still closer
-than the platform's ``pow``. It only places the points of a logarithmic series.
 
 Pure Python (numpy only for the two array versions), so the statistics can use
 it without the engine.
@@ -73,7 +71,7 @@ def _signed(v: int) -> int:
 
 
 def exp(x: float) -> float:
-    """``Math.exp``."""
+    """e ** x."""
     x = float(x)
     hx, lx = _words(x)
     xsb = (hx >> 31) & 1
@@ -123,7 +121,7 @@ def exp(x: float) -> float:
 
 
 def log(x: float) -> float:
-    """``Math.log``."""
+    """The natural logarithm."""
     x = float(x)
     hx, lx = _words(x)
     hx = _signed(hx)
@@ -176,7 +174,7 @@ def log(x: float) -> float:
 
 
 def log10(x: float) -> float:
-    """``Math.log10``."""
+    """The logarithm to base 10."""
     x = float(x)
     hx, lx = _words(x)
     hx = _signed(hx)
@@ -234,7 +232,7 @@ def _scalbn(x: float, n: int) -> float:
 
 
 def pow(x: float, y: float) -> float:  # noqa: A001 - the name is the point
-    """``Math.pow`` (and ``**``)."""
+    """x ** y, with JavaScript's answers at the edges."""
     x = float(x)
     y = float(y)
     if math.isnan(y):
@@ -420,7 +418,7 @@ def _from_bits(b: int) -> float:
 
 
 def log1p(x: float) -> float:
-    """``Math.log1p``, as V8 computes it."""
+    """log(1 + x), accurate for x near 0."""
     x = float(x)
     hx = _bits(x) >> 32
     if hx & 0x80000000:
@@ -485,7 +483,7 @@ def log1p(x: float) -> float:
 
 
 def expm1(x: float) -> float:
-    """``Math.expm1``, as V8 computes it."""
+    """e ** x - 1, accurate for x near 0."""
     x = float(x)
     b = _bits(x)
     hx = b >> 32
@@ -557,7 +555,7 @@ def expm1(x: float) -> float:
 
 
 def log_array(x: Any) -> Any:
-    """``Math.log`` over an array, as V8 computes it; a new float64 array (numpy)."""
+    """``log`` over an array, value for value; a new float64 array (numpy)."""
     import numpy as np
     x = np.array(x, dtype=np.float64)
     with np.errstate(all='ignore'):
@@ -612,7 +610,7 @@ def log_array(x: Any) -> Any:
 
 
 def log1p_array(x: Any) -> Any:
-    """``Math.log1p`` over an array, as V8 computes it; a new float64 array (numpy)."""
+    """``log1p`` over an array, value for value; a new float64 array (numpy)."""
     import numpy as np
     x = np.array(x, dtype=np.float64)
     with np.errstate(all='ignore'):

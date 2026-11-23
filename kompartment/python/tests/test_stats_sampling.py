@@ -7,8 +7,9 @@ Node (``tests/node/stats_sampling.mjs``) beside this package's ports in
 
 What has to match exactly: the generator's raw output, every per-name stream,
 every column of uniforms, integers, strings, booleans and the order of a
-permutation. Floats are compared to a relative 1e-12: the ports do V8's own
-``exp`` and ``log`` and agree bit for bit almost everywhere, but a result that
+permutation. Floats are compared to a relative 1e-12: the ports do the
+application's own ``exp`` and ``log`` (fdlibm's, ``src/domain/fdlibm.js`` and
+:mod:`kompartment.jsmath`) and agree bit for bit almost everywhere, but a result that
 passes through ``phi``/``probit`` (:mod:`kompartment.stats._normal`, which uses
 Python's ``math``) or a power (the platform's ``pow``) may differ in the last
 bit or two. Where a test allows more, it says why. The largest difference seen
@@ -27,6 +28,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 from helpers import NODE, SRC, example, needs_app
 
+from kompartment import jsmath
 from kompartment.stats import _normal
 from kompartment.stats import correlate as C
 from kompartment.stats import distribution as D
@@ -303,8 +305,13 @@ def drawn(s: Dict[str, Any], n: int, seed: int, name: str) -> np.ndarray:
 
 
 @needs_app
-class V8Math(unittest.TestCase):
-    def test_exp_log_log1p_expm1_are_v8_s_bit_for_bit(self):
+class PageMath(unittest.TestCase):
+    """The application's own exp, log, log10, log1p, expm1 and pow
+    (``src/domain/fdlibm.js``) against this package's (:mod:`kompartment.jsmath`):
+    the same fdlibm routines, so the same bits, on whatever runs the
+    application."""
+
+    def test_the_application_s_own_functions_are_jsmath_s_bit_for_bit(self):
         rs = np.random.default_rng(20260925)
         edges = [0.0, -0.0, 1.0, -1.0, 0.5, -0.5, 1e-20, -1e-20, 2 ** -29, -2 ** -29, 2 ** -54, 5e-324,
                  1e-310, 2.2250738585072014e-308, 709.78, 709.8, -745.1, -745.2, 0.34657359, 1.03972077,
@@ -312,15 +319,25 @@ class V8Math(unittest.TestCase):
                  -0.29289, 0.41421, 0.4142, 1e300, 9007199254740992.0, math.inf, -math.inf, math.nan]
         args = np.concatenate([rs.uniform(-40, 40, 4000), rs.uniform(-750, 750, 1000),
                                np.exp(rs.uniform(-700, 700, 3000)), rs.uniform(-1, 1, 3000), edges])
-        names = ['exp', 'log', 'log1p', 'expm1']
-        got = values([['math', n, args.tolist()] for n in names])
-        scalar = {'exp': P._exp, 'log': P._log, 'log1p': P._log1p, 'expm1': P._expm1}
+        names = ['exp', 'log', 'log10', 'log1p', 'expm1']
+        got = values([['fdlibm', n, args.tolist()] for n in names])
+        scalar = {'exp': P._exp, 'log': P._log, 'log10': jsmath.log10, 'log1p': P._log1p, 'expm1': P._expm1}
         array = {'log': P._log_array, 'log1p': P._log1p_array}
         for name, want in zip(names, got):
             with self.subTest(fn=name):
-                assert_same(self, [scalar[name](x) for x in args.tolist()], want, 'V8 Math (scalar)', rtol=0)
+                assert_same(self, [scalar[name](x) for x in args.tolist()], want, 'the application (scalar)', rtol=0)
                 if name in array:
-                    assert_same(self, array[name](args), want, 'V8 Math (array)', rtol=0)
+                    assert_same(self, array[name](args), want, 'the application (array)', rtol=0)
+        # pow over bases and exponents that reach its every branch: negative bases
+        # with integer exponents, results near overflow and among the subnormals.
+        xs = np.concatenate([np.exp(rs.uniform(-30, 30, 3000)), -np.exp(rs.uniform(-5, 5, 1000)),
+                             np.full(1000, 10.0), rs.uniform(0.999, 1.001, 500), edges])
+        ys = np.concatenate([rs.uniform(-20, 20, 3000), rs.integers(-60, 60, 1000).astype(float),
+                             rs.uniform(-12, 12, 1000), rs.uniform(-1e6, 1e6, 500), edges[::-1]])
+        with self.subTest(fn='pow'):
+            want = values([['fdlibm', 'pow', xs.tolist(), ys.tolist()]])[0]
+            assert_same(self, [jsmath.pow(a, b) for a, b in zip(xs.tolist(), ys.tolist())], want,
+                        'the application (pow)', rtol=0)
 
 
 # ---------------------------------------------------------------------------

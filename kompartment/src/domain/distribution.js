@@ -21,6 +21,8 @@
  * CDF shows is sampling noise.
  */
 
+import * as fdlibm from './fdlibm.js';
+
 /**
  * One output at one time, over the realisations, sorted and finite.
  *
@@ -128,7 +130,7 @@ export function describeSample(sorted) {
 		meanBounds: [mean - half, mean + half],
 		percentiles: PERCENTILES.map((p) => ({ p, value: valueAt(sorted, p) })),
 		// DKW: P(sup|F_n − F| > ε) ≤ 2·exp(−2nε²), so at 95% ε = √(ln(2/0.05)/(2n)).
-		dkw: Math.sqrt(Math.log(2 / 0.05) / (2 * n)),
+		dkw: Math.sqrt(fdlibm.log(2 / 0.05) / (2 * n)),
 	};
 }
 
@@ -181,14 +183,14 @@ export function histogram(sorted, bins = null, scale = 'auto') {
 	const edges = new Float64Array(k + 1);
 	for (let b = 0; b <= k; b++) {
 		edges[b] = log
-			? Math.exp(Math.log(lo) + (Math.log(hi) - Math.log(lo)) * (b / k))
+			? fdlibm.exp(fdlibm.log(lo) + (fdlibm.log(hi) - fdlibm.log(lo)) * (b / k))
 			: lo + (hi - lo) * (b / k);
 	}
 	const counts = new Uint32Array(k);
 	for (let i = 0; i < n; i++) {
 		const x = sorted[i];
 		let b = log
-			? Math.floor(((Math.log(x) - Math.log(lo)) / (Math.log(hi) - Math.log(lo))) * k)
+			? Math.floor(((fdlibm.log(x) - fdlibm.log(lo)) / (fdlibm.log(hi) - fdlibm.log(lo))) * k)
 			: Math.floor(((x - lo) / (hi - lo)) * k);
 		if (b >= k) b = k - 1;
 		if (b < 0) b = 0;

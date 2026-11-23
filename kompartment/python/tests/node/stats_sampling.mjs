@@ -21,7 +21,8 @@
 //                                               -> the draws designFor makes in ../sim/probabilistic.js:
 //                                                  group streams, correlations, held inputs
 //   correlate run      columns, pairs, names, seed -> imanConover, and the columns it left
-//   math    <fn>       xs                       -> Math[fn] of each
+//   fdlibm  <fn>       xs                       -> the application's own fn (domain/fdlibm.js) of each
+//   fdlibm  pow        xs, ys                   -> its pow of each pair
 //
 // JSON has no NaN, infinities, -0 or undefined, and they matter here, so both
 // directions spell them { "$": "NaN" | "Infinity" | "-Infinity" | "-0" |
@@ -40,6 +41,7 @@ const modules = {
 	correlate: await load('domain/correlate.js'),
 	fit: await load('domain/fit.js'),
 	distribution: await load('domain/distribution.js'),
+	fdlibm: await load('domain/fdlibm.js'),
 };
 const { slotName, groupOf } = await load('sim/probabilistic.js');
 
@@ -153,7 +155,10 @@ const special = {
 const req = decode(JSON.parse(readFileSync(0, 'utf8')));
 const results = req.calls.map(([mod, name, ...args]) => {
 	try {
-		if (mod === 'math') return { value: args[0].map((x) => Math[name](x)) };
+		if (mod === 'fdlibm') {
+			const fn = modules.fdlibm[name];
+			return { value: name === 'pow' ? args[0].map((x, i) => fn(x, args[1][i])) : args[0].map((x) => fn(x)) };
+		}
 		const fn = special[mod]?.[name] ?? modules[mod][name];
 		if (fn === undefined) throw new Error(`${mod} has no ${name}`);
 		return { value: typeof fn === 'function' ? fn(...args) : fn };

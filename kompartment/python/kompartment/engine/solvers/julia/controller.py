@@ -119,9 +119,10 @@ def initial_step_sciml(f: Callable[[float, np.ndarray], np.ndarray], t0: float, 
     held to dtmax, an f that did not change at all answers a hundred times the
     first probe, and a first probe below machine epsilon falls back to a
     default. ``norm`` is the integrator's; the run passes dtmax at most the
-    span, as OrdinaryDiffEq's default is. ``log10`` is V8's
-    (:mod:`kompartment.jsmath`), so the step is the application's to the bit
-    wherever the power is. Signed, in the direction of tdir.
+    span, as OrdinaryDiffEq's default is. ``log10`` is fdlibm's
+    (:mod:`kompartment.jsmath`), as V8 computes ``Math.log10`` in Node 20, so
+    there the step is the application's to the bit wherever the power is.
+    Signed, in the direction of tdir.
     """
     n = u0.size
     if norm == 'max':

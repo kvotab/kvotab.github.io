@@ -50,6 +50,7 @@
 import { zip, crc32 } from './zip.js';
 import { migrateKeys, materialiseShorthand, syncDerivedUnits } from '../domain/edit.js';
 import { HALF_LIVES, defaultChains, ecoSecondsPerYear } from '../domain/nuclides.js';
+import * as fdlibm from '../domain/fdlibm.js';
 import {
 	deriveElements, sharedDims, summedDims, lineage,
 	COMPARTMENT_LIST, TRANSFER_LIST, SOURCE_INDEX, TARGET_INDEX,
@@ -3067,10 +3068,10 @@ function availabilityRate(rate, a) {
 function logGrid(start, end, n) {
 	const t = new Array(n);
 	const lo = start > 0 ? start : Math.max(end, 1) * 1e-6;
-	const a = Math.log(lo);
-	const b = Math.log(end);
+	const a = fdlibm.log(lo);
+	const b = fdlibm.log(end);
 	t[0] = start;
-	for (let i = 1; i < n; i++) t[i] = Math.exp(a + ((b - a) * i) / (n - 1));
+	for (let i = 1; i < n; i++) t[i] = fdlibm.exp(a + ((b - a) * i) / (n - 1));
 	t[n - 1] = end;
 	return t;
 }

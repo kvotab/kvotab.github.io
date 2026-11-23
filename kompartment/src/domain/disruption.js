@@ -51,6 +51,7 @@
  */
 
 import { qualifiedName } from './systems.js';
+import * as fdlibm from './fdlibm.js';
 
 /** When it happens, as a model spells it. */
 export const TIMINGS = ['at', 'poisson', 'trigger'];
@@ -168,7 +169,7 @@ export function sampleOccurrences(rate, from, until, stream, max = 10000) {
 	let t = from;
 	for (;;) {
 		const u = stream();
-		t += -Math.log(u > 0 ? u : Number.MIN_VALUE) / rate;
+		t += -fdlibm.log(u > 0 ? u : Number.MIN_VALUE) / rate;
 		if (t >= until) break;
 		out.push(t);
 		if (out.length >= max) break;

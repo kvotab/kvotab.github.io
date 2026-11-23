@@ -112,7 +112,7 @@ def _layers_at(F: Any, X: Any, o: int, nm: int, matched: bool) -> Dict[str, Opti
 
 def reference_layers(pen_dep: float, nm: int, aw: float, first: Optional[float] = None) -> List[float]:
     """The reference layers as the application's ``referenceLayers`` lays them
-    out: ``layer_depths``'s first layer and root-find, with V8's ``exp`` and
+    out: ``layer_depths``'s first layer and root-find, with the application's own ``exp`` and
     every power of the ratio a running product, so that the two agree to the
     last bit."""
     layer_depths(pen_dep, nm, aw, first)  # what cannot be laid out is refused as the path refuses it

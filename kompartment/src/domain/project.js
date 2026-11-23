@@ -23,6 +23,7 @@ import {
 } from './nuclides.js';
 import { NAME_RE, RESERVED } from './names.js';
 import { DEFAULT_SOLVER } from '../ode/solvers.js';
+import * as fdlibm from './fdlibm.js';
 import { derivedUnit, DERIVED_UNIT_KINDS, dimensionUnit } from './units.js';
 import { SPACINGS, combineSeries } from './timeseries.js';
 import {
@@ -1657,9 +1658,9 @@ export class Project {
 		const t = new Float64Array(n);
 		if (spacing === 'log' || spacing === 'solver' || spacing === 'both') {
 			const lo = startTime > 0 ? startTime : Math.max(endTime, 1) * 1e-6;
-			const a = Math.log(lo), b = Math.log(endTime);
+			const a = fdlibm.log(lo), b = fdlibm.log(endTime);
 			t[0] = startTime;
-			for (let i = 1; i < n; i++) t[i] = Math.exp(a + ((b - a) * i) / (n - 1));
+			for (let i = 1; i < n; i++) t[i] = fdlibm.exp(a + ((b - a) * i) / (n - 1));
 			t[n - 1] = endTime;
 		} else {
 			for (let i = 0; i < n; i++) {

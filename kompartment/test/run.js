@@ -20732,6 +20732,110 @@ test('migrating keys does not mutate the file it was given', () => {
 });
 
 // =========================================================================
+section('exp and log of its own');
+
+test('exp, log, log10, log1p, expm1 and pow are fdlibm’s, the Python package’s to the bit', async () => {
+	// The numbers compared to the last digit -- output times, the statistics of
+	// a sample -- go through ../src/domain/fdlibm.js rather than Math, so that
+	// every browser gives the same bits. These are the Python package's answers
+	// (python/kompartment/jsmath.py) over 12,000 arguments each, folded into one
+	// number. The arguments come from the sampler's generator by exact steps
+	// only, so the two languages make the same ones.
+	const fd = await import('../src/domain/fdlibm.js');
+	const { rng } = await import('../src/domain/sample.js');
+	const dv = new DataView(new ArrayBuffer(8));
+	const fromWords = (hi, lo) => { dv.setUint32(0, hi >>> 0); dv.setUint32(4, lo >>> 0); return dv.getFloat64(0); };
+	const bits = (x) => { if (x !== x) return 0x7ff8000000000000n; dv.setFloat64(0, x); return dv.getBigUint64(0); };
+	const fold = (values) => {
+		let h = 0n;
+		for (const v of values) h = ((h * 1099511628211n) ^ bits(v)) & 0xffffffffffffffffn;
+		return h.toString(16).padStart(16, '0');
+	};
+	const r = rng(20261122);
+	const word = () => Math.floor(r() * 4294967296);
+	const xs = [];
+	for (let i = 0; i < 12000; i++) {
+		const a = word();
+		const b = word();
+		switch (i % 6) {
+			case 0: xs.push(fromWords((a % 0x7ff00000) | (b & 0x80000000), b)); break; // any finite double
+			case 1: xs.push((a / 4294967296 - 0.5) * 80); break;
+			case 2: xs.push((a / 4294967296 - 0.5) * 1500); break;
+			case 3: xs.push((a / 4294967296 - 0.5) * 2); break;
+			case 4: xs.push((a / 4294967296 - 0.5) * 2e-8); break;
+			default: xs.push(fromWords(a % 0x00200000, b)); // subnormals and the smallest normals
+		}
+	}
+	const want = {
+		exp: 'ab7f4c7aa3715e17', log: 'cb3eeb7cd6a6d738', log10: 'f6e67d2110963ed6',
+		log1p: 'b6228b9668b7b9c6', expm1: '91645a8d00d2a5ab',
+	};
+	for (const [name, folded] of Object.entries(want)) {
+		const got = fold(xs.map((x) => fd[name](x)));
+		assert(got === folded, `${name}: ${got}, the Python package's ${folded}`);
+	}
+	// pow: the magnitudes as bases and exponents in -20 .. 20; every third base
+	// negative, with a whole exponent in -30 .. 30.
+	const r2 = rng(11222026);
+	const pairs = xs.map((x, i) => {
+		const u = r2();
+		const v = r2();
+		return i % 3 ? [Math.abs(x), (u - 0.5) * 40] : [-Math.abs(x), Math.floor(v * 61) - 30];
+	});
+	const got = fold(pairs.map(([a, b]) => fd.pow(a, b)));
+	assert(got === 'e92446cdbdc2f26e', `pow: ${got}, the Python package's e92446cdbdc2f26e`);
+});
+
+test('where JavaScript fixes the answer, they give Math’s', async () => {
+	// NaN, the infinities, the zeros, the exact cases and the ends of the range:
+	// what the standard decides, which every engine answers alike. Elsewhere
+	// Math's last bit is the engine's own, and these are fdlibm's.
+	const fd = await import('../src/domain/fdlibm.js');
+	const same = (a, b) => Object.is(a, b) || (Number.isNaN(a) && Number.isNaN(b));
+	const edges = {
+		exp: [NaN, Infinity, -Infinity, 0, -0, 710, -746],
+		log: [NaN, Infinity, -Infinity, 0, -0, 1, -1, -5e-324],
+		log10: [NaN, Infinity, -Infinity, 0, -0, 1, -1, -5e-324],
+		log1p: [NaN, Infinity, -Infinity, 0, -0, -1, -2],
+		expm1: [NaN, Infinity, -Infinity, 0, -0, 710, -1000],
+	};
+	for (const [name, xs] of Object.entries(edges)) {
+		for (const x of xs) assert(same(fd[name](x), Math[name](x)), `${name}(${x}) is ${fd[name](x)}, Math's ${Math[name](x)}`);
+	}
+	const specials = [0, -0, 1, -1, 2, -2, 0.5, Infinity, -Infinity, NaN, 5e-324, 1e308, -1e308];
+	for (const a of specials) {
+		for (const b of specials) {
+			assert(same(fd.pow(a, b), a ** b), `pow(${a}, ${b}) is ${fd.pow(a, b)}, JavaScript's ${a ** b}`);
+		}
+	}
+});
+
+test('the numbers compared to the last digit use exp and log of its own, not Math’s', async () => {
+	const { readFileSync } = await import('node:fs');
+	const read = (f) => readFileSync(new URL(`../src/${f}`, import.meta.url), 'utf8');
+	// Code, not comments: pdf.js quotes the file format's own source, Math.log and all.
+	const code = (text) => text.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+	// The distributions, the fits, the summaries and the search, which the
+	// Python package follows step for step.
+	for (const f of ['domain/pdf.js', 'domain/fit.js', 'domain/distribution.js', 'domain/optimise.js']) {
+		const m = /\bMath\.(exp|log|log1p|expm1)\b/.exec(code(read(f)));
+		assert(!m, `${f} works a number out with ${m?.[0]}`);
+	}
+	// And one line each elsewhere: the logarithmic grid, a series' points, a
+	// far-field path's reference layers, the occurrences a realisation draws,
+	// the log of an output in What drove it, and the grid an export writes.
+	const sites = [
+		['domain/project.js', /fdlibm\.log\(lo\), b = fdlibm\.log\(endTime\)/],
+		['domain/timeseries.js', /fdlibm\.pow\(10, logFrom \+ step \* c\)/],
+		['sim/pathlayout.js', /s \+= x \* fdlibm\.exp\(k\)/],
+		['domain/disruption.js', /-fdlibm\.log\(u > 0 \? u : Number\.MIN_VALUE\)/],
+		['worker/sim-worker.js', /raw\.map\(\(v\) => fdlibm\.log\(v\)\)/],
+		['io/ecoexport.js', /const a = fdlibm\.log\(lo\);/],
+	];
+	for (const [f, re] of sites) assert(re.test(read(f)), `${f} works its number out with Math`);
+});
+
+// =========================================================================
 section('lookup tables');
 
 test('the five interpolation rules read a table the way the desktop tool does', () => {
