@@ -26,7 +26,8 @@
                            time; the values are put in row order here, as HDF5
                            reads them
        complex             a dataset of (real, imag) pairs
-       char                a string for each row
+       char                a string for each row; with no columns, one empty
+                           string, however many rows its size says
        cell                a group of its elements, {1}, {2}, ..., or {1,2} for
                            a matrix; a cell whose elements are each a number,
                            a row of text or empty -- a table, as from a
@@ -404,12 +405,17 @@ function matParseMatrix(r, at, end, depth) {
         const jc = Int32Array.from(matValues(r, next()), Number);
         if (jc.length < dims[1] + 1) throw matDamaged('a sparse array has fewer column starts than columns');
         const nnz = jc[dims[1]];
+        // Checked against its rows before a logical one's values are made
+        // for it: a count the file does not hold makes nothing.
+        const holds = (n) => {
+          if (!(nnz >= 0 && nnz <= n)) throw matDamaged('a sparse array says it holds more values than it does');
+        };
+        holds(ir.length);
         const kind = logical ? 'logical' : 'double';
         const re = p < end ? matAsClass(matValues(r, next()), kind) : matAsClass(new Uint8Array(nnz).fill(1), kind);
         const im = complex ? matAsClass(matValues(r, next()), kind) : null;
-        if (!(nnz >= 0 && nnz <= ir.length && nnz <= re.length && (!im || nnz <= im.length))) {
-          throw matDamaged('a sparse array says it holds more values than it does');
-        }
+        holds(re.length);
+        if (im) holds(im.length);
         return { cls, name, global, dims, logical, ir, jc, re, im };
       }
       case 'cell': {
@@ -432,8 +438,11 @@ function matParseMatrix(r, at, end, depth) {
           }
         }
         fits(numel * fields.length);
+        // A struct of no fields holds nothing in its elements, however many
+        // its size says -- MATLAB keeps a billion of them in a few bytes: its
+        // size is kept and no element made, as a 7.3 file's is read.
         const items = [];
-        for (let k = 0; k < numel; k++) items.push(fields.map(() => matrix(next())));
+        if (fields.length || numel === 1) for (let k = 0; k < numel; k++) items.push(fields.map(() => matrix(next())));
         return { cls: 'struct', className, name, global, dims, fields, items };
       }
       case 'function_handle':
@@ -609,25 +618,22 @@ function matReadLevel4(bytes) {
   const precisions = [MAT_MI.DOUBLE, MAT_MI.SINGLE, MAT_MI.INT32, MAT_MI.INT16, MAT_MI.UINT16, MAT_MI.UINT8];
   const variables = [];
   let at = 0;
+  // What may follow a variable: the end, zeros some writers pad with, or a
+  // header that makes sense. Anything else is why.
+  const ahead = () => {
+    if (bytes.length - at >= 20) return matLevel4Head(view, at);
+    return bytes.subarray(at).every(b => b === 0) ? { end: true } : { why: 'cut' };
+  };
   while (at < bytes.length) {
-    if (bytes.length - at < 20) {
-      if (bytes.subarray(at).every(b => b === 0)) break;
-      throw matDamaged('it ends part of the way through a variable');
+    const head = ahead();
+    if (head.end) break;
+    if (head.why === 'cut') throw matDamaged('it ends part of the way through a variable');
+    if (head.why === 'type') {
+      throw matDamaged(variables.length ? 'a variable after the first has a header that makes no sense'
+        : 'it is not a MAT-file this page can read: it starts with none of the headers MATLAB writes');
     }
-    let little = true;
-    let type = view.getInt32(at, true);
-    if (!matLevel4Type(type) || Math.floor(type / 1000) !== 0) {
-      little = false;
-      type = view.getInt32(at, false);
-      if (!matLevel4Type(type) || Math.floor(type / 1000) !== 1) {
-        throw matDamaged(variables.length ? 'a variable after the first has a header that makes no sense'
-          : 'it is not a MAT-file this page can read: it starts with none of the headers MATLAB writes');
-      }
-    }
-    const [rows, cols, imagf, nameLength] = [4, 8, 12, 16].map(o => view.getInt32(at + o, little));
-    if (rows < 0 || cols < 0 || (imagf !== 0 && imagf !== 1) || nameLength < 1 || nameLength > 4096) {
-      throw matDamaged('a variable\'s header makes no sense');
-    }
+    if (head.why) throw matDamaged('a variable\'s header makes no sense');
+    const { little, type, rows, cols, imagf, nameLength } = head;
     const mi = precisions[Math.floor(type / 10) % 10];
     const n = rows * cols;
     const dataAt = at + 20 + nameLength;
@@ -644,12 +650,41 @@ function matReadLevel4(bytes) {
     if (kind === 1) {
       variables.push({ name, array: { cls: 'char', name, dims: [rows, cols], units: Uint16Array.from(re, x => x & 0xffff) } });
     } else if (kind === 2) {
-      variables.push({ name, array: matLevel4Sparse(name, rows, cols, re, im) });
+      // Its values are checked as it is made. One that cannot be made is
+      // said and the variables after it read -- when what follows it is
+      // where one may begin, so that its own header, and with it where it
+      // ends, is sound. Else that is what is damaged, and the file refused.
+      try {
+        variables.push({ name, array: matLevel4Sparse(name, rows, cols, re, im) });
+      } catch (err) {
+        if (ahead().why) throw err;
+        variables.push({ name, error: err.message });
+      }
     } else {
       variables.push({ name, array: { cls: 'double', name, dims: [rows, cols], re, im } });
     }
   }
   return { format: 'Level 4 (-v4)', header: '', variables, objects: null };
+}
+
+/**
+ * The Level 4 header at `at`: its byte order, its type and the four numbers
+ * after it -- or why it makes no sense, 'type' or 'numbers'.
+ *
+ * @param {DataView} view
+ * @param {number} at - At least 20 bytes before the end
+ */
+function matLevel4Head(view, at) {
+  let little = true;
+  let type = view.getInt32(at, true);
+  if (!matLevel4Type(type) || Math.floor(type / 1000) !== 0) {
+    little = false;
+    type = view.getInt32(at, false);
+    if (!matLevel4Type(type) || Math.floor(type / 1000) !== 1) return { why: 'type' };
+  }
+  const [rows, cols, imagf, nameLength] = [4, 8, 12, 16].map(o => view.getInt32(at + o, little));
+  if (rows < 0 || cols < 0 || (imagf !== 0 && imagf !== 1) || nameLength < 1 || nameLength > 4096) return { why: 'numbers' };
+  return { little, type, rows, cols, imagf, nameLength };
 }
 
 /**
@@ -662,6 +697,14 @@ function matLevel4Sparse(name, rows, cols, re, im) {
   const nnz = rows - 1;
   const size = [re[nnz], re[rows + nnz]];
   if (!size.every(d => Number.isInteger(d) && d >= 0)) throw matDamaged(`the sparse matrix ${name} gives no size`);
+  // Where each column begins is made here, as MATLAB makes it: the file
+  // holds only the size. A size whose column starts would take more than the
+  // page reads of a file is refused before they are made.
+  if ((size[1] + 1) * 4 > KVOT_FILE_SIZE_LIMITS.dataset) {
+    const cols = size[1] < 1e21 ? size[1].toLocaleString('en-US') : String(size[1]);
+    throw matDamaged(`the sparse matrix ${name} says it has ${cols} columns, whose starts `
+      + `alone would take more than the ${kvotFormatBytes(KVOT_FILE_SIZE_LIMITS.dataset)} this page reads`);
+  }
   const entries = [];
   for (let k = 0; k < nnz; k++) {
     const i = re[k] - 1;
@@ -797,6 +840,11 @@ function matFromHdf5(f, obj, name, depth) {
 
   if (Number(matAttr(obj, 'MATLAB_empty')) === 1) {
     const dims = matDims(Array.from(obj.value || [], Number));
+    // Its size has no elements -- but a struct's, which may have any number
+    // of them, each with no fields.
+    if (cls !== 'struct' && matNumel(dims) !== 0) {
+      throw matDamaged(`${name ? `the array ${name}` : 'an array'} is marked empty, and its size is ${matSizeText(dims)}`);
+    }
     if (cls === 'char') return { cls, name, dims, units: new Uint16Array(0) };
     if (cls === 'cell') return { cls, name, dims, items: [] };
     if (cls === 'struct') return { cls, className: null, name, dims, fields: [], items: matNumel(dims) === 1 ? [[]] : [] };
@@ -1027,11 +1075,21 @@ function matTree(fileName, mat, hooks = null) {
     MATLAB_header: mat.header || undefined
   });
   const ctx = { objects: mat.objects, arrays: 0, datasets: 0, capped: false };
+  const unreadable = (why) => easGroup({ MATLAB_note: `This variable could not be read: ${why}` });
   for (const v of mat.variables) {
     const key = matFreeName(root, easLinkName(v.name || 'unnamed variable'));
-    let node = v.error ? easGroup({ MATLAB_note: `This variable could not be read: ${v.error}` }) : undefined;
-    if (node === undefined && hooks && hooks.variableNode) node = hooks.variableNode(v, ctx, `/${key}`);
-    if (node === undefined) node = matNode(v.array, ctx, 0, new Set());
+    let node = v.error ? unreadable(v.error) : undefined;
+    // Some damage shows only as a variable's tree is made -- a sparse
+    // matrix's columns, a string array's layout: that variable says so, and
+    // the ones after it are still written.
+    const { arrays, datasets } = ctx;
+    try {
+      if (node === undefined && hooks && hooks.variableNode) node = hooks.variableNode(v, ctx, `/${key}`);
+      if (node === undefined) node = matNode(v.array, ctx, 0, new Set());
+    } catch (err) {
+      Object.assign(ctx, { arrays, datasets });
+      node = unreadable(err.message);
+    }
     if (node) root.children.set(key, node);
   }
   if (hooks && hooks.done) hooks.done();
@@ -1199,7 +1257,10 @@ function matCharStrings(a) {
   const [rows, cols] = a.dims;
   const rest = a.dims.slice(2);
   const others = matNumel(rest);
-  if (rows * others <= 1) return { shape: [], strings: [matString(a.units)] };
+  // With no columns there is no text, only rows of nothing, and a size of
+  // billions of them is said in a few bytes: one empty string, the size in
+  // MATLAB_size.
+  if (rows * others <= 1 || cols === 0) return { shape: [], strings: [matString(a.units)] };
   const out = new Array(rows * others);
   const row = new Uint16Array(cols);
   for (let k = 0; k < others; k++) {
@@ -1305,7 +1366,10 @@ function matRowText(a) {
 function matFunctionNode(a, ctx, depth, within, extra) {
   const fh = matField(a.inner, 'function_handle');
   const fn = matRowText(matField(fh, 'function'));
-  if (!fh || !fn) return matStructNode({ ...a.inner, className: 'function_handle' }, ctx, depth, within, extra);
+  if (!fh || !fn) {
+    if (!a.inner || a.inner.cls !== 'struct') throw matDamaged('a function handle is written in a form this page does not read');
+    return matStructNode({ ...a.inner, className: 'function_handle' }, ctx, depth, within, extra);
+  }
   const type = matRowText(matField(fh, 'type'));
   const file = matRowText(matField(fh, 'file'));
   const text = type === 'anonymous' && fn.includes('@') ? fn.slice(fn.indexOf('@')) : `@${fn}`;

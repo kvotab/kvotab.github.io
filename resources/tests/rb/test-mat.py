@@ -171,6 +171,49 @@ def huge_cell():
     return header('<') + matrix(1, [100000, 100000], 'huge', [], '<') + matrix(6, [1, 1], 'ok', [doubles([5], '<')], '<')
 
 
+# Sizes a few bytes can say and no file need hold: each beside a variable that
+# reads. Before they were refused, these held the page for 5 to 15 seconds and
+# took 1 to 8 GB of memory, or made it refuse the whole file.
+
+def ok_after():
+    return matrix(6, [1, 1], 'ok', [doubles([5], '<')], '<')
+
+
+def fieldless():
+    """A struct of no fields, 2,147,483,647 of them: nothing in its elements."""
+    return header('<') + matrix(2, [2147483647, 1], 'e', [element(5, struct.pack('<i', 32), '<'), element(1, b'', '<')], '<') + ok_after()
+
+
+def empty_rows():
+    """A char array of 2,147,483,647 rows and no columns: no text at all."""
+    return header('<') + matrix(4, [2147483647, 0], 'c', [], '<') + ok_after()
+
+
+def sparse_count():
+    """A logical sparse matrix without its values, saying it holds 2,147,483,647."""
+    return header('<') + matrix(5, [1, 1], 'l', [element(5, struct.pack('<i', 0), '<'),
+                                                element(5, struct.pack('<2i', 0, 2147483647), '<')], '<', flags=0x200) + ok_after()
+
+
+def damaged_in_tree():
+    """Damage found only as the tree is made: a sparse matrix whose column starts
+    run backwards, a function handle described by an empty array."""
+    return header('<') + b''.join([
+        matrix(5, [2, 2], 'sp', [element(5, struct.pack('<2i', 0, 1), '<'), element(5, struct.pack('<3i', 0, 2, 1), '<'),
+                                 doubles([1, 2], '<')], '<'),
+        matrix(16, [1, 1], 'fh', [struct.pack('<II', 14, 0)], '<'),
+        ok_after()])
+
+
+def level4_sparse(row, width):
+    """A Level 4 sparse matrix one row high and `width` wide, holding 7 at
+    (row, 1), and a variable after it. It is written as a full matrix a column
+    at a time: the rows of its values, their columns, the values, each with a
+    last row that gives the size."""
+    return (struct.pack('<5i', 2, 2, 3, 0, 3) + b'sp\0' + struct.pack('<6d', row, 1, 1, width, 7, 0)
+            + struct.pack('<5i', 0, 1, 1, 0, 3) + b'ok\0' + struct.pack('<d', 5))
+
+
 # --- in the page -------------------------------------------------------------------
 
 SETTLE = """(async () => {
@@ -246,6 +289,45 @@ PREVIEW = """(async () => {
 })()"""
 
 
+# A 7.3 file made in the page by its own h5wasm, MATLAB's header in the 512
+# bytes before it as MATLAB writes it: an empty array whose size says no file
+# need hold its rows, one marked empty whose size has elements, and one that
+# reads. Opened as a file handed over is.
+V73_DAMAGED = r"""(async () => {
+  await waitForH5Wasm();
+  const { FS, File } = window.h5wasm;
+  const f = new File('/test-mat-v73.h5', 'w');
+  const empty = (name, cls, dims) => {
+    const d = f.create_dataset({ name, data: Float64Array.from(dims) });
+    d.create_attribute('MATLAB_class', cls);
+    d.create_attribute('MATLAB_empty', 1);
+  };
+  empty('c', 'char', [2147483647, 0]);
+  empty('d', 'double', [3, 4]);
+  f.create_dataset({ name: 'ok', data: new Float64Array([5]), shape: [1, 1] }).create_attribute('MATLAB_class', 'double');
+  f.close();
+  const h5 = FS.readFile('/test-mat-v73.h5');
+  FS.unlink('/test-mat-v73.h5');
+  const bytes = new Uint8Array(512 + h5.length);
+  bytes.set(new TextEncoder().encode('MATLAB 7.3 MAT-file, written by test-mat.py'.padEnd(116, ' ')));
+  bytes.set([0, 2, 0x49, 0x4d], 124);
+  bytes.set(h5, 512);
+  try { return await ingestFileBuffer('v73-damaged.mat', bytes.buffer, 'test-mat'); }
+  catch (e) { return 'refused: ' + e.message; }
+})()"""
+
+
+# The most values matAsClass is handed while a file opens: what is made for it.
+LARGEST_MADE = """(async (name, b64) => {
+  const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  const made = matAsClass;
+  let largest = 0;
+  matAsClass = (values, cls) => { largest = Math.max(largest, values.length); return made(values, cls); };
+  try { await ingestFileBuffer(name, bytes.buffer, 'test-mat'); } finally { matAsClass = made; }
+  return largest;
+})(%s, %s)"""
+
+
 async def preview(page, path):
     await page.ev(f"__click({json.dumps(path)}, false)")
     return await page.ev(PREVIEW, timeout=30)
@@ -290,6 +372,12 @@ async def main():
         'hostile.mat': hostile(),
         'damaged-zlib.mat': damaged_compressed(),
         'huge.mat': huge_cell(),
+        'fieldless.mat': fieldless(),
+        'empty-rows.mat': empty_rows(),
+        'sparse-count.mat': sparse_count(),
+        'damaged-tree.mat': damaged_in_tree(),
+        'wide-sparse-v4.mat': level4_sparse(1, 2147483647),
+        'outside-sparse-v4.mat': level4_sparse(2, 3),
         'notmat.mat': bytes(range(256)) * 4,
         'vectors.mat': vectors(),
         'vectors-b.mat': vectors(),
@@ -435,6 +523,46 @@ async def main():
             check('a cell that says it is larger than its bytes is refused before it is made',
                   (attr(dh, '/huge', 'MATLAB_note'), value(dh, '/ok')),
                   ('This variable could not be read: the array huge says it holds more than its bytes can', [5]))
+            opened = await pick_files(page, [at('fieldless.mat'), at('empty-rows.mat'), at('sparse-count.mat'),
+                                             at('damaged-tree.mat'), at('wide-sparse-v4.mat'), at('outside-sparse-v4.mat')])
+            check('sizes a few bytes say and no file need hold: every file opens',
+                  [n for n in opened if n in ('fieldless.mat', 'empty-rows.mat', 'sparse-count.mat', 'damaged-tree.mat',
+                                              'wide-sparse-v4.mat', 'outside-sparse-v4.mat')],
+                  ['fieldless.mat', 'empty-rows.mat', 'sparse-count.mat', 'damaged-tree.mat', 'wide-sparse-v4.mat',
+                   'outside-sparse-v4.mat'])
+            df = await dump(page, 'fieldless.mat')
+            check('  2,147,483,647 structs of no fields: an empty group of that size, nothing made for each',
+                  (df['tree'].get('/e', {}).get('group'), attr(df, '/e', 'MATLAB_size'), value(df, '/ok')), (True, '2147483647×1', [5]))
+            de = await dump(page, 'empty-rows.mat')
+            check('  2,147,483,647 rows of no text: one empty string, the size in MATLAB_size',
+                  (de['tree'].get('/c', {}).get('shape'), value(de, '/c'), attr(de, '/c', 'MATLAB_size'), value(de, '/ok')),
+                  ([], '', '2147483647×0', [5]))
+            ds = await dump(page, 'sparse-count.mat')
+            check('  a logical sparse matrix without values, saying it holds 2,147,483,647: said so, the next one reads',
+                  (attr(ds, '/l', 'MATLAB_note'), value(ds, '/ok')),
+                  ('This variable could not be read: a sparse array says it holds more values than it does', [5]))
+            check('    and nothing is made for a count its rows do not hold', await page.ev(LARGEST_MADE % (
+                json.dumps('sparse-count-again.mat'), json.dumps(base64.b64encode(sparse_count()).decode())), timeout=60) < 16, True)
+            dg = await dump(page, 'damaged-tree.mat')
+            check('  damage found as the tree is made is said of its variable alone, the rest written',
+                  (attr(dg, '/sp', 'MATLAB_note'), attr(dg, '/fh', 'MATLAB_note'), value(dg, '/ok')),
+                  ('This variable could not be read: a sparse matrix is damaged',
+                   'This variable could not be read: a function handle is written in a form this page does not read', [5]))
+            dw = await dump(page, 'wide-sparse-v4.mat')
+            check('  a Level 4 sparse matrix 2,147,483,647 columns wide: refused before its column starts are made',
+                  (attr(dw, '/sp', 'MATLAB_note'), value(dw, '/ok')),
+                  ('This variable could not be read: the sparse matrix sp says it has 2,147,483,647 columns, whose starts '
+                   'alone would take more than the 1.0 GB this page reads', [5]))
+            do = await dump(page, 'outside-sparse-v4.mat')
+            check('  a Level 4 sparse matrix with a value outside its size: said of it, the variable after it read',
+                  (attr(do, '/sp', 'MATLAB_note'), value(do, '/ok')),
+                  ('This variable could not be read: the sparse matrix sp holds a value outside its size', [5]))
+            check('a 7.3 file: an empty array of 2,147,483,647 rows opens, one marked empty with elements is said',
+                  await page.ev(V73_DAMAGED, timeout=60), ['v73-damaged.mat'])
+            d73d = await dump(page, 'v73-damaged.mat')
+            check('  the rows of no text one empty string; the other said; the one after them read',
+                  (value(d73d, '/c'), attr(d73d, '/c', 'MATLAB_size'), attr(d73d, '/d', 'MATLAB_note'), value(d73d, '/ok')),
+                  ('', '2147483647×0', 'This variable could not be read: the array d is marked empty, and its size is 3×4', [5]))
             dt = await dump(page, 'truncated.mat')
             tops = [p for p in dt['tree'] if p.count('/') == 1]
             check('a file cut short opens with the variables before the cut, and says where it ends',
