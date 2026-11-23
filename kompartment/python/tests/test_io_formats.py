@@ -440,7 +440,7 @@ class HDF5Read(unittest.TestCase):
         self.assertIsInstance(by['/k']['values'], array)
 
     def test_the_repository_fixtures_read_alike(self):
-        for name in ('chunked-samples.h5', 'v1-symbol-table.h5'):
+        for name in ('chunked-samples.h5', 'v1-symbol-table.h5', 'fixed-strings.h5'):
             with self.subTest(fixture=name):
                 data = (FIXTURES / name).read_bytes()
                 got = js({'task': 'h5read', 'data': b64(data)})[0]
@@ -479,6 +479,42 @@ class HDF5Read(unittest.TestCase):
             with self.subTest(variant=i):
                 same(self, inflater_words_aside(py_read(data)), inflater_words_aside(js_outcome(got)),
                      f'variant {i}')
+
+    def test_a_count_past_the_end_is_said_alike(self):
+        # A damaged count, of numbers or of strings of either kind: both readers
+        # ask whether the values lie inside the file before reading them, and
+        # say so in one sentence. A string of fixed length was cut off at the
+        # end of the file instead -- a count of ten million read as seven names
+        # and the rest empty -- and three billion ran out of memory.
+        def with_count(data: bytes, space: bytes, at: int, count: int) -> bytes:
+            i = data.index(space)
+            b = bytearray(data)
+            b[i + at:i + at + 8] = count.to_bytes(8, 'little')
+            return bytes(b)
+        # The writers' dataspace: version 2, one dimension, simple, then the
+        # seven; h5py's: version 1, the rank, the flags (1 where the largest
+        # sizes follow), five reserved bytes, then the seven.
+        v2 = bytes([2, 1, 0, 1, 7, 0, 0, 0, 0, 0, 0, 0])
+        numbers = hdf5.write_hdf5(build({'puts': [[['x'], ds([1, 2, 3, 4, 5, 6, 7])]]}))
+        names = ['alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta', 'eta']
+        pooled = hdf5.write_hdf5(build({'puts': [[['names'], ds(names, 'STR')]]}))
+        fixed = (FIXTURES / 'fixed-strings.h5').read_bytes()
+        v1 = next(s for s in (bytes([1, 1, f, 0, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0]) for f in (0, 1)) if s in fixed)
+        past = 'values run past the end of the file'
+        cases = {
+            'numbers, 2^40': (with_count(numbers, v2, 4, 2 ** 40), f'/x: its 1099511627776 {past}'),
+            'pooled strings, 2^40': (with_count(pooled, v2, 4, 2 ** 40), f'/names: its 1099511627776 {past}'),
+            'fixed strings, ten million': (with_count(fixed, v1, 8, 10 ** 7), f'/names: its 10000000 {past}'),
+            'fixed strings, three billion': (with_count(fixed, v1, 8, 3 * 10 ** 9), f'/names: its 3000000000 {past}'),
+        }
+        answers = js(*[{'task': 'h5read', 'data': b64(data)} for data, _ in cases.values()])
+        for (name, (data, want)), got in zip(cases.items(), answers):
+            with self.subTest(case=name):
+                mine = py_read(data)
+                same(self, mine, js_outcome(got), name)
+                self.assertEqual(mine['problems'], [want])
+                # The rest of the file reads as it did.
+                self.assertEqual([d['path'] for d in mine['datasets']], ['/utf8'] if name.startswith('fixed') else [])
 
     def test_a_file_that_is_not_one_says_so(self):
         with self.assertRaises(HDF5ReadError) as caught:

@@ -702,10 +702,12 @@ def _read_values(r: _Reader, typ: Dict[str, Any], space: Dict[str, Any],
     n = int(count)
     p = where['address']
     cls = typ['cls']
-    # Numbers lie inside the file, or the dataset is damaged: asked before
+    # The values lie inside the file, or the dataset is damaged: asked before
     # anything is read, as the application asks it before it makes an array
-    # for them, so that a damaged count is reported in the same words.
-    if cls in ('float', 'int'):
+    # for them, so that a damaged count is reported in the same words. Strings
+    # too: one of fixed length is cut off at the end of the file, not refused,
+    # and a variable-length one's record is a pointer of `size` bytes.
+    if cls in ('float', 'int', 'string', 'vlenstr'):
         width = (4 if typ['size'] == 4 else 8) if cls == 'float' else typ['size']
         if p + n * max(1, width) > r.n:
             raise HDF5ReadError(f'its {js_string(count)} values run past the end of the file')

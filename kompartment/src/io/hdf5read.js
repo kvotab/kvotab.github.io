@@ -606,11 +606,15 @@ function readValues(r, type, space, where) {
 	const n = space.count;
 	if (!n || where.address == null) return [];
 	const p = where.address;
-	// Numbers lie inside the file, or the dataset is damaged. That is asked
+	// The values lie inside the file, or the dataset is damaged. That is asked
 	// before an array is made for them: a damaged count can ask for more than
 	// an engine will allocate, and each refuses it in words of its own -- or
-	// makes it, untouched, and fails only at the first read past the end.
-	if (type.cls === 'float' || type.cls === 'int') {
+	// makes it, untouched, and fails only at the first read past the end. A
+	// string of fixed length is cut off at the end of the file, not refused,
+	// so ten million of them read as seven and the rest empty, and three
+	// billion ran out of memory; a variable-length one's record is a pointer
+	// into the file, `size` bytes each, as the string's is its own bytes.
+	if (type.cls === 'float' || type.cls === 'int' || type.cls === 'string' || type.cls === 'vlenstr') {
 		const width = type.cls === 'float' ? (type.size === 4 ? 4 : 8) : type.size;
 		if (p + n * Math.max(1, width) > r.u8.length) {
 			throw new HDF5ReadError(`its ${n} values run past the end of the file`);

@@ -41265,7 +41265,8 @@ test('values that run past the end of an HDF5 file are said to, before an array 
 	// and each engine refuses that in words of its own, or makes the array
 	// and fails at the first read past the end. So the reader asks first.
 	const { readHDF5 } = await import('../src/io/hdf5read.js');
-	const { writeHDF5, dataset, group, put } = await import('../src/io/hdf5.js');
+	const { writeHDF5, dataset, group, put, STR } = await import('../src/io/hdf5.js');
+	const { readFileSync } = await import('node:fs');
 	const root = group();
 	put(root, ['x'], dataset(Float64Array.from([1, 2, 3, 4, 5, 6, 7])));
 	const good = writeHDF5(root);
@@ -41284,6 +41285,39 @@ test('values that run past the end of an HDF5 file are said to, before an array 
 	// And the file cut short inside the values, which the writer puts last.
 	assert(await said(good.subarray(0, good.length - 4)) === '/x: its 7 values run past the end of the file',
 		await said(good.subarray(0, good.length - 4)));
+
+	// Strings as well. A variable-length one's record is a pointer into the
+	// file, and a count past the end was said in V8's words for a read past
+	// a DataView's end.
+	const strings = group();
+	put(strings, ['names'], dataset(['alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta', 'eta'], STR));
+	const pooled = writeHDF5(strings);
+	const where = pooled.findIndex((_, i) => space.every((b, k) => pooled[i + k] === b));
+	assert(where > 0 && await said(pooled) === '', `${where}: ${await said(pooled)}`);
+	const many = pooled.slice();
+	many[where + 4] = 0;
+	many[where + 9] = 1;
+	assert(await said(many) === '/names: its 1099511627776 values run past the end of the file', await said(many));
+	// One of fixed length, as h5py writes them (./fixtures/fixed-strings.h5:
+	// seven names as 'S8', and four UTF-8 strings of 16 bytes), was cut off at
+	// the end of the file rather than refused: a count of ten million read as
+	// the seven and the rest empty, and three billion ran out of memory.
+	const fixed = new Uint8Array(readFileSync(new URL('fixtures/fixed-strings.h5', import.meta.url)));
+	const back = await readHDF5(fixed);
+	assert(JSON.stringify(back.datasets.map((d) => [d.path, Array.from(d.values)])) === JSON.stringify([
+		['/names', ['alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta', 'eta']],
+		['/utf8', ['Ångström', 'µg', '中文', 'plain']],
+	]) && !back.problems.length, JSON.stringify(back));
+	// h5py writes a version 1 dataspace: the version, the rank, the flags (1
+	// where the largest sizes follow), five reserved bytes, the dimensions.
+	const v1 = [0, 1].map((flags) => [1, 1, flags, 0, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0])
+		.map((s) => fixed.findIndex((_, i) => s.every((b, k) => fixed[i + k] === b))).find((i) => i >= 0);
+	assert(v1 > 0, 'the names\' dataspace is not where it was looked for');
+	for (const count of [1e7, 3e9]) {
+		const bad = fixed.slice();
+		for (let i = 0; i < 8; i++) bad[v1 + 8 + i] = Math.floor(count / 2 ** (8 * i)) & 0xff;
+		assert(await said(bad) === `/names: its ${count} values run past the end of the file`, await said(bad));
+	}
 });
 
 test('a point of a lookup table can carry its own distribution', async () => {
