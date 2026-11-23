@@ -286,7 +286,7 @@
         for (const m of [1, 2]) for (const s of [-1, 1]) {
           const ys = band(m, s);
           traces.push({ type: 'scatter', mode: 'lines', ...stepLine(xs, ys, breaks), line: { color: c.zone, width: 1, dash: 'dot', shape: 'hv' }, hoverinfo: 'skip', ...on });
-          inRange.push(...ys);
+          for (const v of ys) inRange.push(v);
         }
       }
       if (o.limits && pn.key !== 'run') {
@@ -294,18 +294,18 @@
           const ys = pn[key].map(num);
           if (!ys.some((v) => v != null)) continue;
           traces.push({ type: 'scatter', mode: 'lines', ...stepLine(xs, ys, breaks), line: { color: c.limit, width: 1.4, shape: 'hv' }, hoverinfo: 'skip', ...on });
-          inRange.push(...ys);
+          for (const v of ys) inRange.push(v);
         }
       }
       if (o.center) {
         const ys = pn.cl.map(num);
         traces.push({ type: 'scatter', mode: 'lines', ...stepLine(xs, ys, breaks), line: { color: c.center, width: 1.4, shape: 'hv' }, hoverinfo: 'skip', ...on });
-        inRange.push(...ys);
+        for (const v of ys) inRange.push(v);
       }
       if (pn.data) {
         const ys = pn.data.map(num);
         traces.push({ type: 'scatter', mode: 'markers', x: xs, y: ys, marker: { size: 5, symbol: 'circle-open', color: c.muted }, hovertemplate: 'mean %{y}<extra></extra>', ...on });
-        inRange.push(...ys);
+        for (const v of ys) inRange.push(v);
       }
       const flagged = (pn.tests || []).map((t) => !!(t && t.length));
       // the CUSUM's two sums alarm on their own
@@ -838,7 +838,7 @@
       const b = boxStats(y);
       const name = esc(cols[i].name);
       boxes++;
-      all.push(...y);
+      for (const v of y) all.push(v);
       // the box as JMP draws it, and the values beyond the whiskers as points (linked to their rows)
       traces.push({ type: 'box', x: [name], q1: [b.q1], median: [b.med], q3: [b.q3], lowerfence: [b.lf], upperfence: [b.uf], name, boxpoints: false,
         line: { color: c.text, width: 1 }, fillcolor: 'rgba(143,169,194,0.28)', hoverinfo: 'y' });
@@ -1268,7 +1268,7 @@
         for (const key of ['ucl', 'lcl']) {
           const ysl = res.s_limits.map((s) => (s ? s[key] : null));
           traces.push({ type: 'scatter', mode: 'lines', ...stepLine(pos, ysl, new Set()), line: { color: c.limit, width: 1.2, shape: 'hv' }, hoverinfo: 'skip', xaxis: 'x', yaxis: 'y2' });
-          lines.push(...ysl);
+          for (const v of ysl) lines.push(v);
         }
       }
       layout.yaxis2 = { domain: [0, 0.32], anchor: 'x', title: { text: 'Std Dev' }, range: [0, span(sds.concat(lines), 0.12)[1]], zeroline: false };

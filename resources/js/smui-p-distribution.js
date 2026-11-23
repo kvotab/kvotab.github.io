@@ -447,7 +447,8 @@
     // ---- the optional outlines, in JMP's order
     if (o('qq', false)) {
       const qq = await ctx.call('distribution.qq', { column: col.name, prob_axis: !!o('qqProb', false) });
-      const zmin = Math.min(...qq.z), zmax = Math.max(...qq.z);
+      let zmin = Infinity, zmax = -Infinity;   // a loop: a value a row, spread into one call, runs past the stack at some 125,000 rows
+      for (const z of qq.z) { if (z < zmin) zmin = z; if (z > zmax) zmax = z; }
       const ob = ctx.outline('Normal Quantile Plot', { parent: outline, key: 'qq', menu: () => [ctx.check('Show Probability Axis', 'qqProb', sc, false)] });
       const traces2 = [
         { type: 'scatter', mode: 'markers', x: qq.z, y: qq.x, rows: qq.rows, name: col.name },

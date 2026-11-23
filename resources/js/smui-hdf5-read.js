@@ -256,9 +256,11 @@
       for (let i = 0; i + 1 < items.length; i += 2) d.set(items[i], items[i + 1]);
     };
     const appendTo = (l, items) => {
-      if (Array.isArray(l) && !Object.isFrozen(l)) l.push(...items);
-      else if (l && l.$call) (l.$items || (l.$items = [])).push(...items);
+      let to;
+      if (Array.isArray(l) && !Object.isFrozen(l)) to = l;
+      else if (l && l.$call) to = l.$items || (l.$items = []);
       else throw new Error('pickle: APPEND to a non-list');
+      for (const it of items) to.push(it);   // a loop: an APPENDS may hold more than the some 125,000 values a call takes spread
     };
     for (;;) {
       if (++ops > maxOps) throw new Error('pickle: too long');
@@ -313,7 +315,7 @@
         case 0x73: { const v = pop(), k = pop(); setItems(top(), [k, v]); break; }  // SETITEM s
         case 0x75: { const items = popMark(); setItems(top(), items); break; }      // SETITEMS u
         case 0x8f: stack.push([]); break;                                           // EMPTY_SET
-        case 0x90: { const items = popMark(); const s = top(); if (!Array.isArray(s)) throw new Error('pickle: ADDITEMS to a non-set'); s.push(...items); break; }   // ADDITEMS
+        case 0x90: { const items = popMark(); const s = top(); if (!Array.isArray(s)) throw new Error('pickle: ADDITEMS to a non-set'); for (const it of items) s.push(it); break; }   // ADDITEMS
         case 0x91: { const items = popMark(); stack.push(items); break; }           // FROZENSET
         case 0x63: { const mod = line(), name = line(); stack.push({ $global: `${mod}.${name}` }); break; }     // GLOBAL c
         case 0x93: { const name = pop(), mod = pop(); stack.push({ $global: `${mod}.${name}` }); break; }      // STACK_GLOBAL
@@ -1071,7 +1073,9 @@
     // the deepest group holding them all
     const chains = items.map((n) => { const c = []; for (let p = n.parent; p >= 0; p = nodes[p].parent) c.unshift(p); return c; });
     let common = 0;
-    for (let i = 0; i < Math.min(...chains.map((c) => c.length)); i++) { if (chains.every((c) => c[i] === chains[0][i])) common = chains[0][i]; else break; }
+    let depth = Infinity;   // by a loop: a table's datasets may be more than the some 125,000 a call takes spread
+    for (const c of chains) if (c.length < depth) depth = c.length;
+    for (let i = 0; i < depth; i++) { if (chains.every((c) => c[i] === chains[0][i])) common = chains[0][i]; else break; }
     return common ? nodes[common].name : `${t.rows} rows`;
   }
 

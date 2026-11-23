@@ -205,7 +205,7 @@
       for (const c of n.children || []) {
         const k = nodes[c];
         if (tickable(k)) own.push(k.id);
-        if (k.kind === 'group' && !k.form) own.push(...collect(k));
+        if (k.kind === 'group' && !k.form) for (const id of collect(k)) own.push(id);
       }
       under.set(n.id, own);
       return own;

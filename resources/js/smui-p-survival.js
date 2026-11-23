@@ -30,6 +30,13 @@
   const num = (v) => (v == null ? null : v === 'Infinity' ? Infinity : v === '-Infinity' ? -Infinity : v);
   const nums = (a) => (a || []).map(num);
   const finite = (v) => typeof v === 'number' && Number.isFinite(v);
+  /* The least and the greatest of values, as Math.min and Math.max give them, by a loop: values
+     spread into one call run past the stack at some 125,000. */
+  function extent(a) {
+    let lo = Infinity, hi = -Infinity;
+    for (const v of a) { const x = +v; if (x !== x) return [NaN, NaN]; if (x < lo) lo = x; if (x > hi) hi = x; }
+    return [lo, hi];
+  }
 
   function rgba(hex, a) {
     const h = String(hex).replace('#', '');
@@ -464,13 +471,13 @@
       if (!finite(q) || (S.log && !(tv > 0))) return;
       px.push(tv); py.push(q); prow.push(pts.rows[k]);
     });
-    let ylo = Math.min(...py), yhi = Math.max(...py);
+    let [ylo, yhi] = extent(py);
     if (!Number.isFinite(ylo)) { ylo = S.q(0.05); yhi = S.q(0.95); }
     const pad = 0.15 * (yhi - ylo || 1) + 0.15;
     ylo = Math.max(S.q(0.0001), ylo - pad); yhi = Math.min(S.q(0.9999), yhi + pad);
     if (scale === 'nonparametric') { ylo = -0.02; yhi = 1.02; }
     const tp = px.length ? px : t.filter((v) => (S.log ? v > 0 : true));
-    let xlo = Math.min(...tp), xhi = Math.max(...tp);
+    let [xlo, xhi] = extent(tp);
     if (!Number.isFinite(xlo) || !Number.isFinite(xhi) || (S.log && !(xlo > 0))) { xlo = 1; xhi = 10; }
     const xr = S.log ? [Math.log10(xlo / 1.6), Math.log10(xhi * 1.6)] : [xlo - 0.12 * (xhi - xlo || 1), xhi + 0.12 * (xhi - xlo || 1)];
     const grid = res.grids ? nums(res.grids[S.log ? 'log' : 'lin'] || res.grids.lin) : [];
@@ -512,7 +519,7 @@
   function cdfPlot(ctx, res, f, color) {
     const N = res.nonparametric;
     const t = nums(N.time), F = nums(N.fail);
-    const tmax = Math.max(...t), tmin = Math.min(...t);
+    const [tmin, tmax] = extent(t);
     const lo = f.logt ? 0 : tmin - 0.1 * (tmax - tmin || 1), hi = tmax + 0.1 * (tmax - tmin || 1);
     const grid = nums(res.grids.lin), cv = f.curves.lin;
     const X = [], Y = [], L = [], U = [];

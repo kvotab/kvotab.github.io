@@ -122,7 +122,8 @@
   function bubbleOutline(ctx, res, rowsOf) {
     const ob = ctx.outline('Rule Bubble Plot', { key: 'bubbles', info: 'p:assoc:bubbles' });
     const R = res.rules;
-    const smax = Math.max(...R.map((r) => r.support));
+    let smax = -Infinity;   // a loop: the rules may be more than the some 125,000 values a call takes spread
+    for (const r of R) if (r.support > smax) smax = r.support;
     const d = R.map((r) => Math.max(5, 28 * Math.sqrt(r.support / smax)));
     const c = SM.util.themeColors();
     const trace = {

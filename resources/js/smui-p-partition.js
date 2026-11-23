@@ -107,7 +107,7 @@
       S.leafAll[a.leaf[i]].push(a.rows[i]);
       if (a.set[i] === 0) { S.leafTrain[a.leaf[i]].push(a.rows[i]); S.leafIdx[a.leaf[i]].push(i); }
     }
-    S.rowsOf = (nd, train = false) => { const out = []; for (let l = nd.lo; l <= nd.hi; l++) out.push(...(train ? S.leafTrain[l] : S.leafAll[l])); return out; };
+    S.rowsOf = (nd, train = false) => { const out = []; for (let l = nd.lo; l <= nd.hi; l++) for (const r of (train ? S.leafTrain[l] : S.leafAll[l])) out.push(r); return out; };
     // the node Candidates shows: the one picked, else the leaf the next split takes
     const picked = ctx.opt('candNode', null, scopeOf(ctx));
     S.cand = picked != null && S.by.has(picked) ? picked : nextLeaf(res);

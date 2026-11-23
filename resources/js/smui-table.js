@@ -540,7 +540,10 @@
       if (!count) return;
       at = Math.max(0, Math.min(at, this.nrows));
       for (const c of this.columns) {
-        c.values.splice(at, 0, ...new Array(count).fill(c.isNumeric ? NaN : null));
+        // the new cells by a loop, in the same array: spread into splice, some 125,000 run past the stack
+        const v = c.values, tail = v.splice(at), fill = c.isNumeric ? NaN : null;
+        for (let k = 0; k < count; k++) v.push(fill);
+        for (const x of tail) v.push(x);
         if (c.coded) c.coded = [...c.coded.slice(0, at), ...new Array(count), ...c.coded.slice(at)];
       }
       const n = this.nrows + count;

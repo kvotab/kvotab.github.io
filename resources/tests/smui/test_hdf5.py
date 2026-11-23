@@ -889,6 +889,13 @@ def pickles():
     check('pickle: an opcode it does not take (an extension code)', unp(b'\x80\x02\x82\x01.').get('error'), 'pickle: unsupported opcode 0x82')
     check('pickle: a persistent id is refused', unp(b'\x80\x02Q.').get('error'), 'pickle: unsupported opcode 0x51')
     check('pickle: an unknown memo', unp(b'\x80\x02h\x05.').get('error'), 'pickle: unknown memo')
+    # One APPENDS (or ADDITEMS) may hold any number of items: Python's own pickler
+    # batches them by the thousand, another writer need not. Spread into one
+    # push, some 125,000 ran past the stack.
+    r = unp(b'\x80\x02](' + b'K\x07' * 200000 + b'e.')
+    check('pickle: one APPENDS of 200,000 items', r.get('error') or (len(r['value']), r['value'][:2], r['value'][-1]), (200000, [7, 7], 7))
+    r = unp(b'\x80\x04\x8f(' + b''.join(b'J' + k.to_bytes(4, 'little') for k in range(200000)) + b'\x90.')
+    check('pickle: one ADDITEMS of 200,000 items', r.get('error') or (len(r['value']), sorted(r['value'])[-1]), (200000, 199999))
 
 
 def main():

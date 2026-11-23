@@ -1358,7 +1358,8 @@
     const n = d.rows.length, p = res.rank;
     const h2 = (2 * p) / n, h3 = (3 * p) / n;
     const cd = d.cooks.map((v) => (v != null && Number.isFinite(v) ? v : 0));
-    const cmax = Math.max(1e-12, ...cd);
+    let cmax = 1e-12;   // a loop: a value a row, spread into one call, runs past the stack at some 125,000 rows
+    for (const v of cd) if (v > cmax) cmax = v;
     const lab = ctx.table.labelColumn();
     const hover = d.rows.map((r, k) => `row ${r + 1}${lab && lab.values[r] != null ? `: ${SM.report.plotlyText(lab.values[r])}` : ''}<br>Cook's D ${fmt(cd[k], { sig: 4 })}`);
     const flagged = d.rows.filter((r, k) => Math.abs(d.externally[k] ?? 0) > 2 || d.hat[k] > h2);

@@ -1343,7 +1343,8 @@
     });
     const rows = interesting ? rowsAll.filter((x) => x.mis || (x.pp > 0.05 && x.pp < 0.95)) : rowsAll;
     const ob = ctx.outline('Discriminant Scores', { key: 'scores', menu: () => [ctx.check('Show Interesting Rows Only', 'interesting', null, false), { label: 'Select Misclassified Rows', action: () => ctx.table.select(res.rows.filter((_, k) => res.misclassified[k])) }] });
-    const mx = Math.max(1, ...res.neg_log_prob.filter(Number.isFinite));
+    let mx = 1;   // a loop: a value a row, spread into one call, runs past the stack at some 125,000 rows
+    for (const v of res.neg_log_prob) if (Number.isFinite(v) && v > mx) mx = v;
     const sc = res.sets ? 1 : 0;   // the Set column shifts the bar's cell
     const tbl = ctx.rt({
       columns: [{ key: 'row', label: 'Row', fmt: 'int' }, ...(res.sets ? [{ key: 'set', label: 'Set', fmt: 'text' }] : []), { key: 'actual', label: 'Actual', fmt: 'text' }, { key: 'sq', label: 'SqDist(Actual)', digits: 4 }, { key: 'pa', label: 'Prob(Actual)', digits: 4 },

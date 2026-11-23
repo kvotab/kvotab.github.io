@@ -847,7 +847,7 @@
     const sc = S.col.id;
     const o = (k, d) => ctx.opt(k, d, sc);
     let r = null;
-    const members = () => { const m = Array.from({ length: r.k }, () => []); r.likely.forEach((c, d) => m[c - 1].push(...r.doc_rows[d])); return m.map((x) => x.sort((a, b) => a - b)); };
+    const members = () => { const m = Array.from({ length: r.k }, () => []); r.likely.forEach((c, d) => { for (const row of r.doc_rows[d]) m[c - 1].push(row); }); return m.map((x) => x.sort((a, b) => a - b)); };
     const ob = ctx.outline(`Latent Class Analysis for ${spec.k} Clusters`, { parent, key: K(S, 'lca'), info: 'p:text:lca', menu: () => [
       { label: 'Specifications…', action: () => lcaDialog(ctx, S.col) },
       { label: 'Display Options', submenu: () => [
@@ -1276,7 +1276,7 @@
     const sm = r.summary;
     const cls = (v) => (v >= 0.05 ? 0 : v <= -0.05 ? 2 : 1);
     const byClass = [[], [], []];
-    D.compound.forEach((v, d) => byClass[cls(v)].push(...D.rows[d]));
+    D.compound.forEach((v, d) => { for (const row of D.rows[d]) byClass[cls(v)].push(row); });
     ob.add(wide(ctx.rt({ columns: [{ key: 'k', label: 'Documents', fmt: 'text' }, { key: 'n', label: 'Count', fmt: 'int' }, { key: 'p', label: 'Portion', digits: 4 }, { key: 'm', label: 'Mean Compound', digits: 4 }],
       rows: [{ k: 'Positive (compound ≥ 0.05)', n: sm.positive, p: sm.positive / r.n_docs, m: sm.mean_pos, c: 0 }, { k: 'Neutral', n: sm.neutral, p: sm.neutral / r.n_docs, m: null, c: 1 },
         { k: 'Negative (compound ≤ −0.05)', n: sm.negative, p: sm.negative / r.n_docs, m: sm.mean_neg, c: 2 }, { k: 'All', n: r.n_docs, p: 1, m: sm.mean, c: 3 }] },
@@ -1284,7 +1284,7 @@
     if (!ctx.headless) {
       const edges = Array.from({ length: 21 }, (_, i) => -1 + 0.1 * i);
       const bins = Array.from({ length: 20 }, () => []), counts = Array.from({ length: 20 }, () => 0);
-      D.bin.forEach((b, d) => { bins[b].push(...D.rows[d]); counts[b]++; });   // the engine's bins, as the code's np.histogram
+      D.bin.forEach((b, d) => { for (const row of D.rows[d]) bins[b].push(row); counts[b]++; });   // the engine's bins, as the code's np.histogram
       ob.add(withCode(ctx.plot([{ type: 'bar', x: edges.slice(0, 20).map((e) => e + 0.05), y: counts, width: 0.094, rows: bins, marker: { color: SM.report.BAR },
         hovertemplate: '%{x:.2f}: %{y} documents<extra></extra>' }], { xaxis: { title: { text: 'Compound score' }, range: [-1, 1] }, yaxis: { title: { text: 'Documents' } }, margin: { l: 50, r: 10, t: 8, b: 44 } },
       { width: 440, height: 280, title: 'Sentiment of the documents' }), ctx.code((r.plot_code || {}).hist)));

@@ -623,7 +623,9 @@
         t.setCell(r0 + i, c.id, v, { silent: true });
       }
       t._changed('data', { pasted: true });      // (the data version too: results computed before are stale)
-      SM.ui.toast(`Pasted ${lines.length} × ${Math.max(...lines.map((l) => l.length))} cells at row ${r0 + 1}`);
+      let wide = 0;
+      for (const l of lines) if (l.length > wide) wide = l.length;
+      SM.ui.toast(`Pasted ${lines.length} × ${wide} cells at row ${r0 + 1}`);
     }
   }
 

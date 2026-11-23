@@ -3985,7 +3985,7 @@
           const pl = gd._plot;
           if (!ev || !ev.points || (pl && pl.quiet)) return;
           const rs = [];
-          for (const pt of ev.points) if (pt.curveNumber === 0) rs.push(...(itemRows[pt.pointNumber] || []));
+          for (const pt of ev.points) if (pt.curveNumber === 0) for (const r of itemRows[pt.pointNumber] || []) rs.push(r);
           const go = () => t.select(rs, (ev.event && ev.event.shiftKey) ? 'add' : 'replace');
           if (pl) pl.own(go); else go();
         });
