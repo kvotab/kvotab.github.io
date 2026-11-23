@@ -521,6 +521,43 @@ class HDF5Read(unittest.TestCase):
             read_hdf5(bytes(range(1, 10)))
         self.assertIn('not an HDF5 file', str(caught.exception))
 
+    def test_what_damage_once_took_the_readers_apart_is_said_alike(self):
+        # Found by damaging every field each reader reads, and every byte, of
+        # the files here: a shuffle's element size of billions held the
+        # application's reader for seconds on every chunk; sizes of an address
+        # or a length no superblock has made counts of Infinity there and
+        # Python's errors here; an integer read 255 bytes wide was Infinity
+        # there and "int too large to convert to float" here.
+        samples = (FIXTURES / 'chunked-samples.h5').read_bytes()
+        symbols = (FIXTURES / 'v1-symbol-table.h5').read_bytes()
+        writer = hdf5.write_hdf5(build(TREES['a result file']))
+        # The two shuffles' element sizes, the superblocks' versions, and the
+        # width of the `lookup_table` attribute's integer.
+        self.assertEqual((samples[4344], samples[11256], symbols[8], writer[8], symbols[16668]), (8, 4, 0, 2, 1))
+
+        def put(data: bytes, at: int, value: int, width: int = 1) -> bytes:
+            b = bytearray(data)
+            b[at:at + width] = value.to_bytes(width, 'little')
+            return bytes(b)
+        cases = {
+            'a shuffle of 2^32 - 1 bytes': put(samples, 4344, 2 ** 32 - 1, 4),
+            'a shuffle of 2^31 bytes': put(samples, 11256, 2 ** 31, 4),
+            'lengths of 127 bytes': put(writer, 10, 127),
+            'lengths of 255 bytes': put(writer, 10, 255),
+            'addresses of 3 bytes': put(writer, 9, 3),
+            'addresses of 16 bytes, superblock version 0': put(symbols, 13, 16),
+            'an attribute\'s integer 255 bytes wide': put(symbols, 16668, 255),
+        }
+        answers = js(*[{'task': 'h5read', 'data': b64(data)} for data in cases.values()])
+        for (name, data), got in zip(cases.items(), answers):
+            with self.subTest(case=name):
+                same(self, py_read(data), js_outcome(got), name)
+        self.assertEqual(py_read(cases['lengths of 127 bytes']),
+                         {'error': 'This file gives its lengths in 127 bytes, and this reader reads 2, 4 or 8.'})
+        aqu = next(d for d in py_read(cases["an attribute's integer 255 bytes wide"])['datasets']
+                   if d['path'] == '/demo/lobj/area/aqu')
+        self.assertEqual(aqu['attrs']['lookup_table'], math.inf)
+
     @needs_h5py
     def test_files_h5py_writes_read_alike(self):
         files = h5py_files()
@@ -640,6 +677,28 @@ def h5py_files() -> Dict[str, bytes]:
 #: The h5py files the application reads something out of, and how many datasets.
 H5PY_READABLE = {'every kind (earliest)': 26, 'every kind (latest)': 26, 'chunked (earliest)': 8,
                  'many links (earliest)': 150, 'compact layout': 2, 'tracked order': 3}
+
+
+class HDF5ReadMemory(unittest.TestCase):
+    """Numbers are read into an array of their own type and widened, never
+    through a tuple of Python floats -- which held 3.6 GB to read a dataset of
+    535 MB. Counted in bytes allocated, as tracemalloc counts them."""
+
+    def test_a_dataset_is_read_in_about_its_own_size(self):
+        import tracemalloc
+        n = 1_000_000
+        for dt_, values in (('F64', [i * 0.5 for i in range(n)]), ('I32', list(range(-n // 2, n // 2)))):
+            with self.subTest(type=dt_):
+                data = hdf5.write_hdf5(build({'puts': [[['x'], ds(values, dt_)]]}))
+                tracemalloc.start()
+                try:
+                    got = read_hdf5(data)
+                    peak = tracemalloc.get_traced_memory()[1]
+                finally:
+                    tracemalloc.stop()
+                self.assertEqual(list(got['datasets'][0]['values'][:3]), [float(v) for v in values[:3]])
+                # The doubles themselves are 8 MB; a tuple of floats was 32 MB more.
+                self.assertLess(peak, 3 * 8 * n, f'{peak / 1e6:.0f} MB to read {8 * n / 1e6:.0f} MB')
 
 
 @needs_h5py

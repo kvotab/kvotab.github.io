@@ -41320,6 +41320,47 @@ test('values that run past the end of an HDF5 file are said to, before an array 
 	}
 });
 
+test('a shuffle wider than its chunk is undone at once, and sizes no superblock has are said', async () => {
+	const { readHDF5, unshuffle } = await import('../src/io/hdf5read.js');
+	const { writeHDF5, dataset, group, put } = await import('../src/io/hdf5.js');
+	const { readFileSync } = await import('node:fs');
+	// The shuffle filter writes every element's first byte, then every
+	// second byte, and so on: three elements of two bytes, put back.
+	assert(Array.from(unshuffle(Uint8Array.from([1, 3, 5, 2, 4, 6]), 2)).join() === '1,2,3,4,5,6');
+	// An element size read out of a damaged pipeline -- two billion bytes,
+	// where a chunk is a few thousand. Not one whole element is there, so all
+	// of it is the tail, as it lies: the same bytes, where they were walked
+	// as two billion empty rows first, seconds on every chunk.
+	const chunk = Uint8Array.from({ length: 64 }, (_, i) => i);
+	for (const size of [65, 2 ** 31, 2 ** 32 - 1]) assert(unshuffle(chunk, size) === chunk, `walked at ${size}`);
+	// ./fixtures/chunked-samples.h5 has two shuffles, of 8 and of 4 bytes.
+	const samples = new Uint8Array(readFileSync(new URL('fixtures/chunked-samples.h5', import.meta.url)));
+	assert(samples[4344] === 8 && samples[11256] === 4, 'the fixture\'s shuffles are not where they were');
+	const wide = samples.slice();
+	wide.set([0xff, 0xff, 0xff, 0xff], 4344);
+	const read = await readHDF5(wide);
+	assert(read.datasets.length === (await readHDF5(samples)).datasets.length, JSON.stringify(read.problems));
+
+	// The superblock gives an address and a length in 2, 4 or 8 bytes; any
+	// other is a damaged file, which made counts of Infinity here where the
+	// Python package's exact integers said other things.
+	const root = group();
+	put(root, ['x'], dataset(Float64Array.from([1, 2, 3])));
+	const good = writeHDF5(root);
+	const symbols = new Uint8Array(readFileSync(new URL('fixtures/v1-symbol-table.h5', import.meta.url)));
+	assert(good[8] >= 2 && symbols[8] === 0, 'the superblocks are not the versions looked for');
+	const refused = async (bytes, at, value) => {
+		const b = bytes.slice();
+		b[at] = value;
+		try { await readHDF5(b); return 'it read'; } catch (e) { return e.message; }
+	};
+	for (const [bytes, at, value, what] of [[good, 10, 127, 'lengths'], [good, 10, 255, 'lengths'], [good, 9, 3, 'addresses'],
+		[good, 9, 0, 'addresses'], [symbols, 13, 16, 'addresses'], [symbols, 14, 1, 'lengths']]) {
+		const said = await refused(bytes, at, value);
+		assert(said === `This file gives its ${what} in ${value} bytes, and this reader reads 2, 4 or 8.`, said);
+	}
+});
+
 test('a point of a lookup table can carry its own distribution', async () => {
 	const { runProbabilistic, samplingPlan } = await import('../src/sim/probabilistic.js');
 	const { run } = await import('../src/sim/runner.js');

@@ -140,6 +140,7 @@ function superblock(bytes) {
 	if (version <= 1) {
 		const offsetSize = probe.u8At(base + 13);
 		const lengthSize = probe.u8At(base + 14);
+		sizesOf(offsetSize, lengthSize);
 		const r = new Reader(bytes, offsetSize, lengthSize);
 		// Base address, free-space, end-of-file, driver, then the root entry.
 		let p = base + 24 + (version === 1 ? 4 : 0);
@@ -150,9 +151,24 @@ function superblock(bytes) {
 	}
 	const offsetSize = probe.u8At(base + 9);
 	const lengthSize = probe.u8At(base + 10);
+	sizesOf(offsetSize, lengthSize);
 	const r = new Reader(bytes, offsetSize, lengthSize);
 	const root = r.offset(base + 12 + offsetSize * 3);
 	return { r, root };
+}
+
+/**
+ * The superblock's sizes of an address and of a length: 2, 4 or 8 bytes, as
+ * files are written. Any other is a damaged file, and read as one it made
+ * numbers past what a double holds -- counts of Infinity -- where the Python
+ * package, reading exact integers, said other things.
+ */
+function sizesOf(offsetSize, lengthSize) {
+	for (const [what, size] of [['addresses', offsetSize], ['lengths', lengthSize]]) {
+		if (size !== 2 && size !== 4 && size !== 8) {
+			throw new HDF5ReadError(`This file gives its ${what} in ${size} bytes, and this reader reads 2, 4 or 8.`);
+		}
+	}
 }
 
 /* ==========================================================================
@@ -515,9 +531,13 @@ function unfilter(bytes, filters, mask) {
  * and so on -- which puts like next to like and lets the compressor do better.
  * Putting them back is the same walk the other way round.
  */
-function unshuffle(bytes, size) {
+export function unshuffle(bytes, size) {
 	if (size <= 1) return bytes;
 	const n = Math.floor(bytes.length / size);
+	// Not one whole element: all of it is the tail, as it lies. Walked as
+	// `size` empty rows, a size read out of a damaged pipeline -- two billion
+	// -- held the page for seconds on every chunk.
+	if (n === 0) return bytes;
 	const out = new Uint8Array(bytes.length);
 	let at = 0;
 	for (let b = 0; b < size; b++) {

@@ -41,6 +41,7 @@ from __future__ import annotations
 import math
 import os
 import struct
+import sys
 import zlib
 from array import array
 from decimal import ROUND_HALF_UP, Decimal
@@ -149,10 +150,16 @@ class _Reader:
             if hi > 0x1FFFFF:
                 raise HDF5ReadError('This file addresses more than 8 EB.')
             return hi * 4294967296 + lo
-        v = 0
+        # Any other width, in doubles a byte at a time as the application
+        # adds them up: past 2^53 a step rounds, and past what a double holds
+        # it is Infinity -- where exact integers were converted at the end, and
+        # a damaged width of 255 bytes said "int too large to convert to float".
+        # Up to 2^53 it is the integer it reads as, for the callers that count
+        # with it.
+        v = 0.0
         for i in range(size - 1, -1, -1):
             v = v * 256 + self.u8_at(p + i)
-        return v
+        return int(v) if v <= 2 ** 53 else v  # type: ignore[return-value]
 
     def offset(self, p: int) -> Optional[int]:
         return self.sized(p, self.offset_size)
@@ -204,6 +211,7 @@ def _superblock(data: bytes) -> Tuple[_Reader, Optional[int]]:
     if version <= 1:
         offset_size = probe.u8_at(base + 13)
         length_size = probe.u8_at(base + 14)
+        _sizes_of(offset_size, length_size)
         r = _Reader(data, offset_size, length_size)
         # Base address, free-space, end-of-file, driver, then the root entry.
         p = base + 24 + (4 if version == 1 else 0)
@@ -212,8 +220,19 @@ def _superblock(data: bytes) -> Tuple[_Reader, Optional[int]]:
         return r, r.offset(p + offset_size)
     offset_size = probe.u8_at(base + 9)
     length_size = probe.u8_at(base + 10)
+    _sizes_of(offset_size, length_size)
     r = _Reader(data, offset_size, length_size)
     return r, r.offset(base + 12 + offset_size * 3)
+
+
+def _sizes_of(offset_size: int, length_size: int) -> None:
+    """The superblock's sizes of an address and of a length: 2, 4 or 8 bytes,
+    as files are written (``sizesOf``). Any other is a damaged file, which the
+    application read as doubles past what one holds and this as exact
+    integers, each saying something else."""
+    for what, size in (('addresses', offset_size), ('lengths', length_size)):
+        if size not in (2, 4, 8):
+            raise HDF5ReadError(f'This file gives its {what} in {size} bytes, and this reader reads 2, 4 or 8.')
 
 
 # --- object headers -----------------------------------------------------------
@@ -586,9 +605,9 @@ def _unshuffle(data: bytes, size: int) -> bytes:
         return data
     n = len(data) // size
     if n == 0:
-        # Not one whole element: all of it is the tail, copied as it lies. (The
-        # JavaScript walks `size` empty rows first, which with a nonsense size
-        # read out of a damaged pipeline is billions of them.)
+        # Not one whole element: all of it is the tail, copied as it lies, as
+        # the application's has it -- not `size` empty rows, which with a size
+        # read out of a damaged pipeline is billions of them.
         return bytes(data)
     out = bytearray(len(data))
     for b in range(size):
@@ -688,6 +707,18 @@ def _place(out: bytearray, data: bytes, dims: List[Optional[int]], chunk: List[i
         i += 1
 
 
+def _numbers(r: _Reader, p: int, n: int, code: str, big: bool) -> array:
+    """``n`` numbers of one ``array`` typecode from ``p``, as doubles: read
+    into an array of their own type, swapped where the file's order is not
+    this machine's, and widened -- never through a tuple of Python floats,
+    which for a dataset of 67 million values held 3.6 GB to read 535 MB."""
+    raw = array(code)
+    raw.frombytes(memoryview(r.u8)[p:p + n * raw.itemsize])
+    if big != (sys.byteorder == 'big'):
+        raw.byteswap()
+    return raw if code == 'd' else array('d', raw)
+
+
 def _falsy_count(n: Any) -> bool:
     """``!n`` for a count that may be NaN."""
     return n is None or n != n or n == 0
@@ -699,35 +730,34 @@ def _read_values(r: _Reader, typ: Dict[str, Any], space: Dict[str, Any],
     count = space['count']
     if _falsy_count(count) or where.get('address') is None:
         return []
-    n = int(count)
     p = where['address']
     cls = typ['cls']
     # The values lie inside the file, or the dataset is damaged: asked before
     # anything is read, as the application asks it before it makes an array
-    # for them, so that a damaged count is reported in the same words. Strings
-    # too: one of fixed length is cut off at the end of the file, not refused,
-    # and a variable-length one's record is a pointer of `size` bytes.
+    # for them, so that a damaged count is reported in the same words -- with
+    # the count as the double it is, which may be Infinity. Strings too: one
+    # of fixed length is cut off at the end of the file, not refused, and a
+    # variable-length one's record is a pointer of `size` bytes.
     if cls in ('float', 'int', 'string', 'vlenstr'):
         width = (4 if typ['size'] == 4 else 8) if cls == 'float' else typ['size']
-        if p + n * max(1, width) > r.n:
+        if p + count * max(1, width) > r.n:
             raise HDF5ReadError(f'its {js_string(count)} values run past the end of the file')
+    n = int(count)
     if cls in ('string', 'vlenstr') and n > MAX_ARRAY_LENGTH:
         raise _OutOfBounds('Invalid array length')
     if cls == 'float':
         size = 4 if typ['size'] == 4 else 8
-        order = '<' if typ['little'] else '>'
         r._check(p, n * size)
-        return array('d', struct.unpack_from(f"{order}{n}{'f' if size == 4 else 'd'}", r.u8, p))
+        return _numbers(r, p, n, 'f' if size == 4 else 'd', not typ['little'])
     if cls == 'int':
         size = typ['size']
         signed = typ['signed']
         if size in (1, 2, 4):
             # An unsigned 2- or 4-byte integer is read little-endian whatever
             # the type says, as the JavaScript reads it.
-            order = '<' if typ['little'] or not signed else '>'
             code = {1: 'b', 2: 'h', 4: 'i'}[size]
             r._check(p, n * size)
-            return array('d', struct.unpack_from(f'{order}{n}{code if signed else code.upper()}', r.u8, p))
+            return _numbers(r, p, n, code if signed else code.upper(), signed and not typ['little'])
         # One at a time, as the JavaScript reads them: an all-ones value is 0,
         # and one past 2^53 is refused with the reason it gives.
         values = []
