@@ -90,7 +90,10 @@
     // (a header on one line: a quoted "a\nb" is a b, SM.table.cleanName)
     const header = rows[0].map((h, i) => (SM.table.cleanName(h) || `Column ${i + 1}`));
     const body = rows.slice(1);
-    const ncol = Math.max(header.length, ...body.map((r) => r.length));
+    // The widest row, counted: spread into Math.max, a table of some 125,000
+    // rows or more ran past the stack and did not open.
+    let ncol = header.length;
+    for (const r of body) if (r.length > ncol) ncol = r.length;
     while (header.length < ncol) header.push(`Column ${header.length + 1}`);
     if (decimalComma == null) {
       // A decimal comma: numbers like 1,5 and none like 1.5 in the body.
@@ -175,17 +178,40 @@
       });
     }
     const out = [];
+    const notRead = [];
     for (const sh of sheets) {
       const s = await text(sh.path);
       if (!s) continue;
       const doc = xml(s);
       const grid = [];
       const isDate = [];
-      for (const row of Array.from(doc.getElementsByTagName('row'))) {
-        const r = +row.getAttribute('r') - 1;
+      // A row or cell may leave out where it is (its r), as the format
+      // allows and some programs do: it is then the next one. A place past
+      // Excel's own last row or column is no cell Excel makes, and a sheet
+      // with one is not read; nor one whose values reach out over more than
+      // XL_CELLS cells from A1. A cell with nothing in it, formatted or
+      // written empty, stretches nothing.
+      let problem = null;
+      let nextRow = 0;
+      let width = 0;
+      rows: for (const row of Array.from(doc.getElementsByTagName('row'))) {
+        const ra = row.getAttribute('r');
+        const r = ra == null ? nextRow : +ra - 1;
+        if (!(Number.isInteger(r) && r >= 0 && r < XL_ROWS)) {
+          problem = `a row, ${String(ra).slice(0, 20)}, lies past row ${XL_ROWS.toLocaleString('en-US')}, the last Excel has`;
+          break;
+        }
+        nextRow = r + 1;
+        let nextCol = 0;
         for (const c of Array.from(row.getElementsByTagName('c'))) {
           const ref = c.getAttribute('r');
-          const col = colIndex(ref.replace(/\d+$/, ''));
+          const col = ref == null ? nextCol : colIndex(ref.replace(/\d+$/, ''));
+          if (!(col >= 0 && col < XL_COLS)) {
+            problem = col < 0 ? `a cell's place, ${String(ref).slice(0, 20)}, is none Excel writes`
+              : `a cell, ${String(ref).slice(0, 20)}, lies past column XFD, the last Excel has`;
+            break rows;
+          }
+          nextCol = col + 1;
           const t = c.getAttribute('t');
           const v = c.getElementsByTagName('v')[0];
           let val = '';
@@ -196,11 +222,21 @@
             val = v.textContent;
             if (dateStyles.has(+(c.getAttribute('s') || 0)) && t !== 'str') { (isDate[col] = isDate[col] || []).push(r); }
           }
+          if (val == null || val === '') continue;
           (grid[r] = grid[r] || [])[col] = val;
+          if (col + 1 > width) width = col + 1;
         }
       }
+      if (!problem && grid.length * width > XL_CELLS) {
+        problem = `its values reach row ${grid.length.toLocaleString('en-US')} and column ${width.toLocaleString('en-US')}: `
+          + `${(grid.length * width).toLocaleString('en-US')} cells from A1, more than the ${XL_CELLS.toLocaleString('en-US')} this reads. `
+          + 'A value that far out is often a stray one: clear it in Excel and save the workbook again';
+      }
+      if (problem) { notRead.push(`sheet ${sh.name}: ${problem}`); continue; }
       out.push({ name: sh.name, grid, isDate });
     }
+    if (!out.some((s) => s.grid.length) && notRead.length) throw new Error(`no sheet could be read: ${notRead.join('; ')}`);
+    const notes = notRead.length ? `Not read: ${notRead.join('; ')}.` : '';
     return out.filter((s) => s.grid.length).map((s) => {
       const rows = Array.from({ length: s.grid.length }, (_, i) => Array.from(s.grid[i] || [], (v) => (v == null ? '' : v)));
       const cols = columnsFromRows(rows, { decimalComma: false });
@@ -211,13 +247,23 @@
         c.values = c.values.map((x) => (Number.isNaN(x) ? NaN : Math.round((x - 25569) * 86400000)));
         c.format = { kind: c.values.some((x) => !Number.isNaN(x) && x % 86400000 !== 0) ? 'datetime' : 'date' };
       });
-      return { sheet: s.name, table: new SM.Table({ name: `${name.replace(/\.xlsx?$/i, '')}${out.length > 1 ? ` — ${s.name}` : ''}`, columns: cols, source: `${name}, sheet ${s.name}` }) };
+      return { sheet: s.name, table: new SM.Table({ name: `${name.replace(/\.xlsx?$/i, '')}${out.length > 1 ? ` — ${s.name}` : ''}`, columns: cols, source: `${name}, sheet ${s.name}`, notes }) };
     });
   }
 
+  /* Excel's own last row and column (XFD), and the cells a sheet may be read
+     into, from A1 to its farthest value: as Kompartment's workbook reader
+     takes them. */
+  const XL_ROWS = 1048576;
+  const XL_COLS = 16384;
+  const XL_CELLS = 10000000;
+
+  /* A column's letters as its number from 0; -1 for what no column is called
+     (past XFD, which has three, any letters are past the last column). */
   function colIndex(letters) {
+    if (!/^[A-Za-z]{1,3}$/.test(letters)) return /^[A-Za-z]+$/.test(letters) ? XL_COLS : -1;
     let n = 0;
-    for (const ch of letters) n = n * 26 + (ch.charCodeAt(0) - 64);
+    for (const ch of letters.toUpperCase()) n = n * 26 + (ch.charCodeAt(0) - 64);
     return n - 1;
   }
 

@@ -313,14 +313,23 @@
       this.source = spec.source || '';
       this.scripts = normScripts(spec.scripts);    // JMP's table scripts (see normScripts)
       const cols = spec.columns || [];
-      const n = cols.length ? Math.max(...cols.map((c) => (c.values || []).length)) : (spec.nrows || 0);
+      // The longest column, counted: spread into Math.max, a table of some
+      // 125,000 columns ran past the stack.
+      let n = cols.length ? 0 : (spec.nrows || 0);
+      for (const c of cols) n = Math.max(n, (c.values || []).length);
       this._resizeStates(n);
       this.nrows = n;
       // names on one line (a name emptied by that is Column 3, by its place)
-      // and each once, as addColumn keeps them: a second x is x 2
+      // and each once, as addColumn keeps them: a second x is x 2. The names
+      // so far are kept as they come: gathered again for each column, a
+      // workbook of 16,384 columns took five seconds to become a table.
+      const names = new Set();
       cols.forEach((c, i) => {
         const col = new Column({ ...c, name: cleanName(c.name) || `Column ${i + 1}` });
-        col.name = this.uniqueName(col.name);
+        let name = col.name;
+        if (names.has(name)) for (let k = 2; ; k++) if (!names.has(`${name} ${k}`)) { name = `${name} ${k}`; break; }
+        col.name = name;
+        names.add(name);
         this._pushColumn(col);
       });
     }
