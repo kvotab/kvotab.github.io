@@ -168,6 +168,110 @@ check('script names: plain, spaced, Name("..."), "..."n; not a call is none',
       [jmp._script_name(t) for t in ('Source(Open("x"))', 'Distribution  of height( Distribution( Y( :height ) ) )', 'Name("a (b)")(Bivariate(Y(:y), X(:x)))', '"q\\!"x"n(Oneway(Y(:y)))', 'NoParens', 'x(', 'a(b')],
       [('Source', 'Open("x")'), ('Distribution of height', 'Distribution( Y( :height ) )'), ('a (b)', 'Bivariate(Y(:y), X(:x))'), ('q"x', 'Oneway(Y(:y))'), None, None, None])
 
+# ---- damaged tables: said in the reader's words, never held. Copies damaged
+# field by field once kept the reader looping for ever on a part's length of
+# -10, building billions of values for a damaged count of rows, unpacking a
+# column without limit, and giving zlib's, numpy's and Python's own errors
+# (KeyError: 3) as the reason. Each read here has ten seconds.
+import gzip  # noqa: E402
+import signal  # noqa: E402
+
+
+def first_unpack(b, fn):
+    """Where the reader first unpacks a number from the file in function fn."""
+    at = []
+    unpack = jmp._Bytes.unpack
+
+    def spy(self, fmt, n=1):
+        if not at and self.b is b and sys._getframe(1).f_code.co_name == fn:
+            at.append(self.p)
+        return unpack(self, fmt, n)
+    jmp._Bytes.unpack = spy
+    try:
+        jmp.read('x.jmp', b)
+    finally:
+        jmp._Bytes.unpack = unpack
+    return at[0]
+
+
+def put(b, at, packed):
+    return b[:at] + packed + b[at + len(packed):]
+
+
+def said(data):
+    """What the reader says of a file: 'read', its words, or that it held on."""
+    def late(*_):
+        raise TimeoutError
+    old = signal.signal(signal.SIGALRM, late)
+    signal.alarm(10)
+    try:
+        jmp.read('damaged.jmp', data)
+        return 'read'
+    except ValueError as e:
+        return str(e)
+    except TimeoutError:
+        return 'held over 10 seconds'
+    except Exception as e:                            # zlib.error, KeyError: not the reader's words
+        return f'{type(e).__name__}: {e}'
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old)
+
+
+def with_stream(b, unpacked):
+    """b, a table whose one column is its last, with that column's compressed
+    bytes replaced by unpacked packed again, its two lengths set to match."""
+    at = b.find(jmp.GZIP_START) + len(jmp.GZIP_START)
+    gzlen = struct.unpack_from('<Q', b, at)[0]
+    new = gzip.compress(unpacked, mtime=0)
+    return b[:at] + struct.pack('<QQ', len(new), len(unpacked)) + new + b[at + 16 + gzlen:]
+
+
+def stream_of(b):
+    at = b.find(jmp.GZIP_START) + len(jmp.GZIP_START)
+    gzlen = struct.unpack_from('<Q', b, at)[0]
+    return gzip.decompress(b[at + 16:at + 16 + gzlen])
+
+
+ex1 = open(os.path.join(LOCAL, 'example1.jmp'), 'rb').read()
+part = first_unpack(ex1, '_column_info')
+rows_at = first_unpack(ex1, '_metadata')
+check('a part\'s length of -10, which led back to it for ever, is said', said(put(ex1, part, struct.pack('<q', -10))),
+      'the file does not have the parts a JMP data table has')
+check('2,147,483,647 rows in a table of four: said before anything is made for them',
+      said(put(ex1, rows_at, struct.pack('<q', 2**31 - 1))),
+      'column ints: it holds fewer values than the table has rows: a damaged JMP data table')
+check('rows below zero are said, not a table of -2', said(put(ex1, rows_at, struct.pack('<q', -2))),
+      'the table says it has fewer than no rows or columns: a damaged JMP data table')
+
+one = open(os.path.join(LOCAL, 'singlecolumnsinglerow.jmp'), 'rb').read()
+zat = one.find(jmp.GZIP_START) + len(jmp.GZIP_START)
+crc = zat + 16 + struct.unpack_from('<Q', one, zat)[0] - 8      # the stream's check of what it unpacks to
+check('a compressed column whose bytes are damaged: said in the reader\'s words, not zlib\'s',
+      said(put(one, crc, bytes([one[crc] ^ 0xff]))),
+      'column Column 1: its values are compressed, and the compressed bytes are damaged')
+limit = jmp._MAX_UNPACKED
+jmp._MAX_UNPACKED = 1 << 20
+try:
+    check('a column that unpacks to more than the page reads is refused as it unpacks (here 2 MB over 1 MB)',
+          said(with_stream(one, b'\0' * (2 << 20))), 'column Column 1: its values unpack to more than the 1 GB this page reads')
+finally:
+    jmp._MAX_UNPACKED = limit
+u8 = open(os.path.join(LOCAL, 'compact_UInt8.jmp'), 'rb').read()
+pooled = stream_of(u8)
+check('a pooled column whose indices are 3 bytes wide: said, where Python said "KeyError: 3"',
+      said(with_stream(u8, pooled[:25] + b'\x03' + pooled[26:])), 'column A: an unknown width of pooled text indices (3)')
+
+info = jmp._metadata(jmp._Bytes(one))
+dt_at = info['offsets'][0] + 2 + struct.unpack_from('<h', one, info['offsets'][0])[0]
+unknown = put(one, dt_at, b'\x05')
+got = jmp.read('unknown.jmp', unknown)
+check('a column of a kind the reader does not know: its row all missing, and said',
+      (got['columns'][0]['values'], 'Columns of a kind the reader does not know' in got['note']), ([None], True))
+check('... and with no column the reader knows to hold the rows, 2^40 of them are not made',
+      said(put(unknown, first_unpack(one, '_metadata'), struct.pack('<q', 2**40))).startswith('the table says it has 1,099,511,627,776 rows, more than its file could hold'),
+      True)
+
 # ---- not a JMP table
 try:
     registry.dispatch_bytes('datasets.read_file', json.dumps({'name': 'x.jmp'}), b'not a jmp file at all')

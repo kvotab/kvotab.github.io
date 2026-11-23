@@ -66,7 +66,7 @@ class _Bytes:
         self.p = 0
 
     def read(self, n):
-        if n < 0 or self.p + n > len(self.b):
+        if n < 0 or self.p < 0 or self.p + n > len(self.b):
             raise ValueError('the file ends early: not a JMP data table, or a damaged one')
         out = self.b[self.p:self.p + n]
         self.p += n
@@ -78,6 +78,10 @@ class _Bytes:
         return vals if n > 1 else vals[0]
 
     def skip(self, n):
+        # Lengths read from the file are skipped too: a damaged one may point
+        # outside it, where the reading would go on in what is not the file.
+        if not 0 <= self.p + n <= len(self.b):
+            raise ValueError('the file ends early: not a JMP data table, or a damaged one')
         self.p += n
 
     def until(self, seq):
@@ -98,6 +102,8 @@ def _metadata(r):
     r.p -= 38
     nrows = r.unpack('q')
     ncols = r.unpack('i')
+    if nrows < 0 or ncols < 0:
+        raise ValueError('the table says it has fewer than no rows or columns: a damaged JMP data table')
     r.skip(2 * 5)
     charset = r.string(4).rstrip('\0')
     r.skip(2 * 3)
@@ -237,6 +243,10 @@ def _column_info(r, ncols):
         two = r.read(2)
         if two in (b'\xfc\xff', b'\xfd\xff', b'\xfe\xff', b'\xff\xff'):
             n = r.unpack('q')
+            # A part's length: one below zero went back to where it began,
+            # and round again for ever (-10 to this very mark).
+            if n < 0:
+                raise ValueError('the file does not have the parts a JMP data table has')
             r.skip(n)
         else:
             r.skip(-2)
@@ -245,6 +255,8 @@ def _column_info(r, ncols):
     if ncols2 != ncols:
         raise ValueError(f'the numbers of columns read from two places do not agree ({ncols}, {ncols2})')
     offsets = list(r.unpack('q', ncols)) if ncols > 1 else [r.unpack('q')]
+    if any(not 0 <= off < len(r.b) for off in offsets):
+        raise ValueError('the table puts a column outside its file: a damaged JMP data table')
     names = []
     for off in offsets:
         r.p = off
@@ -252,9 +264,18 @@ def _column_info(r, ncols):
     return names, offsets
 
 
-def _ints(a, width, n):
+def _short(name):
+    """A column that holds fewer values than the table has rows: the count
+    of rows, or the column, is damaged. Said before anything is made of
+    either: a damaged count asked for billions."""
+    return ValueError(f'column {name}: it holds fewer values than the table has rows: a damaged JMP data table')
+
+
+def _ints(a, width, n, name):
     dtype = {1: '<i1', 2: '<i2', 4: '<i4'}.get(width, '<f8')
     size = np.dtype(dtype).itemsize
+    if len(a) < size * n:
+        raise _short(name)
     raw = np.frombuffer(a[len(a) - size * n:], dtype=dtype, count=n)
     if dtype == '<f8':
         return raw.astype(float)
@@ -263,19 +284,44 @@ def _ints(a, width, n):
     return out
 
 
-def _texts(data, widths):
+def _texts(data, widths, name):
+    widths = [int(w) for w in widths]
+    if any(w < 0 for w in widths) or sum(widths) > len(data):
+        raise ValueError(f'column {name}: its texts are not as long as it says: a damaged JMP data table')
     out, at = [], 0
     for w in widths:
-        w = int(w)
         s = data[at:at + w].decode('utf-8', errors='replace')
         at += w
         out.append(s if s != '' else None)
     return out
 
 
+# A column unpacks to no more than the page reads of a file.
+_MAX_UNPACKED = 1 << 30
+
+
+def _unpacked(packed, name):
+    """A compressed column's bytes, no more than the page reads of a file:
+    a few bytes can unpack to gigabytes. A stream that does not unpack, or
+    stops short, is damaged and said to be. The length the file gives for
+    them unpacked is not needed, and a damaged one is not held against them."""
+    damaged = ValueError(f'column {name}: its values are compressed, and the compressed bytes are damaged')
+    d = zlib.decompressobj(16 + zlib.MAX_WBITS)
+    try:
+        a = d.decompress(packed, _MAX_UNPACKED + 1)
+    except zlib.error:
+        raise damaged from None
+    if len(a) > _MAX_UNPACKED:
+        raise ValueError(f'column {name}: its values unpack to more than the 1 GB this page reads')
+    if not d.eof:
+        raise damaged
+    return a
+
+
 def _column(r, info, i):
     """The ith column: (values, dataType, format or None, note or None); None for a row-state column."""
     n = info['nrows']
+    name = info['names'][i]
     start = info['offsets'][i]
     end = len(r.b) if i == info['ncols'] - 1 else info['offsets'][i + 1]
     r.p = start
@@ -286,14 +332,14 @@ def _column(r, info, i):
         r.until(GZIP_START)
         gzlen = r.unpack('Q')
         r.unpack('Q')                                 # its length unpacked
-        a = zlib.decompress(r.read(gzlen), 16 + zlib.MAX_WBITS)
+        a = _unpacked(r.read(gzlen), name)
     else:
         a = r.b[start:end]
     r.p = mark
 
     # numbers: floats, dates, times, durations, integers in the float slot
     if dt1 in (0x01, 0x0a):
-        vals = _ints(a, dt6, n)
+        vals = _ints(a, dt6, n, name)
         if (dt4 == dt5 and dt4 in _PLAIN) or dt5 in (0x5e, 0x63):
             fmt = {'kind': 'fixed', 'digits': int(dt4)} if dt5 in (0x5e, 0x63) and dt4 <= 12 else None
             return vals, 'numeric', fmt, None
@@ -309,46 +355,52 @@ def _column(r, info, i):
             return secs, 'numeric', None, 'a duration, in seconds'
         return vals, 'numeric', None, None
     if dt1 in (0xff, 0xfe, 0xfc):                     # byte integers
-        return _ints(a, dt5, n), 'numeric', None, None
+        return _ints(a, dt5, n, name), 'numeric', None, None
     if dt1 == 0x09 and dt2 == 0x03:                   # row states: markers and colours, not data
         return None
     if dt1 == 0x03 and dt2 == 0x03:
+        if len(a) < 8 * n:
+            raise _short(name)
         return np.frombuffer(a[len(a) - 8 * n:], dtype='<i8', count=n).astype(float), 'numeric', None, None
 
     # text
     if dt1 in (0x02, 0x09) and dt2 in (0x01, 0x02):
         if ((dt3, dt4) == (0, 0) and dt5 > 0) or (1 <= dt3 <= 7 and dt4 == 0):   # a fixed width
             w = dt5
+            if w == 0 or len(a) < n * w:
+                raise _short(name)
             data = a[len(a) - n * w:]
             return [(data[k * w:(k + 1) * w].split(b'\0', 1)[0].decode('utf-8', errors='replace') or None) for k in range(n)], 'character', None, None
         if (dt3, dt4, dt5) == (0, 0, 0):                                           # a width per value
             if dt1 == 0x09:                                                        # compressed
-                if struct.unpack_from('<q', a, 0)[0] == len(a):                    # pooled: an index per row into a list of values
+                if len(a) >= 8 and struct.unpack_from('<q', a, 0)[0] == len(a):    # pooled: an index per row into a list of values
                     q = _Bytes(a)
                     q.unpack('q')
                     q.skip(9)
                     q.unpack('q')
                     wb = q.unpack('b')
-                    idx = np.array(q.unpack({1: 'B', 2: 'H', 4: 'I'}[wb], n) if n > 1 else [q.unpack({1: 'B', 2: 'H', 4: 'I'}[wb])])
+                    tfi = {1: 'B', 2: 'H', 4: 'I'}.get(wb)
+                    if tfi is None:
+                        raise ValueError(f'column {name}: an unknown width of pooled text indices ({wb})')
+                    idx = np.array(q.unpack(tfi, n) if n > 1 else [q.unpack(tfi)], dtype=np.int64)
                     wb2 = q.unpack('b')
                     tf = {1: 'b', 2: 'h'}.get(wb2)
                     if tf is None:
-                        raise ValueError(f'column {info["names"][i]}: an unknown kind of pooled text')
+                        raise ValueError(f'column {name}: an unknown kind of pooled text')
                     pool = []
                     for _ in range(int(idx.max()) if len(idx) else 0):
                         k = q.unpack(tf)
                         pool.append(q.read(k).decode('utf-8', errors='replace'))
                     return [(pool[j - 1] or None) if j else None for j in idx.tolist()], 'character', None, None
+                if len(a) < 13:
+                    raise _short(name)
                 wbytes = a[8]
-                if wbytes == 1:
-                    widths = np.frombuffer(a[13:13 + n], dtype='<i1')
-                    data = a[13 + n:]
-                elif wbytes == 2:
-                    widths = np.frombuffer(a[13:13 + 2 * n], dtype='<i2')
-                    data = a[13 + 2 * n:]
-                else:
-                    raise ValueError(f'column {info["names"][i]}: an unknown width of text lengths ({wbytes})')
-                return _texts(data, widths), 'character', None, None
+                if wbytes not in (1, 2):
+                    raise ValueError(f'column {name}: an unknown width of text lengths ({wbytes})')
+                if len(a) < 13 + wbytes * n:
+                    raise _short(name)
+                widths = np.frombuffer(a, dtype='<i1' if wbytes == 1 else '<i2', count=n, offset=13)
+                return _texts(a[13 + wbytes * n:], widths, name), 'character', None, None
             r.skip(6)                                                              # not compressed
             n1 = r.unpack('q')
             r.skip(n1)
@@ -359,11 +411,15 @@ def _column(r, info, i):
             r.unpack('I')                                                          # the longest
             tf = {1: 'b', 2: 'h', 4: 'i'}.get(wbytes)
             if tf is None:
-                raise ValueError(f'column {info["names"][i]}: an unknown width of text lengths ({wbytes})')
+                raise ValueError(f'column {name}: an unknown width of text lengths ({wbytes})')
             widths = r.unpack(tf, n) if n > 1 else [r.unpack(tf)]
             total = int(sum(widths))
-            return _texts(r.b[end - total:end], widths), 'character', None, None
-    return np.full(n, np.nan), 'numeric', None, f'not read: a kind of column this reader does not know ({dt1:02x} {dt2:02x} {dt3:02x} {dt4:02x} {dt5:02x} {dt6:02x})'
+            # The texts end the column, after their lengths.
+            if not 0 <= total <= end - r.p:
+                raise ValueError(f'column {name}: its texts are not as long as it says: a damaged JMP data table')
+            return _texts(r.b[end - total:end], widths, name), 'character', None, None
+    # Its values are made in read(), once the number of rows is known to be one the file holds.
+    return None, 'numeric', None, f'not read: a kind of column this reader does not know ({dt1:02x} {dt2:02x} {dt3:02x} {dt4:02x} {dt5:02x} {dt6:02x})'
 
 
 def read(name, data):
@@ -374,6 +430,7 @@ def read(name, data):
     r = _Bytes(b)
     info = _metadata(r)
     cols, skipped, unread = [], [], []
+    held = False                                      # whether a column read has held the rows the table says it has
     for i, cname in enumerate(info['names']):
         got = _column(r, info, i)
         if got is None:
@@ -381,12 +438,17 @@ def read(name, data):
             continue
         vals, dtype, fmt, note = got
         c = {'name': cname, 'dataType': dtype}
-        if dtype == 'numeric':
+        if vals is None:
+            c['values'] = None
+            c['modelingType'] = 'continuous'
+        elif dtype == 'numeric':
             c['values'] = [None if v != v else float(v) for v in np.asarray(vals, dtype=float).tolist()]
             c['modelingType'] = 'continuous'
+            held = True
         else:
             c['values'] = list(vals)
             c['modelingType'] = 'nominal'
+            held = True
         if fmt:
             c['format'] = fmt
         if note:
@@ -394,6 +456,17 @@ def read(name, data):
             if note.startswith('not read'):
                 unread.append(cname)
         cols.append(c)
+    # A column of a kind the reader does not know is all missing: as many as
+    # the rows a column it reads has held, or with none to tell, no more rows
+    # than the file has bytes -- a damaged count must not ask for billions.
+    n = info['nrows']
+    if unread:
+        if not held and n > len(b):
+            raise ValueError(f'the table says it has {n:,} rows, more than its file could hold, and none of its columns '
+                             'is of a kind this reader reads to tell: a damaged JMP data table')
+        for c in cols:
+            if c['values'] is None:
+                c['values'] = [None] * n
     scripts = _scripts(b, *info['header'])
     notes = [f'Read from a JMP {info["version"]} data table.',
              'Modeling types are not kept in a form this page can read: numbers came in continuous and text nominal; change them in the Columns panel where JMP had them otherwise.']
