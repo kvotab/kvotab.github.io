@@ -41205,6 +41205,45 @@ test('a list of values too long for an Excel cell goes to a sheet of its own, an
 		refused?.message);
 });
 
+test('a sheet is read as far as its values go, and one too far out is said while the rest are read', async () => {
+	// The grid runs from A1 to the farthest value with every cell held, and
+	// one stray value at XFD1048576 -- the last cell a sheet has, and one
+	// Excel keeps -- made seventeen billion of them: the page ran out of
+	// memory on a workbook of a thousand bytes.
+	const { zip } = await import('../src/io/zip.js');
+	const X = await import('../src/io/xlsx.js');
+	const DF = await import('../src/io/datafile.js');
+	const NS = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"';
+	const t = (s) => new TextEncoder().encode(s);
+	// Data and Also, found by position.
+	const book = (...sheets) => zip([
+		{ name: 'xl/workbook.xml', bytes: t(`<workbook ${NS}><sheets>${sheets.map((_, i) => `<sheet name="${['Data', 'Also'][i]}"/>`).join('')}</sheets></workbook>`) },
+		...sheets.map((body, i) => ({ name: `xl/worksheets/sheet${i + 1}.xml`, bytes: t(`<worksheet ${NS}><sheetData>${body}</sheetData></worksheet>`) })),
+	]);
+	const data = '<row r="1"><c r="A1"><v>1</v></c><c r="B1"><v>2</v></c></row><row r="2"><c r="A2"><v>3</v></c></row>';
+	const also = '<row r="1"><c r="A1"><v>7</v></c></row>';
+	const far = "Sheet 'Data' has values as far as row 1,048,576 and column XFD: 17,179,869,184 cells from A1, more than the "
+		+ '10,000,000 this reads. A value that far out is often a stray one: clear it in Excel and save the workbook again.';
+	const stray = await book(data + '<row r="1048576"><c r="XFD1048576"><v>9</v></c></row>', also);
+	const got = await X.readWorkbook(stray);
+	assert(got.sheets.map((s) => s.name).join() === 'Also' && got.problems.join() === far, JSON.stringify(got.problems));
+	assert((await DF.readDataWorkbook(stray)).problems.includes(far), 'the data import did not say it');
+	// A cell with nothing in it -- formatted, or written empty -- stretches nothing.
+	const empty = await X.readWorkbook(await book(data.replace('</row><row r="2">', '<c r="XFD1" s="1"/></row><row r="2">')
+		+ '<row r="1048576" s="1"><c r="A1048576" s="1"/><c r="B1048576"><v></v></c></row>', also));
+	assert(JSON.stringify(empty.sheets[0].rows) === '[[1,2],[3,null]]' && !empty.problems.length, JSON.stringify(empty.sheets[0].rows));
+	// Past the last column, or the last row, a sheet has.
+	const past = async (body) => (await X.readWorkbook(await book(data + body, also))).problems.join();
+	assert(await past('<row r="3"><c r="XFE3"><v>1</v></c></row>')
+		=== "Sheet 'Data' has a cell at XFE3, past column XFD, the last a sheet has, and is not read.", await past('<row r="3"><c r="XFE3"><v>1</v></c></row>'));
+	assert(await past('<row r="10000000000"><c r="A1"><v>1</v></c></row>')
+		=== "Sheet 'Data' has a row numbered 10000000000, past the 1,048,576 rows a sheet has, and is not read.");
+	// A workbook with no other sheet says why it has none.
+	let said = '';
+	try { await X.readWorkbook(await book('<row r="1048576"><c r="XFD1048576"><v>1</v></c></row>')); } catch (e) { said = e.message; }
+	assert(said === far, said);
+});
+
 test('HDF5 written the other way round reads here too', async () => {
 	const { readHDF5 } = await import('../src/io/hdf5read.js');
 	const DF = await import('../src/io/datafile.js');

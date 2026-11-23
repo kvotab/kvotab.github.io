@@ -743,7 +743,8 @@ def read_data_workbook(data: Any) -> Dict[str, List[Any]]:
     unless it has an ID column of its own."""
     book = read_workbook(data)
     rows: List[Dict[str, Any]] = []
-    problems: List[str] = []
+    # A sheet the workbook could not read is said, and the rest are read.
+    problems: List[str] = list(book.get('problems', []))
     # By name whatever the case, which is how Excel matches a sheet's name.
     sheets: Dict[str, Mapping[str, Any]] = {}
     for s in book['sheets']:

@@ -849,6 +849,29 @@ class Workbooks(unittest.TestCase):
                     mine = {'error': str(e)}
                 same(self, mine, js_outcome(got), name)
 
+    def test_a_sheet_too_far_out_is_said_and_the_rest_read(self):
+        # One stray value at XFD1048576 made a grid of seventeen billion
+        # cells: the application ran out of memory on a workbook of a thousand
+        # bytes, and this was still filling them half a minute later.
+        from kompartment.io.datafile import read_data_workbook
+        books = hand_made_workbooks()
+        far = ("Sheet 'Data' has values as far as row 1,048,576 and column XFD: 17,179,869,184 cells from A1, more "
+               'than the 10,000,000 this reads. A value that far out is often a stray one: clear it in Excel and save '
+               'the workbook again.')
+        got = xlsx.read_workbook(books['a value at XFD1048576'])
+        self.assertEqual(([s['name'] for s in got['sheets']], got['problems']), (['Also'], [far]))
+        self.assertIn(far, read_data_workbook(books['a value at XFD1048576'])['problems'])
+        # A cell with nothing in it stretches nothing.
+        self.assertEqual(xlsx.read_workbook(books['empty cells far out'])['sheets'][0]['rows'], [[1.0, 2.0], [3.0, None]])
+        self.assertEqual(xlsx.read_workbook(books['a cell past XFD'])['problems'],
+                         ["Sheet 'Data' has a cell at XFE3, past column XFD, the last a sheet has, and is not read."])
+        self.assertEqual(xlsx.read_workbook(books['a row numbered ten billion'])['problems'],
+                         ["Sheet 'Data' has a row numbered 10000000000, past the 1,048,576 rows a sheet has, and is not "
+                          'read.'])
+        with self.assertRaises(xlsx.XLSXError) as caught:
+            xlsx.read_workbook(books['only a far value'])
+        self.assertTrue(str(caught.exception).startswith("Sheet 'A' has values as far as row 1,048,576 and column XFD"))
+
     def test_a_workbook_needs_a_sheet(self):
         for book in ({'sheets': []}, {'sheets': [{'name': 'x'}]}, {}):
             got = js({'task': 'xlsxwrite', 'book': book})[0]
@@ -974,6 +997,25 @@ def hand_made_workbooks() -> Dict[str, bytes]:
         'an empty sheet part': _zip_of(dict(good, **{'xl/worksheets/second.xml': ''})),
         'an unterminated comment': _zip_of(dict(good, **{'xl/worksheets/second.xml': '<a><!-- never</a>'})),
     }
+    # How far a sheet reaches, and what lies past the last cell a sheet has
+    # (XFD1048576): a sheet named Data beside one named Also, by position.
+    def two(body: str) -> bytes:
+        return _zip_of({'xl/workbook.xml': f'<workbook {NS}><sheets><sheet name="Data"/><sheet name="Also"/></sheets></workbook>',
+                        'xl/worksheets/sheet1.xml': f'<worksheet {NS}><sheetData>{body}</sheetData></worksheet>',
+                        'xl/worksheets/sheet2.xml': f'<worksheet {NS}><sheetData><row r="1"><c r="A1"><v>7</v></c></row>'
+                                                    '</sheetData></worksheet>'})
+    data = '<row r="1"><c r="A1"><v>1</v></c><c r="B1"><v>2</v></c></row><row r="2"><c r="A2"><v>3</v></c></row>'
+    books.update({
+        'a value at XFD1048576': two(data + '<row r="1048576"><c r="XFD1048576"><v>9</v></c></row>'),
+        'empty cells far out': two(data.replace('</row><row r="2">', '<c r="XFD1" s="1"/></row><row r="2">')
+                                   + '<row r="1048576" s="1"><c r="A1048576" s="1"/><c r="B1048576"><v></v></c></row>'),
+        'a cell past XFD': two(data + '<row r="3"><c r="XFE3"><v>1</v></c></row>'),
+        'a row past the last': two(data + '<row r="1048577"><c r="A1048577"><v>1</v></c></row>'),
+        'a row numbered ten billion': two(data + '<row r="10000000000"><c r="A1"><v>1</v></c></row>'),
+        'only a far value': _zip_of({'xl/workbook.xml': f'<workbook {NS}><sheets><sheet name="A"/></sheets></workbook>',
+                                     'xl/worksheets/sheet1.xml': f'<worksheet {NS}><sheetData><row r="1048576">'
+                                                                 '<c r="XFD1048576"><v>1</v></c></row></sheetData></worksheet>'}),
+    })
     base = _zip_of(good)
     books['an encrypted entry'] = _patched(base, b'xl/worksheets/second.xml', flags=0x0001)
     books['an encrypted directory'] = _patched(base, b'xl/', flags=0x0001)

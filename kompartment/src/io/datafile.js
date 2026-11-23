@@ -618,7 +618,8 @@ export async function writeDataWorkbook(rows, { name = 'data' } = {}) {
 export async function readDataWorkbook(bytes) {
 	const book = await readWorkbook(bytes);
 	const rows = [];
-	const problems = [];
+	// A sheet the workbook could not read is said, and the rest are read.
+	const problems = [...(book.problems ?? [])];
 	// By name whatever the case, which is how Excel matches a sheet's name.
 	const sheets = new Map();
 	for (const s of book.sheets) if (!sheets.has(s.name.toLowerCase())) sheets.set(s.name.toLowerCase(), s);

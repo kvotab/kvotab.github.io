@@ -394,45 +394,78 @@ def _cell_value(c: _Node, strings: List[str]) -> Any:
     return x if not (math.isnan(x) or math.isinf(x)) else raw
 
 
-_MAX_INDEX = 4294967294  # the largest index a JavaScript array has
+#: The last cell a sheet has, XFD1048576: as far as Excel makes them
+#: (``MAX_ROWS`` and ``MAX_COLUMNS``).
+MAX_ROWS = 1048576
+MAX_COLUMNS = 16384
+
+#: The most cells a sheet is read as (``MAX_CELLS``). The grid runs from A1 to
+#: the farthest value, every cell of it held, and one stray value at
+#: XFD1048576 made seventeen billion of them: the application ran out of
+#: memory on a workbook of a thousand bytes, and this was still filling them
+#: half a minute later.
+MAX_CELLS = 10_000_000
 
 
-def _sheet_grid(xml: str, strings: List[str]) -> List[List[Any]]:
-    """One worksheet as a grid: rectangular, and with no holes."""
+class _SheetRefused(Exception):
+    """A sheet that is not read, and why: said in the workbook's problems."""
+
+
+def _counted(n: int) -> str:
+    """``toLocaleString('en-US')`` of a whole number."""
+    return f'{n:,}'
+
+
+def _sheet_grid(xml: str, strings: List[str], name: str) -> List[List[Any]]:
+    """One worksheet as a grid (``sheetGrid``): rectangular, and with no holes,
+    from A1 to the last row and the last column that hold a value. A cell with
+    nothing in it stretches nothing. The rows are kept by number until the
+    grid's size is known and allowed, as the application's array is sparse."""
     root = _parse_xml(xml)
-    rows: List[Optional[List[Any]]] = []
+    rows: Dict[int, Dict[int, Any]] = {}
+    length = 0  # the application's rows.length
+    last = -1
     widest = 0
     for sheet_data in _children(root, 'sheetData'):
         for row in _children(sheet_data, 'row'):
             # The row's own number where it has one, so a sheet with a gap in
-            # it comes back with the gap.
+            # it comes back with the gap; one that is not a whole number names
+            # no row.
             r_attr = row.attrs.get('r')
             at = math.nan if r_attr is None else js_to_number(r_attr)
-            out: List[Any] = []
-            for c in _children(row, 'c'):
-                col = column_of(c.attrs.get('r', ''))
-                if col < 0 or col > _MAX_INDEX:
-                    continue
-                if col >= len(out):
-                    out.extend([None] * (col + 1 - len(out)))
-                out[col] = _cell_value(c, strings)
-            widest = max(widest, len(out))
-            index = at - 1 if not (math.isnan(at) or math.isinf(at)) and at >= 1 else len(rows)
-            # A row number that is not a whole number (or past the largest
-            # array index) is a property of the JavaScript's array, not an
-            # element of it, and the row is not in the grid.
-            if not _is_integer(index) or index > _MAX_INDEX:
+            index = at - 1 if not (math.isnan(at) or math.isinf(at)) and at >= 1 else length
+            if not _is_integer(index):
                 continue
             index = int(index)
-            if index >= len(rows):
-                rows.extend([None] * (index + 1 - len(rows)))
+            if index >= MAX_ROWS:
+                raise _SheetRefused(f"Sheet '{name}' has a row numbered {js_string(index + 1)}, past the "
+                                    f'{_counted(MAX_ROWS)} rows a sheet has, and is not read.')
+            out: Dict[int, Any] = {}
+            for c in _children(row, 'c'):
+                ref = c.attrs.get('r', '')
+                col = column_of(ref)
+                if col < 0:
+                    continue
+                if col >= MAX_COLUMNS:
+                    raise _SheetRefused(f"Sheet '{name}' has a cell at {ref}, past column XFD, the last a sheet has, "
+                                        'and is not read.')
+                v = _cell_value(c, strings)
+                out[col] = v
+                if v is not None and not (isinstance(v, str) and v == ''):
+                    last = max(last, index)
+                    widest = max(widest, col + 1)
             rows[index] = out
+            length = max(length, index + 1)
+    cells = (last + 1) * widest
+    if cells > MAX_CELLS:
+        raise _SheetRefused(f"Sheet '{name}' has values as far as row {_counted(last + 1)} and column "
+                            f'{column_name(widest - 1)}: {_counted(cells)} cells from A1, more than the '
+                            f'{_counted(MAX_CELLS)} this reads. A value that far out is often a stray one: '
+                            'clear it in Excel and save the workbook again.')
     grid: List[List[Any]] = []
-    for r in rows:
-        r = [] if r is None else r
-        if len(r) < widest:
-            r.extend([None] * (widest - len(r)))
-        grid.append(r)
+    for i in range(last + 1):
+        r = rows.get(i, {})
+        grid.append([r.get(j) for j in range(widest)])
     return grid
 
 
@@ -456,10 +489,12 @@ def read_workbook(data: Union[bytes, bytearray, memoryview, str, 'os.PathLike[st
     """Every sheet of a workbook, in the order the workbook lists them (``readWorkbook``).
 
     ``data`` is the ``.xlsx`` file's bytes, or a path to read them from.
-    Returns ``{'sheets': [{'name': ..., 'rows': [[...], ...]}, ...]}``: each
-    row a list as long as the sheet's widest, holding ``str``, ``float``,
-    ``bool`` or ``None``. A sheet the workbook lists but the archive does not
-    hold is left out. The JavaScript is ``async``; this is not.
+    Returns ``{'sheets': [{'name': ..., 'rows': [[...], ...]}, ...], 'problems':
+    [...]}``: each row a list as long as the sheet's widest, holding ``str``,
+    ``float``, ``bool`` or ``None``. A sheet the workbook lists but the archive
+    does not hold is left out; one too large or too damaged to be a sheet is
+    left out and said in ``problems``. The JavaScript is ``async``; this is
+    not.
 
     Raises :class:`XLSXError` for a file that is not a ZIP, has no
     ``xl/workbook.xml`` or no readable sheet, and :class:`XMLError` (an
@@ -497,6 +532,7 @@ def _read_parts(entries: _Entries) -> Dict[str, Any]:
     found = _children(root, 'sheets')
     listed = _children(found[0] if found else None, 'sheet')
     sheets: List[Dict[str, Any]] = []
+    problems: List[str] = []
     for i, s in enumerate(listed):
         # Decoded a second time, as the application does.
         name = _decode_entities(s.attrs.get('name', f'Sheet{i + 1}'))
@@ -513,10 +549,13 @@ def _read_parts(entries: _Entries) -> Dict[str, Any]:
         xml = part(path)
         if xml is None:
             continue
-        sheets.append({'name': name, 'rows': _sheet_grid(xml, strings)})
+        try:
+            sheets.append({'name': name, 'rows': _sheet_grid(xml, strings, name)})
+        except _SheetRefused as e:
+            problems.append(str(e))
     if not sheets:
-        raise XLSXError('The workbook has no readable sheets.')
-    return {'sheets': sheets}
+        raise XLSXError(' '.join(problems) if problems else 'The workbook has no readable sheets.')
+    return {'sheets': sheets, 'problems': problems}
 
 
 # --- writing ------------------------------------------------------------------
