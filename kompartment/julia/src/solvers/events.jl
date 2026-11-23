@@ -55,10 +55,13 @@ end
 
 """The first crossing in (tl, tr]: `(t, values, which)` with `which` the
 1-based events that cross there, or nothing. `values_at!(out, t)` writes the
-event functions' values at `t` (read from the step's interpolant)."""
+event functions' values at `t` (read from the step's interpolant). The
+crossing is put on one of `times` (the times the solver reports, from `from`
+on) inside the bracket's last stretch, where the event has happened by then."""
 function _ev_first_crossing(values_at!::F, tl::Float64, vl::Vector{Float64}, tr::Float64, vr::Vector{Float64},
                             direction::Vector{Int8},
-                            t_start::Float64) where {F}
+                            t_start::Float64, times::AbstractVector{Float64}=Float64[],
+                            from::Int=1) where {F}
     n = length(vl)
     tol = _ev_crossing_tolerance(tl, tr)
     tdir = tr != tl ? copysign(1.0, tr - tl) : 0.0
@@ -124,17 +127,32 @@ function _ev_first_crossing(values_at!::F, tl::Float64, vl::Vector{Float64}, tr:
             kept = -1
         end
     end
+    # A reported time inside what is left of the bracket, where the event has
+    # happened by then, is the crossing (`firstCrossing`).
+    k = from
+    while k <= length(times) && tdir * (times[k] - lo) <= 0
+        k += 1
+    end
+    if k <= length(times) && tdir * (hi - times[k]) > 0
+        vt = zeros(n)
+        values_at!(vt, times[k])
+        if _ev_any_crossing(vlo, vt, direction)
+            hi = times[k]
+            vhi = vt
+        end
+    end
     which = Int[i for i in 1:n if _ev_crosses(vlo, vhi, direction, i)]
     return (hi, vhi, which)
 end
 
 """Reads the event functions at the end of a step (into `vr`) and, if any
-crossed, finds the first crossing inside it (`locate_crossing`).
-`dense_at!(out, t)` writes the state at `t` inside the step; `ybuf` is
-room for it."""
+crossed, finds the first crossing inside it (`locate_crossing`) -- on one of
+`times`, from `from` on, where it can be. `dense_at!(out, t)` writes the
+state at `t` inside the step; `ybuf` is room for it."""
 function _ev_locate_crossing(ev::EventFunctions, t::Float64, vl::Vector{Float64}, tnew::Float64,
                              ynew::Vector{Float64}, vr::Vector{Float64}, dense_at!::F, ybuf::Vector{Float64},
-                             t_start::Float64) where {F}
+                             t_start::Float64, times::AbstractVector{Float64}=Float64[],
+                             from::Int=1) where {F}
     ev.fun(vr, tnew, ynew)
     _ev_any_crossing(vl, vr, ev.direction) || return nothing
     at! = (out, tq) -> begin
@@ -142,5 +160,5 @@ function _ev_locate_crossing(ev::EventFunctions, t::Float64, vl::Vector{Float64}
         ev.fun(out, tq, ybuf)
         nothing
     end
-    return _ev_first_crossing(at!, t, vl, tnew, vr, ev.direction, t_start)
+    return _ev_first_crossing(at!, t, vl, tnew, vr, ev.direction, t_start, times, from)
 end

@@ -864,7 +864,7 @@ def ndf(f: Callable[[float, np.ndarray], np.ndarray], tspan: Sequence[float], y0
             held[c] += (projected.push * abs(cur['h']) > atol[c]).astype(np.int64)  # type: ignore[index]
 
         if events is not None:
-            hit = locate_crossing(events, t, vl, tnew, y, vr, dense_at, t_start)
+            hit = locate_crossing(events, t, vl, tnew, y, vr, dense_at, t_start, tspan, next_out)
             if hit is not None:
                 t_e = hit['t']
                 table.regrid(k, (t_e - tnew) / cur['h'], (t_e - t) / cur['h'])

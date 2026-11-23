@@ -413,9 +413,11 @@ export function hermite(theta, dt, uprev, u, f0, f1, out) {
  * interpolant, so the crossing is found where the solution actually is rather
  * than where a straight line between the ends would put it. Bisection then
  * Illinois: bisection cannot fail, Illinois converges quickly, and together
- * they need a handful of interpolations.
+ * they need a handful of interpolations. `saveat` from `saveatAt` on are the
+ * times still to be saved, which a crossing is put on where it can be (see
+ * locateRoot).
  */
-function findEvent(integ, evalAt, gPrev, work) {
+function findEvent(integ, evalAt, gPrev, work, saveat, saveatAt) {
   const ev = integ.prob.events;
   if (!ev) return null;
   const { gNow } = work;
@@ -454,10 +456,9 @@ function findEvent(integ, evalAt, gPrev, work) {
   // together, since a restart from the one would see the other at its start.
   const found = [];
   for (const which of crossed) {
-    const theta = locateRoot(integ, evalAt, ev, which, gPrev[which], work);
-    const tEvent = integ.t + theta * integ.dt;
-    if (rootAtStart(integ, tEvent)) continue;
-    found.push({ theta, t: tEvent, which });
+    const root = locateRoot(integ, evalAt, ev, which, gPrev[which], work, saveat, saveatAt);
+    if (rootAtStart(integ, root.t)) continue;
+    found.push({ theta: root.theta, t: root.t, which, exact: root.exact });
   }
   if (!found.length) return null;
   let first = found[0];
@@ -472,7 +473,7 @@ function findEvent(integ, evalAt, gPrev, work) {
   for (const f of group) if (f.theta > last.theta) last = f;
   const all = group.map((f) => f.which).sort((a, b) => a - b);
   evalAt(last.theta, work.uEvent);
-  return { theta: last.theta, t: last.t, which: all[0], all };
+  return { theta: last.theta, t: last.t, which: all[0], all, exact: last.exact };
 }
 
 /** The direction asked of event function `i`: one number for all, or one each. */
@@ -503,8 +504,16 @@ function directionOf(ev, i) {
  * end the search bisects, since the secant would land on that end, or an ulp
  * short of it, and creep. A function that starts on zero has crossed where it
  * has left it.
+ *
+ * A time still to be saved inside what is left of the bracket is the answer
+ * instead, where the function has crossed by then -- read at that time
+ * exactly, and handed back as it (`exact`). The search stops anywhere from
+ * the crossing to its tolerance past it, so a crossing exactly at a saved
+ * time, as `max(20 - t, 0)`'s is at a row at 20, landed on the row or an ulp
+ * or two after it as the last bits of the run fell: one row at that time, or
+ * the row and the event's beside it.
  */
-function locateRoot(integ, evalAt, ev, which, gStart, work) {
+function locateRoot(integ, evalAt, ev, which, gStart, work, saveat, saveatAt) {
   const { gNow, utmp } = work;
   const g = (theta) => {
     evalAt(theta, utmp);
@@ -527,7 +536,21 @@ function locateRoot(integ, evalAt, ev, which, gStart, work) {
     if (crossedAt(fmid)) { hi = mid; fhi = fmid; flo *= 0.5; }
     else { lo = mid; flo = fmid; fhi *= 0.5; }
   }
-  return hi;
+  const t = integ.t + hi * integ.dt;
+  if (saveat) {
+    const tdir = Math.sign(integ.dt);
+    const tlo = integ.t + lo * integ.dt;
+    let k = saveatAt;
+    while (k < saveat.length && tdir * (saveat[k] - tlo) <= 0) k++;
+    if (k < saveat.length && tdir * (t - saveat[k]) > 0) {
+      const ts = saveat[k];
+      const theta = (ts - integ.t) / integ.dt;
+      evalAt(theta, utmp);
+      ev.fun(ts, utmp, gNow);
+      if (crossedAt(gNow[which])) return { theta, t: ts, exact: true };
+    }
+  }
+  return { theta: hi, t, exact: false };
 }
 
 /**
@@ -902,7 +925,7 @@ export function solve(prob, alg, options = {}) {
       if (!integ.cache.hasFsalLast && !integ.cache.interpolate) {
         integ.f(tnew, integ.u, integ.fsallast);
       }
-      ev = findEvent(integ, evalAt, work.gPrev, work);
+      ev = findEvent(integ, evalAt, work.gPrev, work, saveat, saveatAt);
     }
 
     integ.stats.naccept++;
@@ -936,8 +959,11 @@ export function solve(prob, alg, options = {}) {
       integ.clamp(integ.u);
     }
 
-    if (opts.saveEverystep && !saveat) remember(integ.t + integ.dt, integ.u, false);
-    if (opts.onAccepted) opts.onAccepted(integ.t + integ.dt, integ.u);
+    // Where the step ends: an event put on a saved time is at that time, not
+    // at the step's start plus the step to it, which can be an ulp away.
+    const stepEnd = ev?.exact ? ev.t : integ.t + integ.dt;
+    if (opts.saveEverystep && !saveat) remember(stepEnd, integ.u, false);
+    if (opts.onAccepted) opts.onAccepted(stepEnd, integ.u);
     if (integ.autoAbstol) {
       const at = integ.abstol;
       for (let i = 0; i < n; i++) {
@@ -948,6 +974,7 @@ export function solve(prob, alg, options = {}) {
 
     const dtjust = integ.dt;
     integ.t += integ.dt;
+    if (ev?.exact) integ.t = stepEnd;
     // Snap onto the end, or onto the time we were told to land on, rather than
     // carrying the rounding of the sum forward. Without the second half a
     // tstop is never quite reached and the solver takes an extra step of a few

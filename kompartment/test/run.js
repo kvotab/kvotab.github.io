@@ -34838,6 +34838,63 @@ test('firstCrossing steps past a resting zero at the segment start, and only the
 	assert(firstCrossing(one, 5, one(5), 5.5, one(5.5), Int8Array.from([1]), { tStart: 5 }) === null);
 });
 
+test('firstCrossing puts a crossing on a reported time inside its last stretch, where the event has happened by then', () => {
+	// `max(20 - t, 0)` reaches zero at 20 and stays there: the search closes
+	// on 20 from above, and stops anywhere up to its tolerance past it.
+	const g = (t) => Float64Array.from([-Math.max(20 - t, 0)]);
+	const up = Int8Array.from([1]);
+	const free = firstCrossing(g, 17.3, g(17.3), 23.1, g(23.1), up);
+	assert(free.t > 20 && free.t - 20 < 1e-12, String(free.t));
+	// With 20 among the times reported, the crossing is 20.
+	const on = firstCrossing(g, 17.3, g(17.3), 23.1, g(23.1), up, { times: [0, 5, 10, 15, 20, 25], from: 4 });
+	assert(on.t === 20 && on.values[0] === 0 && on.which.join() === '0', `${on.t} ${on.values[0]}`);
+	// Not a time already reported, before `from`...
+	const past = firstCrossing(g, 17.3, g(17.3), 23.1, g(23.1), up, { times: [20, 25], from: 1 });
+	assert(past.t === free.t, `${past.t}`);
+	// ...nor one outside the last stretch, nor one the event has not reached
+	// by: a crossing at 20.5 is put on none of these.
+	const h = (t) => Float64Array.from([t - 20.5]);
+	for (const times of [[20, 21], [21], [20.5 - 1e-13]]) {
+		const at = firstCrossing(h, 17.3, h(17.3), 23.1, h(23.1), up, { times });
+		assert(Math.abs(at.t - 20.5) < 1e-12 && !times.includes(at.t), `${times}: ${at.t}`);
+	}
+});
+
+test('an event at an output time lands on it on every solver, and is one row there', () => {
+	// The search stops anywhere from the crossing to its tolerance past it,
+	// so a crossing exactly at an output time -- `max(20 - time, 0)` reaching
+	// zero at 20, with a row at 20 -- landed on the row or a few ulps after
+	// it as the run's last bits fell: one row at 20, or that row and the
+	// event's own beside it at 20.0000000000001, and two runs of one model
+	// that could not be joined on time. Each solver, with its tolerance an
+	// ulp or a few apart to give it other step sequences.
+	const F = new Float64Array(1);
+	const U = new BigInt64Array(F.buffer);
+	const shifted = (v, k) => { F[0] = v; U[0] += BigInt(k); return F[0]; };
+	const model = (solver, rtol) => new Project({
+		simulation: { start_time: 0, end_time: 40, output_points: 9, spacing: 'linear', solver, rtol, abstol: 1e-12, time_unit: 'year' },
+		compartments: [{ name: 'Lake', initial: '1000' }, { name: 'Soil', initial: '0' }],
+		transfers: [{ name: 'Outflow', from: 'Lake', to: null, rate: '0.1' }],
+		expressions: [{ name: 'V', equation: 'max(20 - time, 0)' }],
+		triggers: [{ name: 'Gone', first: '0', second: 'V', direction: 'rising' }],
+		events: [{ name: 'Dried', timing: 'trigger', trigger: 'Gone',
+			actions: [{ kind: 'move', from: 'Lake', to: 'Soil', fraction: '0.5' }] }],
+	});
+	for (const solver of LOCAL_SOLVER_IDS) {
+		for (const k of [0, 1, -1, 2, -3, 5]) {
+			const r = run(model(solver, shifted(1e-8, k)));
+			const near = Array.from(r.t).filter((t) => Math.abs(t - 20) < 1e-6);
+			assert(r.t.length === 9 && near.length === 1 && near[0] === 20,
+				`${solver}, rtol ${k} ulps off: ${r.t.length} rows, near 20: ${near.join(', ')}`);
+			// The row at the crossing is the state before it, and half of
+			// that lake is in the soil from then on.
+			const [lake, soil] = ['Lake', 'Soil'].map((l) => r.series(r.outputs().find((o) => o.label === l)));
+			assert(soil[4] === 0 && Math.abs(soil[5] / (lake[4] / 2) - 1) < 1e-12
+				&& Math.abs(lake[4] / (1000 * Math.exp(-2)) - 1) < 1e-4, `${solver}: lake ${lake[4]}; soil ${soil[4]}, then ${soil[5]}`);
+		}
+	}
+});
+
 // =========================================================================
 section('variableOrder output');
 
@@ -37731,15 +37788,16 @@ test('an event a trigger sets off acts at the crossing, wherever the run finds i
 	// The jump, with every solver: everything the lake holds at year 20 moves,
 	// and the row *at* the crossing is the state before. The volume reaches
 	// zero and stays there, which the ported methods' search put up to a step
-	// late until 2026-10-11. Most of them find this crossing at 20 exactly, an
-	// output time, and the output row there is the crossing's: one row an
-	// instant, never two at one time.
+	// late until 2026-10-11. The crossing is at 20 exactly, an output time,
+	// and every one of them puts it there: the output row is the crossing's,
+	// one row an instant, never two at one time nor one a few ulps after.
 	for (const solver of ['ndf', 'ros23', 'dp45', ...PORTED_IDS]) {
 		const r = run(model({ solver }));
 		const L = st(r, 'Lake'); const S = st(r, 'Soil'); const N = st(r, 'Dry');
 		assert(r.t.every((t, i) => i === 0 || t > r.t[i - 1]), `${solver}: a time saved twice: ${Array.from(r.t).join()}`);
-		const at = Array.from(r.t).findLastIndex((t) => t >= 20 && t < 20 + 1e-9);
-		assert(at > 0 && r.t[at + 1] === 25, `${solver}: no row at the crossing: ${Array.from(r.t).join()}`);
+		const at = Array.from(r.t).indexOf(20);
+		assert(at > 0 && r.t[at + 1] === 25 && !r.t.some((t) => t > 20 && t < 20 + 1e-9),
+			`${solver}: no row at the crossing, or one beside it: ${Array.from(r.t).join()}`);
 		for (const [k, initial] of [[0, 1000], [1, 2000]]) {
 			assert(near(r.y[at][L + k], initial * Math.exp(-2), 1e-6) && r.y[at][S + k] === 0, `${solver}: before ${r.y[at][L + k]}`);
 			assert(r.y[at + 1][L + k] === 0 && r.y[at + 1][S + k] === r.y[at][L + k], `${solver}: after ${r.y[at + 1][L + k]} ${r.y[at + 1][S + k]}`);

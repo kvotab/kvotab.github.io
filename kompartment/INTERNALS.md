@@ -2055,7 +2055,15 @@ output, returning the first crossing, which is all a terminal event needs. One
 guard matters -- a component exactly on zero where a segment starts is the
 event that stopped the previous segment, not a new crossing. Without it an
 event sitting on zero at the instant a segment restarts fires again, and
-again, for ever.
+again, for ever. And one rule: the search stops anywhere from the crossing to
+its tolerance past it, so an output time inside what is left of the bracket,
+where the event has happened by then, is taken as the crossing. A crossing
+exactly at an output time -- `max(20 - time, 0)` reaching zero at a row at 20
+-- then lands on that time and is its one row, rather than landing on it or a
+few ulps after it as the run's last bits fall, with the event's own row
+beside it. The ported methods' search (`src/ode/julia/core/integrator.js`)
+does the same with the times it saves, and so do the Python, Julia and C++
+engines.
 
 Two deliberate departures, both places where following the format exactly would
 be wrong here:

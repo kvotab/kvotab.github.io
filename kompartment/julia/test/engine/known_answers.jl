@@ -43,6 +43,35 @@ const EXAMPLES = joinpath(@__DIR__, "..", "..", "..", "examples")
         end
     end
 
+    @testset "an event at an output time lands on it, one row there" begin
+        # `max(20 - time, 0)` reaches zero at 20, where there is a row. The
+        # search stops anywhere from a crossing to its tolerance past it, and
+        # one exactly at an output time is put on it -- not on the row or a few
+        # ulps after it as the last bits fall, with the event's own row beside
+        # it (`an event at an output time lands on it on every solver` in the
+        # application's test/run.js). Each solver, with its tolerance an ulp
+        # or a few apart to give it other step sequences.
+        for solver in ("ndf", "ros23", "dp45"), k in (0, 1, -1, 2, -3, 5)
+            rtol = reinterpret(Float64, reinterpret(Int64, 1e-8) + k)
+            m = K.from_json("""{"name": "Lake", "simulation": {"start_time": 0, "end_time": 40, "output_points": 9,
+                "spacing": "linear", "solver": "$solver", "rtol": $(repr(rtol)), "abstol": 1e-12, "time_unit": "year"},
+                "compartments": [{"name": "Lake", "initial": "1000"}, {"name": "Soil", "initial": "0"}],
+                "transfers": [{"name": "Outflow", "from": "Lake", "to": null, "rate": "0.1"}],
+                "expressions": [{"name": "V", "equation": "max(20 - time, 0)"}],
+                "triggers": [{"name": "Gone", "first": "0", "second": "V", "direction": "rising"}],
+                "events": [{"name": "Dried", "timing": "trigger", "trigger": "Gone",
+                            "actions": [{"kind": "move", "from": "Lake", "to": "Soil", "fraction": "0.5"}]}]}""")
+            res = run(m)
+            @test length(res.t) == 9
+            @test filter(t -> abs(t - 20) < 1e-6, res.t) == [20.0]
+            # The row at the crossing is the state before it, and half of that
+            # lake is in the soil from then on.
+            lake, soil = res["Lake"], res["Soil"]
+            @test soil[5] == 0
+            @test abs(soil[6] / (lake[5] / 2) - 1) < 1e-12
+        end
+    end
+
     @testset "every bundled example runs" begin
         for f in sort(filter(endswith(".json"), readdir(EXAMPLES)))
             m = K.load(joinpath(EXAMPLES, f))
@@ -110,8 +139,10 @@ const EXAMPLES = joinpath(@__DIR__, "..", "..", "..", "examples")
             m = lake(whole)
             K.simulation(m)["solver"] = solver
             res = run(m)
-            k = findfirst(t -> 20 < t < 20 + 1e-9, res.t)
-            @test k !== nothing && res.t[k+1] == 25.0
+            # The crossing is at 20, an output time, and is put on it: the
+            # row there is the crossing's, and none stands beside it.
+            k = findfirst(==(20.0), res.t)
+            @test k !== nothing && res.t[k+1] == 25.0 && !any(t -> 20 < t < 20 + 1e-9, res.t)
             # The row at the crossing is the state before; the next, after.
             @test isapprox(res["Lake [Cs-137]"][k], 1000 * exp(-2); rtol=1e-6)
             @test res["Soil [Cs-137]"][k] == 0.0 && res["Lake [Cs-137]"][k+1] == 0.0

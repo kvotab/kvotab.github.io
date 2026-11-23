@@ -6334,7 +6334,9 @@ instant, not at whichever step the solver happened to land on next — which for
 a step spanning a century is a different model. Coming level counts as
 crossing — a lake volume that falls to zero and stays there has crossed zero
 where it got there — and so does moving off after resting level, in the
-direction asked, whichever solver runs the model. A crossing at the very
+direction asked, whichever solver runs the model. A crossing that falls on an
+output time is found at that time exactly, so the time has one row, the
+crossing's, and not a second a hair after it. A crossing at the very
 instant a restart begins is ignored, or an event whose two expressions stay
 equal would fire again forever.
 

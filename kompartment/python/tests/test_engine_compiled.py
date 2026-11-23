@@ -622,6 +622,54 @@ class Behaviour(unittest.TestCase):
             self.assertTrue(np.array_equal(va, vb))
 
 
+class EventOnARow(unittest.TestCase):
+    """An event at an output time lands on it, one row there, on every solver
+    and on both paths -- with its tolerance an ulp or a few apart, to give each
+    its other step sequences (``an event at an output time lands on it on
+    every solver`` in the application's test/run.js). The search stops
+    anywhere from a crossing to its tolerance past it, and a crossing exactly
+    at an output time landed on the row or a few ulps after it as the last
+    bits fell: one row at 20, or that row and the event's own beside it."""
+
+    @staticmethod
+    def project(solver: str, rtol: float) -> Project:
+        return Project({
+            'simulation': {'start_time': 0, 'end_time': 40, 'output_points': 9, 'spacing': 'linear',
+                           'solver': solver, 'rtol': rtol, 'abstol': 1e-12, 'time_unit': 'year'},
+            'compartments': [{'name': 'Lake', 'initial': '1000'}, {'name': 'Soil', 'initial': '0'}],
+            'transfers': [{'name': 'Outflow', 'from': 'Lake', 'to': None, 'rate': '0.1'}],
+            'expressions': [{'name': 'V', 'equation': 'max(20 - time, 0)'}],
+            'triggers': [{'name': 'Gone', 'first': '0', 'second': 'V', 'direction': 'rising'}],
+            'events': [{'name': 'Dried', 'timing': 'trigger', 'trigger': 'Gone',
+                        'actions': [{'kind': 'move', 'from': 'Lake', 'to': 'Soil', 'fraction': '0.5'}]}],
+        })
+
+    def check(self, compiled: bool) -> None:
+        def shifted(v: float, k: int) -> float:
+            return float(np.frombuffer((np.frombuffer(np.float64(v).tobytes(), dtype=np.int64) + k).tobytes())[0])
+        # SciPy's refuse discrete events.
+        for solver in (s for s in kp.simulation.SOLVERS if not s.startswith('scipy')):
+            for k in (0, 1, -1, 2, -3, 5):
+                with self.subTest(solver=solver, ulps=k):
+                    project = self.project(solver, shifted(1e-8, k))
+                    res = run(project, system=build_system(project), compiled=compiled)
+                    t = [float(x) for x in res.t]
+                    self.assertEqual((len(t), [x for x in t if abs(x - 20) < 1e-6]), (9, [20.0]))
+                    # The row at the crossing is the state before it, and half
+                    # of that lake is in the soil from then on.
+                    by = {o['label']: res.series(o) for o in res.outputs()}
+                    lake, soil = by['Lake'], by['Soil']
+                    self.assertEqual(soil[4], 0)
+                    self.assertLess(abs(soil[5] / (lake[4] / 2) - 1), 1e-12)
+
+    def test_on_the_python_path(self) -> None:
+        self.check(False)
+
+    @needs_numba
+    def test_on_the_compiled_path(self) -> None:
+        self.check(True)
+
+
 @unittest.skipUnless(NUMBA_THERE, 'needs numba')
 class OlderNumba(unittest.TestCase):
     """numba 0.60 drops an error a model raises inside a compiled loop -- it

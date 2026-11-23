@@ -416,8 +416,9 @@ export function integrate(method, f, tspan, y0, opts = {}) {
 
 		if (events) {
 			// The event that stopped the previous segment is still sitting on
-			// zero at `t0`; the locator is told so and steps past it.
-			const hit = locateCrossing(events, t, vL, tnew, ynew, vR, denseAt, t0);
+			// zero at `t0`; the locator is told so and steps past it. And a
+			// crossing at a requested time is put on it (see ./events.js).
+			const hit = locateCrossing(events, t, vL, tnew, ynew, vR, denseAt, t0, tspan, nextOut);
 			if (hit) {
 				tnew = hit.t;
 				ynew.set(denseAt(tnew));

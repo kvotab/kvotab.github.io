@@ -729,7 +729,7 @@ function _os_run(st::S, rhs::_OSRhs, tspan::Vector{Float64}, y0::Vector{Float64}
         end
 
         if events !== nothing
-            hit = _ev_locate_crossing(events, t, vl, tnew, ynew, vr, dense_at!, evbuf, t0)
+            hit = _ev_locate_crossing(events, t, vl, tnew, ynew, vr, dense_at!, evbuf, t0, tspan, next_out)
             if hit !== nothing
                 t_e, values, which = hit
                 tnew = t_e

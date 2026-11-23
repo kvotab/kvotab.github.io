@@ -738,10 +738,11 @@ def _probe(kind, tq, evf, P, X, W, IW, pycb, out, cols, k, tnew, h, constrained,
 
 @njit(**_OPTS)
 def _first_crossing(kind, tl, tr, t_start, direction, evbuf, evwhich, evf, P, X, W, IW, pycb, cols, k, tnew, h,
-                    constrained, b, t_from, h_from, y_from, f0, k2, kk, has_nn, is_nn, tmp, evy):
+                    constrained, b, t_from, h_from, y_from, f0, k2, kk, has_nn, is_nn, tmp, evy, times, start):
     """``first_crossing`` between the step's ends ``tl`` and ``tr`` (the
     functions at them in evbuf[0] and evbuf[1]): whether one crossed, and
-    where; its functions there end up in evbuf[3], the events that crossed
+    where -- on one of the reported ``times`` from ``start`` on where it can
+    be; its functions there end up in evbuf[3], the events that crossed
     marked in ``evwhich``."""
     nev = direction.size
     vl = evbuf[0]
@@ -805,6 +806,18 @@ def _first_crossing(kind, tl, tr, t_start, direction, evbuf, evwhich, evf, P, X,
                 vlo[i] = vmid[i]
             same_end = same_end + 1 if kept == -1 else 1
             kept = -1
+    # A reported time inside what is left of the bracket, where the event has
+    # happened by then, is the crossing.
+    j = start
+    while j < times.size and tdir * (times[j] - lo) <= 0:
+        j += 1
+    if j < times.size and tdir * (hi - times[j]) > 0:
+        _probe(kind, times[j], evf, P, X, W, IW, pycb, vmid, cols, k, tnew, h, constrained, b, t_from, h_from, y_from,
+               f0, k2, kk, has_nn, is_nn, tmp, evy)
+        if _any_crossing(vlo, vmid, direction):
+            hi = times[j]
+            for i in range(nev):
+                vhi[i] = vmid[i]
     for i in range(nev):
         evwhich[i] = 1 if _crosses(vlo, vhi, direction, i) else 0
     return True, hi
@@ -1482,7 +1495,7 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, constrai
             if _any_crossing(evbuf[0], evbuf[1], evdir):
                 hit, t_e = _first_crossing(DENSE_NDF, t, tnew, t0, evdir, evbuf, evwhich, evf, P, X, W, IW, pycb, cols,
                                            k, tnew, h, constrained, b, 0.0, 1.0, dense, dense, dense, cols, False,
-                                           evwhich, dense, evy)
+                                           evwhich, dense, evy, tspan, next_out)
             if hit:
                 _regrid(cols, k, (t_e - tnew) / h, (t_e - t) / h, tmpv)
                 h = t_e - t
@@ -2051,9 +2064,12 @@ def onestep(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, nn_i
             hit = False
             t_e = 0.0
             if _any_crossing(evbuf[0], evbuf[1], evdir):
-                hit, t_e = _first_crossing(DENSE_DP if not ros else DENSE_ROS, t, tnew, t0, evdir, evbuf, evwhich,
+                # Chosen outside the call: numba cannot read a call of more
+                # than thirty arguments with a choice inside it.
+                dense_kind = DENSE_DP if not ros else DENSE_ROS
+                hit, t_e = _first_crossing(dense_kind, t, tnew, t0, evdir, evbuf, evwhich,
                                            evf, P, X, W, IW, pycb, kk, 0, tnew, h, nn_idx, dense, t_from, h_from,
-                                           y_from, f0, k2, kk, has_nn, is_nn, tmp, evy)
+                                           y_from, f0, k2, kk, has_nn, is_nn, tmp, evy, tspan, next_out)
             if hit:
                 tnew = t_e
                 _dense_onestep(tnew, ros, t_from, h_from, y_from, f0, k2, kk, has_nn, is_nn, tmp, ynew)

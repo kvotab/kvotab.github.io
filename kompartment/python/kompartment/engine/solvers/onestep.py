@@ -280,7 +280,7 @@ def integrate(method: Any, f: Callable[[float, np.ndarray], np.ndarray], tspan: 
             return out
 
         if events is not None:
-            hit = locate_crossing(events, t, vl, tnew, ynew, vr, dense_at, t0)
+            hit = locate_crossing(events, t, vl, tnew, ynew, vr, dense_at, t0, tspan, next_out)
             if hit is not None:
                 tnew = hit['t']
                 ynew[:] = dense_at(tnew)

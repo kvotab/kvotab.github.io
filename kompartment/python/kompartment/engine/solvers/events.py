@@ -52,7 +52,8 @@ def _earliest_secant(vlo: np.ndarray, vhi: np.ndarray, direction: np.ndarray, en
 
 def first_crossing(values_at: Callable[[float], np.ndarray], tl: float, vl: np.ndarray, tr: float, vr: np.ndarray,
                    direction: np.ndarray, t_start: Optional[float] = None,
-                   enabled: Optional[np.ndarray] = None) -> Optional[Dict[str, Any]]:
+                   enabled: Optional[np.ndarray] = None, times: Optional[Any] = None,
+                   start: int = 0) -> Optional[Dict[str, Any]]:
     tol = crossing_tolerance(tl, tr)
     tdir = math.copysign(1.0, tr - tl) if tr != tl else 0.0
     lo = tl
@@ -98,14 +99,29 @@ def first_crossing(values_at: Callable[[float], np.ndarray], tl: float, vl: np.n
             vlo = vmid
             same_end = same_end + 1 if kept == -1 else 1
             kept = -1
+    # A reported time inside what is left of the bracket, where the event has
+    # happened by then, is the crossing: one exactly at a row lands on it,
+    # whatever the last bits of the run.
+    if times is not None:
+        k = start
+        while k < len(times) and tdir * (float(times[k]) - lo) <= 0:
+            k += 1
+        if k < len(times) and tdir * (hi - float(times[k])) > 0:
+            tk = float(times[k])
+            vt = np.array(values_at(tk), dtype=float)
+            if any_crossing(vlo, vt, direction, enabled):
+                hi = tk
+                vhi = vt
     which = [i for i in range(len(vlo)) if crosses(vlo, vhi, direction, i, enabled)]
     return {'t': hi, 'values': vhi, 'which': which}
 
 
 def locate_crossing(events: Any, t: float, vl: np.ndarray, tnew: float, ynew: np.ndarray, vr: np.ndarray,
-                    dense_at: Callable[[float], np.ndarray], t_start: Optional[float]) -> Optional[Dict[str, Any]]:
+                    dense_at: Callable[[float], np.ndarray], t_start: Optional[float],
+                    times: Optional[Any] = None, start: int = 0) -> Optional[Dict[str, Any]]:
     """Reads the event functions at the end of a step (into ``vr``) and, if
-    any crossed, finds the first crossing inside it."""
+    any crossed, finds the first crossing inside it -- on one of ``times``
+    (the solver's own rows, from ``start`` on) where it can be."""
     vr[:] = events.fun(tnew, ynew)
     enabled = getattr(events, 'enabled', None)
     if not any_crossing(vl, vr, events.direction, enabled):
@@ -114,4 +130,4 @@ def locate_crossing(events: Any, t: float, vl: np.ndarray, tnew: float, ynew: np
     def at(tq: float) -> np.ndarray:
         return np.array(events.fun(tq, dense_at(tq)), dtype=float)
 
-    return first_crossing(at, t, vl, tnew, vr, events.direction, t_start, enabled)
+    return first_crossing(at, t, vl, tnew, vr, events.direction, t_start, enabled, times, start)

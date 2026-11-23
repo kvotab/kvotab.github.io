@@ -1606,7 +1606,8 @@ export function ndf(f, tspan, y0, options = {}) {
 		}
 
 		if (events) {
-			const hit = locateCrossing(events, t, vL, tnew, y, vR, denseAt, tStart);
+			// A crossing at a requested time is put on it (see ../core/events.js).
+			const hit = locateCrossing(events, t, vL, tnew, y, vR, denseAt, tStart, tspan, nextOut);
 			if (hit) {
 				// The table is re-expressed to end at the crossing, with the
 				// step from the start of this one to it, so the state there is

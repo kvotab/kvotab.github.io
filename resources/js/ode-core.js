@@ -2569,6 +2569,14 @@
    * at again. That is FACSIMILE's WHEN against its WHENEVER, which is the only
    * difference between the two.
    *
+   * **A crossing at an output time is put on it.** The search stops anywhere
+   * from the crossing to a tolerance past it, so a crossing exactly at a time
+   * the caller reports -- `max(20 - time, 0)` reaching zero at a row at 20 --
+   * landed on the row or a few ulps after it as the last bits of the run fell:
+   * one row at that time, or two. So the caller may say which times it reports (`times`, from
+   * `from` on), and the first of them inside what is left of the bracket is
+   * the answer, where the event has happened by then.
+   *
    * Shared by facsimile.html, rtm.html and Kompartment. The source is
    * resources/js/ode/ in the site; scripts/build-solvers.mjs copies it into
    * kompartment/src/ode/ and builds resources/js/ode-core.js from it. See
@@ -2633,12 +2641,15 @@
    * @param {number} tR  time at the end of the step
    * @param {ArrayLike<number>} vR  event values there
    * @param {ArrayLike<number>} direction  +1, -1 or 0 per component
-   * @param {{tol?: number, tStart?: number, enabled?: ArrayLike<number>}|number} [opts]
+   * @param {{tol?: number, tStart?: number, enabled?: ArrayLike<number>,
+   *          times?: ArrayLike<number>, from?: number}|number} [opts]
    *        `tol`: how closely to pin the crossing down. A bare number is read
    *        as this. `tStart`: the time the *segment* began at; a component that
    *        is exactly zero there is the event that stopped the previous segment
    *        and is not a crossing until it has left zero. `enabled`: the mask of
-   *        events still switched on.
+   *        events still switched on. `times`: the times the caller reports, in
+   *        the direction of travel, those before `from` already reported; the
+   *        crossing is put on one inside the bracket's last stretch.
    * @returns {{t: number, values: ArrayLike<number>, which: number[]}|null}
    */
   function firstCrossing(valuesAt, tL, vL, tR, vR, direction, opts) {
@@ -2703,6 +2714,21 @@
   		}
   	}
 
+  	// A reported time inside what is left of the bracket, where the event has
+  	// happened by then, is the crossing.
+  	const times = opts?.times;
+  	if (times) {
+  		let k = opts.from ?? 0;
+  		while (k < times.length && tdir * (times[k] - lo) <= 0) k++;
+  		if (k < times.length && tdir * (hi - times[k]) > 0) {
+  			const vT = valuesAt(times[k]);
+  			if (anyCrossing(vlo, vT, direction, enabled)) {
+  				hi = times[k];
+  				vhi = vT;
+  			}
+  		}
+  	}
+
   	const which = [];
   	for (let i = 0; i < vlo.length; i++) if (crosses(vlo, vhi, direction, i, enabled)) which.push(i);
   	// The bracket has closed on the crossing: its right end is the first
@@ -2726,8 +2752,11 @@
    * @param {(tq: number) => Float64Array} denseAt  the solver's own interpolant;
    *        the state it returns is read at once and may be a reused buffer
    * @param {number} tStart  the time this segment of the run began at
+   * @param {ArrayLike<number>} [times]  the times the solver reports, which a
+   *        crossing is put on where it can be (see firstCrossing)
+   * @param {number} [from]  the first of them not yet reported
    */
-  function locateCrossing(events, t, vL, tnew, ynew, vR, denseAt, tStart) {
+  function locateCrossing(events, t, vL, tnew, ynew, vR, denseAt, tStart, times, from) {
   	events.fun(tnew, ynew, vR);
   	const enabled = events.enabled ?? null;
   	if (!anyCrossing(vL, vR, events.direction, enabled)) return null;
@@ -2736,7 +2765,7 @@
   		events.fun(tq, denseAt(tq), out);
   		return out;
   	};
-  	return firstCrossing(at, t, vL, tnew, vR, events.direction, { tStart, enabled });
+  	return firstCrossing(at, t, vL, tnew, vR, events.direction, { tStart, enabled, times, from });
   }
 
   /* ---------- core/onestep.js ---------- */
@@ -3156,8 +3185,9 @@
 
   		if (events) {
   			// The event that stopped the previous segment is still sitting on
-  			// zero at `t0`; the locator is told so and steps past it.
-  			const hit = locateCrossing(events, t, vL, tnew, ynew, vR, denseAt, t0);
+  			// zero at `t0`; the locator is told so and steps past it. And a
+  			// crossing at a requested time is put on it (see ./events.js).
+  			const hit = locateCrossing(events, t, vL, tnew, ynew, vR, denseAt, t0, tspan, nextOut);
   			if (hit) {
   				tnew = hit.t;
   				ynew.set(denseAt(tnew));
@@ -4823,7 +4853,8 @@
   		}
 
   		if (events) {
-  			const hit = locateCrossing(events, t, vL, tnew, y, vR, denseAt, tStart);
+  			// A crossing at a requested time is put on it (see ../core/events.js).
+  			const hit = locateCrossing(events, t, vL, tnew, y, vR, denseAt, tStart, tspan, nextOut);
   			if (hit) {
   				// The table is re-expressed to end at the crossing, with the
   				// step from the start of this one to it, so the state there is

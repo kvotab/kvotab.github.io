@@ -118,9 +118,11 @@ solution names its function in `which` and every function crossing at that
 instant in `all`. The time and state handed back are the first found at which
 the function has crossed -- the far end of the root's bracket, within 1e-14 of
 the step -- so that a run restarted from them does not meet the same crossing
-again. The solution keeps one row an instant: an event at a time a row was
-saved at takes that row's place, with the state the run goes on from, and a
-time asked for that an event lands on is the event's row.
+again; or a time in `saveat` inside the bracket at its last, where the function
+has crossed by then, read there exactly. The solution keeps one row an
+instant: an event at a time a row was saved at takes that row's place, with
+the state the run goes on from, and a time asked for that an event lands on
+is the event's row.
 
 ## Things worth knowing
 
@@ -485,3 +487,15 @@ Four more, found the same day on the pages that restart at every event:
     ending on it as a tstop, the crossing at the step's end -- left the row
     read off the step there and the event's own row, both at that time. The
     event's row now takes the other's place.
+
+## Fixed on 2026-11-23
+
+15. **A crossing at a time asked for.** The search stops anywhere from a
+    crossing to its tolerance past it, so a crossing exactly at a time in
+    `saveat` -- `max(20 - t, 0)` against a row at 20 -- landed on the row or an
+    ulp or two after it as the last bits of the run fell: one row at that time,
+    or the row and the event's own beside it. A time still to be saved inside
+    the bracket at its last, where the function has crossed by then, is now the
+    crossing, read at that time exactly, and the step ends on it exactly rather
+    than at its start plus the step. Found here, where a model and its
+    re-import, run alike, came back with nine rows and ten.

@@ -1351,7 +1351,7 @@ function _ndf_solve(f::RHSFunction, tspan::Vector{Float64}, y0::Vector{Float64},
             end
 
             if events !== nothing
-                hit = _ev_locate_crossing(events, s.t, vl, s.tnew, y, vr, dense_at!, s.dense, t_start)
+                hit = _ev_locate_crossing(events, s.t, vl, s.tnew, y, vr, dense_at!, s.dense, t_start, tspan, next_out)
                 if hit !== nothing
                     t_e, values, which = hit
                     _ndf_regrid!(s, k, (t_e - s.tnew) / s.h, (t_e - s.t) / s.h)

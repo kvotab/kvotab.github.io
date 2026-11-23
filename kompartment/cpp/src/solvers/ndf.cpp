@@ -1246,7 +1246,7 @@ Solution ndf_solve(const RhsFunction& f, const Vec& tspan, const Vec& y0, double
 
             if (events != nullptr) {
                 const bool hit = sv::ev_locate_crossing(*events, event_work, s.t, vl, s.tnew, y, vr, dense_at, s.dense,
-                                                        t_start);
+                                                        t_start, &tspan, next_out);
                 if (hit) {
                     const double t_e = event_work.t;
                     regrid(s, k, (t_e - s.tnew) / s.h, (t_e - s.t) / s.h);

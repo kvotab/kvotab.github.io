@@ -2299,12 +2299,15 @@ def _eval_at(method, coef, ros, fb, qn, ra, ex, r23, f, model, pycb, ctr, theta,
 
 @njit(**_OPTS)
 def _locate_root(method, coef, ros, fb, qn, ra, ex, r23, f, ctr, evf, model, pycb, which, g_start, t, dt, uprev, u,
-                 fsalfirst, fsallast, ub, gb):
+                 fsalfirst, fsallast, ub, gb, saveat, saveat_at):
     """``_locate_root``: where in the step, as theta, event function ``which``
     crosses zero -- bisection then Illinois on the step's interpolant; the
     bracket's far end. Reaching zero is crossing, and the search goes on from
     a zero to the first theta where the function has reached it; from a start
-    on zero, the first where it has left it."""
+    on zero, the first where it has left it. With its time, and whether that
+    is a time still to be saved (``saveat`` from ``saveat_at`` on) inside the
+    bracket's last stretch, where the function has crossed by then -- which
+    is the answer when there is one."""
     P, X, Wm, IW = model
     lo = 0.0
     hi = 1.0
@@ -2338,17 +2341,39 @@ def _locate_root(method, coef, ros, fb, qn, ra, ex, r23, f, ctr, evf, model, pyc
             flo = fmid
             fhi *= 0.5
         it += 1
-    return hi
+    t_hi = t + hi * dt
+    tdir = 1.0 if dt > 0 else -1.0 if dt < 0 else 0.0
+    tlo = t + lo * dt
+    k = saveat_at
+    while k < saveat.size and tdir * (saveat[k] - tlo) <= 0:
+        k += 1
+    if k < saveat.size and tdir * (t_hi - saveat[k]) > 0:
+        ts = saveat[k]
+        theta = (ts - t) / dt
+        _eval_at(method, coef, ros, fb, qn, ra, ex, r23, f, model, pycb, ctr, theta, t, dt, uprev, u, fsalfirst,
+                 fsallast, ub)
+        evf(ts, ub, gb, P, X, Wm, IW, pycb)
+        g = gb[which]
+        if g_start < 0:
+            crossed = not g < 0
+        elif g_start > 0:
+            crossed = g <= 0
+        else:
+            crossed = g != 0
+        if crossed:
+            return theta, ts, True
+    return hi, t_hi, False
 
 
 @njit(**_OPTS)
 def _find_event(method, coef, ros, fb, qn, ra, ex, r23, f, ctr, evf, model, pycb, evdir, evbuf, evwhich, found, t, dt,
-                t0, uprev, u, fsalfirst, fsallast, ub, u_event):
+                t0, uprev, u, fsalfirst, fsallast, ub, u_event, saveat, saveat_at):
     """``_find_event``: the earliest crossing inside the step just taken, each
     function in its own direction (the functions at the step's start in
     evbuf[0]); functions crossing together are reported together. Whether
-    one crossed, and the time where every one of them has: the state there in
-    u_event, the events marked in evwhich."""
+    one crossed, the time where every one of them has, and whether that is a
+    time still to be saved it was put on: the state there in u_event, the
+    events marked in evwhich."""
     P, X, Wm, IW = model
     g_prev = evbuf[0]
     g_now = evbuf[1]
@@ -2367,18 +2392,19 @@ def _find_event(method, coef, ros, fb, qn, ra, ex, r23, f, ctr, evf, model, pycb
         rising = (a < 0 and b >= 0) or (from_zero and b > 0)
         falling = (a > 0 and b <= 0) or (from_zero and b < 0)
         if (d >= 0 and rising) or (d <= 0 and falling):
-            theta = _locate_root(method, coef, ros, fb, qn, ra, ex, r23, f, ctr, evf, model, pycb, i, a, t, dt, uprev,
-                                 u, fsalfirst, fsallast, ub, evbuf[2])
-            t_event = t + theta * dt
+            theta, t_event, exact = _locate_root(method, coef, ros, fb, qn, ra, ex, r23, f, ctr, evf, model, pycb, i,
+                                                 a, t, dt, uprev, u, fsalfirst, fsallast, ub, evbuf[2], saveat,
+                                                 saveat_at)
             # A root at the instant the solve began is not a crossing (``_root_at_start``).
             if abs(t_event - t0) <= 16 * EPS * _jmax(abs(t0), abs(dt)):
                 continue
             found[0, nfound] = theta
             found[1, nfound] = t_event
             found[2, nfound] = i
+            found[3, nfound] = 1.0 if exact else 0.0
             nfound += 1
     if nfound == 0:
-        return False, 0.0
+        return False, 0.0, False
     first = 0
     for k in range(1, nfound):
         if found[0, k] < found[0, first]:
@@ -2396,7 +2422,7 @@ def _find_event(method, coef, ros, fb, qn, ra, ex, r23, f, ctr, evf, model, pycb
                 last = k
     _eval_at(method, coef, ros, fb, qn, ra, ex, r23, f, model, pycb, ctr, found[0, last], t, dt, uprev, u, fsalfirst,
              fsallast, u_event)
-    return True, found[1, last]
+    return True, found[1, last], found[3, last] != 0
 
 
 @njit(**_OPTS)
@@ -2742,7 +2768,7 @@ def julia(f, store, evf, jac_cb, progress, factor_cb, solve_cb, P, X, Wm, IW, py
     utmp = np.zeros(n)
     ub = np.zeros(n)
     u_event = np.zeros(n)
-    found = np.zeros((3, max(nev, 1)))
+    found = np.zeros((4, max(nev, 1)))
     rows = 0
     t = t0
     dt = 0.0
@@ -3010,9 +3036,11 @@ def julia(f, store, evf, jac_cb, progress, factor_cb, solve_cb, P, X, Wm, IW, py
         tnew = t + dt
         hit = False
         t_e = 0.0
+        exact_e = False
         if nev:
-            hit, t_e = _find_event(method, coef, ros, fb, qn, ra, ex, r23, f, ctr, evf, model, pycb, evdir, evbuf,
-                                   evwhich, found, t, dt, t0, uprev, u, fsalfirst, fsallast, ub, u_event)
+            hit, t_e, exact_e = _find_event(method, coef, ros, fb, qn, ra, ex, r23, f, ctr, evf, model, pycb, evdir,
+                                            evbuf, evwhich, found, t, dt, t0, uprev, u, fsalfirst, fsallast, ub,
+                                            u_event, saveat, sa)
         naccept += 1
         clamped = _clamp(nn, u) if has_nn else 0
         t_end = t_e if hit else tnew
@@ -3040,7 +3068,9 @@ def julia(f, store, evf, jac_cb, progress, factor_cb, solve_cb, P, X, Wm, IW, py
                 u[q] = u_event[q]
             if has_nn:
                 _clamp(nn, u)
-        ta_ = t + dt
+        # Where the step ends: an event put on a saved time is at that time,
+        # not at the step's start plus the step to it, which can be an ulp away.
+        ta_ = t_e if hit and exact_e else t + dt
         if has_store and store(ta_, u, P, X, Wm, IW, pycb) != 0:
             status = E_HISTORY
             break
@@ -3054,6 +3084,8 @@ def julia(f, store, evf, jac_cb, progress, factor_cb, solve_cb, P, X, Wm, IW, py
 
         dtjust = dt
         t += dt
+        if hit and exact_e:
+            t = ta_
         if abs(tf - t) <= t_eps:
             t = tf
         elif tstop_at < ntstops and abs(tstops[tstop_at] - t) <= 16 * _jmax(_ulp(t), MIN_VALUE):

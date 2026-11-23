@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import math
 from types import SimpleNamespace
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -277,12 +277,16 @@ def _direction_of(ev: Any, i: int) -> float:
 
 
 def _locate_root(integ: Integrator, eval_at: Callable[[float], np.ndarray], ev: Any, which: int,
-                 g_start: float) -> float:
+                 g_start: float, saveat: Optional[List[float]] = None,
+                 saveat_at: int = 0) -> Tuple[float, float, bool]:
     """Where in the step, as theta, event function ``which`` crosses zero:
     bisection then Illinois on the step's interpolant (``locateRoot``).
     Reaching zero is crossing, and the search goes on from a zero to the first
     theta where the function has reached it; from a start on zero, the first
-    where it has left it."""
+    where it has left it. With its time, and whether that is a time still to
+    be saved (``saveat`` from ``saveat_at`` on) inside the bracket's last
+    stretch, where the function has crossed by then -- which is the answer
+    when there is one."""
     def g(theta: float) -> float:
         u = eval_at(theta)
         return float(np.asarray(ev.fun(integ.t + theta * integ.dt, u), dtype=float)[which])
@@ -320,8 +324,21 @@ def _locate_root(integ: Integrator, eval_at: Callable[[float], np.ndarray], ev: 
         it += 1
     # The bracket's far end, where the function has crossed: a run restarted
     # from the middle could start a hair short of the crossing and find it
-    # again (``locateRoot`` explains).
-    return hi
+    # again (``locateRoot`` explains). Or a time still to be saved inside the
+    # bracket's last stretch, read at that time exactly.
+    t = integ.t + hi * integ.dt
+    if saveat is not None:
+        tdir = 1.0 if integ.dt > 0 else -1.0 if integ.dt < 0 else 0.0
+        tlo = integ.t + lo * integ.dt
+        k = saveat_at
+        while k < len(saveat) and tdir * (saveat[k] - tlo) <= 0:
+            k += 1
+        if k < len(saveat) and tdir * (t - saveat[k]) > 0:
+            ts = saveat[k]
+            theta = (ts - integ.t) / integ.dt
+            if crossed_at(float(np.asarray(ev.fun(ts, eval_at(theta)), dtype=float)[which])):
+                return theta, ts, True
+    return hi, t, False
 
 
 def _root_at_start(integ: Integrator, t_event: float) -> bool:
@@ -331,10 +348,12 @@ def _root_at_start(integ: Integrator, t_event: float) -> bool:
 
 
 def _find_event(integ: Integrator, eval_at: Callable[[float], np.ndarray], g_prev: np.ndarray,
-                work: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+                work: Dict[str, Any], saveat: Optional[List[float]] = None,
+                saveat_at: int = 0) -> Optional[Dict[str, Any]]:
     """The earliest crossing inside the step just taken, each function in its
     own direction; functions crossing together are reported together
-    (``findEvent``)."""
+    (``findEvent``). A crossing is put on a time still to be saved where it
+    can be (``_locate_root``)."""
     ev = integ.prob.events
     if ev is None:
         return None
@@ -356,11 +375,10 @@ def _find_event(integ: Integrator, eval_at: Callable[[float], np.ndarray], g_pre
         return None
     found = []
     for which in crossed:
-        theta = _locate_root(integ, eval_at, ev, which, float(g_prev[which]))
-        t_event = integ.t + theta * integ.dt
+        theta, t_event, exact = _locate_root(integ, eval_at, ev, which, float(g_prev[which]), saveat, saveat_at)
         if _root_at_start(integ, t_event):
             continue
-        found.append((theta, t_event, which))
+        found.append((theta, t_event, which, exact))
     if not found:
         return None
     first = found[0]
@@ -376,7 +394,7 @@ def _find_event(integ: Integrator, eval_at: Callable[[float], np.ndarray], g_pre
             last = f
     every = sorted(f[2] for f in group)
     work['u_event'] = eval_at(last[0])
-    return {'theta': last[0], 't': last[1], 'which': every[0], 'all': every}
+    return {'theta': last[0], 't': last[1], 'which': every[0], 'all': every, 'exact': last[3]}
 
 
 def solve(prob: ODEProblem, alg: Any, options: Optional[Dict[str, Any]] = None) -> ODESolution:
@@ -640,7 +658,7 @@ def solve(prob: ODEProblem, alg: Any, options: Optional[Dict[str, Any]] = None) 
         if prob.events is not None:
             if not cache.has_fsal_last and getattr(cache, 'interpolate', None) is None:
                 integ.fsallast[:] = integ.f(tnew, integ.u)
-            ev = _find_event(integ, eval_at, g_prev, work)  # type: ignore[arg-type]
+            ev = _find_event(integ, eval_at, g_prev, work, saveat, saveat_at)  # type: ignore[arg-type]
 
         stats['naccept'] += 1
         clamped = integ.clamp(integ.u) if integ.non_negative is not None else 0
@@ -664,10 +682,13 @@ def solve(prob: ODEProblem, alg: Any, options: Optional[Dict[str, Any]] = None) 
             integ.dt = ev['t'] - integ.t
             integ.u[:] = work['u_event']
             integ.clamp(integ.u)
+        # Where the step ends: an event put on a saved time is at that time,
+        # not at the step's start plus the step to it, which can be an ulp away.
+        step_end = ev['t'] if ev is not None and ev['exact'] else integ.t + integ.dt
         if opts['save_everystep'] and saveat is None:
-            remember(integ.t + integ.dt, integ.u)
+            remember(step_end, integ.u)
         if opts['on_accepted'] is not None:
-            opts['on_accepted'](integ.t + integ.dt, integ.u)
+            opts['on_accepted'](step_end, integ.u)
         if integ.auto_abstol:
             want = opts['reltol'] * np.abs(integ.u)
             up = want > integ.abstol
@@ -675,6 +696,8 @@ def solve(prob: ODEProblem, alg: Any, options: Optional[Dict[str, Any]] = None) 
 
         dtjust = integ.dt
         integ.t += integ.dt
+        if ev is not None and ev['exact']:
+            integ.t = step_end
         if abs(tf - integ.t) <= t_eps:
             integ.t = tf
         elif tstop_at < len(tstops) and abs(tstops[tstop_at] - integ.t) <= 16 * jmax(ulp(integ.t), MIN_VALUE):

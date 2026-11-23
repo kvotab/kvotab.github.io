@@ -638,7 +638,8 @@ Solution os_run(S& st, OsRhs& rhs, const Vec& tspan, const Vec& y0, double rtol,
         }
 
         if (events != nullptr) {
-            const bool hit = sv::ev_locate_crossing(*events, event_work, t, vl, tnew, ynew, vr, dense_at, evbuf, t0);
+            const bool hit = sv::ev_locate_crossing(*events, event_work, t, vl, tnew, ynew, vr, dense_at, evbuf, t0, &tspan,
+                                                    next_out);
             if (hit) {
                 tnew = event_work.t;
                 dense_at(dense, tnew);

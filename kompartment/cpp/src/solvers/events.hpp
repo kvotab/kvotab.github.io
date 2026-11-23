@@ -88,10 +88,13 @@ struct EventWork {
 
 /// The first crossing in (tl, tr]: true with `w.t`, `w.values` and `w.which`
 /// set, or false. `values_at(out, t)` writes the event functions' values at `t`
-/// (read from the step's interpolant).
+/// (read from the step's interpolant). The crossing is put on one of `times`
+/// (the times the solver reports, from `from` on) inside the bracket's last
+/// stretch, where the event has happened by then.
 template <class F>
 bool ev_first_crossing(EventWork& w, F&& values_at, double tl, const Vec& vl, double tr, const Vec& vr,
-                       const std::vector<std::int8_t>& direction, double t_start) {
+                       const std::vector<std::int8_t>& direction, double t_start, const Vec* times = nullptr,
+                       std::size_t from = 0) {
     const std::size_t n = vl.size();
     const double tol = ev_crossing_tolerance(tl, tr);
     const double tdir = tr != tl ? std::copysign(1.0, tr - tl) : 0.0;
@@ -151,6 +154,23 @@ bool ev_first_crossing(EventWork& w, F&& values_at, double tl, const Vec& vl, do
             kept = -1;
         }
     }
+    // A reported time inside what is left of the bracket, where the event has
+    // happened by then, is the crossing (`firstCrossing`).
+    if (times != nullptr) {
+        std::size_t k = from;
+        while (k < times->size() && tdir * ((*times)[k] - lo) <= 0) k++;
+        if (k < times->size() && tdir * (hi - (*times)[k]) > 0) {
+            Vec* vt = &w.scratch[0];
+            if (vt == vlo || vt == vhi) vt = &w.scratch[1];
+            if (vt == vlo || vt == vhi) vt = &w.scratch[2];
+            std::fill(vt->begin(), vt->end(), 0.0);
+            values_at(*vt, (*times)[k]);
+            if (ev_any_crossing(*vlo, *vt, direction)) {
+                hi = (*times)[k];
+                vhi = vt;
+            }
+        }
+    }
     w.which.clear();
     for (std::size_t i = 0; i < n; i++)
         if (ev_crosses(*vlo, *vhi, direction, i)) w.which.push_back(static_cast<int>(i));
@@ -160,19 +180,20 @@ bool ev_first_crossing(EventWork& w, F&& values_at, double tl, const Vec& vl, do
 }
 
 /// Reads the event functions at the end of a step (into `vr`) and, if any
-/// crossed, finds the first crossing inside it (`locate_crossing`).
-/// `dense_at(out, t)` writes the state at `t` inside the step; `ybuf` is
-/// room for it.
+/// crossed, finds the first crossing inside it (`locate_crossing`) -- on one of
+/// `times`, from `from` on, where it can be. `dense_at(out, t)` writes the
+/// state at `t` inside the step; `ybuf` is room for it.
 template <class D>
 bool ev_locate_crossing(const EventFunctions& ev, EventWork& w, double t, const Vec& vl, double tnew, const Vec& ynew,
-                        Vec& vr, D&& dense_at, Vec& ybuf, double t_start) {
+                        Vec& vr, D&& dense_at, Vec& ybuf, double t_start, const Vec* times = nullptr,
+                        std::size_t from = 0) {
     ev.fun(vr, tnew, ynew);
     if (!ev_any_crossing(vl, vr, ev.direction)) return false;
     auto at = [&](Vec& out, double tq) {
         dense_at(ybuf, tq);
         ev.fun(out, tq, ybuf);
     };
-    return ev_first_crossing(w, at, t, vl, tnew, vr, ev.direction, t_start);
+    return ev_first_crossing(w, at, t, vl, tnew, vr, ev.direction, t_start, times, from);
 }
 
 }  // namespace sv

@@ -4,8 +4,10 @@
 // table of the run -- every series at every output time -- compared as text,
 // with the step counts; or the message a run fails with.
 
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 
 #include "check.hpp"
@@ -82,6 +84,48 @@ int main() {
                 if (want.has("error")) CHECK_MSG(want.get("error").as_string() == e.what(), said + " fails with: " + e.what() + "\n   there: " + want.get("error").as_string());
                 else CHECK_MSG(false, said + " runs there, fails here: " + e.what());
             }
+        }
+    }
+    // An event at an output time lands on it, one row there: `max(20 - time,
+    // 0)` reaches zero at 20, where there is a row, and the search -- which
+    // stops anywhere from a crossing to its tolerance past it -- puts it on the
+    // row, not on it or a few ulps after it as the last bits fall (the
+    // application's test/run.js, `an event at an output time lands on it on
+    // every solver`). Each solver, with its tolerance an ulp or a few apart.
+    for (const char* solver : {"ndf", "ros23", "dp45"}) {
+        for (int k : {0, 1, -1, 2, -3, 5}) {
+            double rtol = 1e-8;
+            std::int64_t bits = 0;
+            std::memcpy(&bits, &rtol, sizeof bits);
+            bits += k;
+            std::memcpy(&rtol, &bits, sizeof rtol);
+            Json m = parse_json(R"json({"name": "Lake", "simulation": {"start_time": 0, "end_time": 40, "output_points": 9,
+                "spacing": "linear", "abstol": 1e-12, "time_unit": "year"},
+                "compartments": [{"name": "Lake", "initial": "1000"}, {"name": "Soil", "initial": "0"}],
+                "transfers": [{"name": "Outflow", "from": "Lake", "to": null, "rate": "0.1"}],
+                "expressions": [{"name": "V", "equation": "max(20 - time, 0)"}],
+                "triggers": [{"name": "Gone", "first": "0", "second": "V", "direction": "rising"}],
+                "events": [{"name": "Dried", "timing": "trigger", "trigger": "Gone",
+                            "actions": [{"kind": "move", "from": "Lake", "to": "Soil", "fraction": "0.5"}]}]})json");
+            m["simulation"].set("solver", Json(solver));
+            m["simulation"].set("rtol", Json(rtol));
+            const std::string said = std::string("an event at an output time, ") + solver + ", rtol " + std::to_string(k) + " ulps off";
+            auto project = std::make_shared<const Project>(m);
+            Results res = run_project(project, std::make_shared<System>(project));
+            int near = 0;
+            bool on = false;
+            for (double t : res.t) {
+                if (std::fabs(t - 20) < 1e-6) {
+                    near++;
+                    on = t == 20.0;
+                }
+            }
+            CHECK_MSG(res.t.size() == 9 && near == 1 && on, said + ": " + std::to_string(res.t.size()) + " rows, " + std::to_string(near) + " near 20");
+            // The row at the crossing is the state before it, and half of that
+            // lake is in the soil from then on.
+            const std::vector<double> lake = res.series(std::string("Lake"));
+            const std::vector<double> soil = res.series(std::string("Soil"));
+            CHECK_MSG(soil.size() == 9 && soil[4] == 0 && std::fabs(soil[5] / (lake[4] / 2) - 1) < 1e-12, said + ": the soil after the event");
         }
     }
     set_parity(false);

@@ -54,7 +54,7 @@
     };
   })();
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261118c';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261123';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
