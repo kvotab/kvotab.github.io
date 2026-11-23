@@ -21,7 +21,9 @@ array's fields, the text of strings and function handles; and that -v7 and
 -v7.3 give the same tree, as do the two byte orders. A damaged file opens with
 what can be read, a variable that cannot is said so, and a file that is no
 MAT-file is refused with the reason. Nothing in a file reaches the page as
-markup.
+markup. Two vectors of 200,000 values are drawn one against the other, with
+the statistics across the first's range (spread into Math.min, that range
+ran past the stack at some 125,000 values).
 
 Start the server and the browser as in README.md, then
 
@@ -149,6 +151,16 @@ def vectors():
         matrix(6, [2, 3, 4], 'cube', [doubles(list(range(24)), e)], e),
         matrix(6, [2, 2, 2, 3], 'hyper', [doubles(list(range(24)), e)], e),
     ])
+
+
+BIG = [1 + (k * 37 % 1000) / 10 for k in range(200000)]
+
+
+def big_vectors():
+    """Two vectors of 200,000 values, one drawn against the other."""
+    e = '<'
+    return (header(e) + matrix(6, [len(BIG), 1], 'a', [doubles(BIG, e)], e)
+            + matrix(6, [len(BIG), 1], 'b', [doubles([2 * x + 1 for x in BIG], e)], e))
 
 
 HOSTILE = '<img src=x onerror="window.__matXss=1">'
@@ -381,6 +393,7 @@ async def main():
         'notmat.mat': bytes(range(256)) * 4,
         'vectors.mat': vectors(),
         'vectors-b.mat': vectors(),
+        'bigvectors.mat': big_vectors(),
     }
     v7 = open(os.path.join(FIXTURES, 'matlab-v7.mat'), 'rb').read()
     written['truncated.mat'] = v7[:len(v7) * 3 // 5]
@@ -805,6 +818,23 @@ async def main():
             banner = await page.ev("document.querySelector('#failureBanner .failure-banner-text')?.textContent || ''")
             check('a file named .mat that is no MAT-file is refused, saying why',
                   ('it starts with none of the headers MATLAB writes' in banner, await page.ev('fileOrder.length')), (True, before))
+
+            # --- vectors of 200,000 ----------------------------------------------
+            await pick_files(page, [at('bigvectors.mat')])
+            await page.ev("""(async () => {
+                for (const k of Object.keys(fileStates)) if (fileStates[k] && k !== 'bigvectors.mat') toggleFileState(k);
+                await __wait(800); })()""", timeout=60)
+            await page.ev("__click('/a', false)")
+            await page.ev(f"{add}('/b')")
+            await page.ev("document.querySelector('#histModeToggle button[data-mode=scatter]').click()")
+            await page.ev(f"({pick})(0)")
+            await page.ev("document.getElementById('histStats').click()")
+            big = await page.ev(PREVIEW, timeout=60)
+            levels = {t['name'].rsplit(' (', 1)[0]: t for t in big['traces'][1:]}
+            check('two vectors of 200,000: b drawn against a, its statistics levels across the range of a',
+                  ((big['traces'][0]['name'], big['traces'][0]['n']), levels.get('Mean', {}).get('x')), (('b', 200000), [min(BIG), max(BIG)]))
+            await page.ev("document.getElementById('histStats').click()")
+            await page.ev("document.querySelector('#histModeToggle button[data-mode=histogram]').click()")
 
             expected_errors = ('none of the headers MATLAB writes', 'could not be read')
             check('no console errors but the refusal', [m for k, m in page.logs

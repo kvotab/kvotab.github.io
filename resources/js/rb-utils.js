@@ -2278,7 +2278,9 @@ function createPdfHistogram(data) {
     const n = along.samples.length;
     const xs = Array.from(along.samples, Number);
     const finiteX = finite(xs);
-    const span = finiteX.length ? [Math.min(...finiteX), Math.max(...finiteX)] : [0, 1];
+    // its range by a loop: a value an element, spread into one call, ran past the stack at some 125,000
+    const span = finiteX.length ? [Infinity, -Infinity] : [0, 1];
+    for (const v of finiteX) { if (v < span[0]) span[0] = v; if (v > span[1]) span[1] = v; }
     const others = data.entries.map((e, i) => ({ e, i })).filter(({ e, i }) => i !== xIndex && e.samples.length === n);
     const type = n * others.length > 10000 ? 'scattergl' : 'scatter';
     const element = Array.from({ length: n }, (_, k) => k + 1);
