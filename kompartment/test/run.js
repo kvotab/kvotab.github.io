@@ -19738,7 +19738,12 @@ test('the bundled ODE test problems give their known answers', async () => {
 		assert(worst(of('Invariant'), (v) => Math.abs(v / 2 - 1)) < 1e-6, 'the invariant drifted');
 	}
 	// Robertson's kinetics against the reference solution of the ROBER test
-	// problem at t = 40 and at t = 1e11, conserving A + B + C.
+	// problem at t = 40 and at t = 1e11, conserving A + B + C. By 1e11 A is
+	// down to 2e-8 and abstol (1e-14) is half a millionth of it, so the last
+	// bits of the arithmetic -- another engine's pow, a tolerance an ulp away
+	// -- move A there by up to six abstol (in 400 runs so shifted, where the
+	// values at 40 did not move). A, and B, which by then is a fixed fraction
+	// of A, are held to 1e-5: twenty abstol.
 	{
 		const { at, of, last, t } = solve('robertson.json', (m) => {
 			m.simulation.output_times.push({ kind: 'times', times: [40] });
@@ -19746,8 +19751,8 @@ test('the bundled ODE test problems give their known answers', async () => {
 		close(at('A', 40), 0.7158270687, 1e-7, 'Robertson A(40)');
 		close(at('B', 40), 9.185534765e-6, 1e-7, 'Robertson B(40)');
 		close(at('C', 40), 0.2841637457, 1e-7, 'Robertson C(40)');
-		close(of('A')[last], 2.083340149701255e-8, 1e-6, 'Robertson A(1e11)');
-		close(of('B')[last], 8.333360770334713e-14, 1e-6, 'Robertson B(1e11)');
+		close(of('A')[last], 2.083340149701255e-8, 1e-5, 'Robertson A(1e11)');
+		close(of('B')[last], 8.333360770334713e-14, 1e-5, 'Robertson B(1e11)');
 		close(of('C')[last], 0.9999999791665050, 1e-12, 'Robertson C(1e11)');
 		assert(t[last] === 1e11, String(t[last]));
 		assert(worst(of('Total'), (v) => Math.abs(v - 1)) < 1e-12, 'A + B + C is not 1');

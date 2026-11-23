@@ -1987,6 +1987,15 @@ NEW_STEP_SHARE = {
     # 5e-13 from the application's (test_bundled_examples_through_the_runner):
     # 2637 steps against 2548, and still 2577 with V8's pow put back.
     ('robertson', 'auto'): 0.06,
+    # The two relaxation oscillators the switch hands to the NDF, where a last
+    # bit moves the instant a jump is crossed and the steps around it. With
+    # their tolerances an ulp or a few apart (forty runs each, 2026-11-23) the
+    # application's Oregonator takes 1782 to 1937 steps under Node 20 and 1792
+    # to 1881 under Node 26, whose own run takes 1905; this package's 1788 to
+    # 1891, and 1836 as written. Van der Pol at mu = 1000: 2004 to 2114 there,
+    # 2004 to 2089 here.
+    ('oregonator', 'auto'): 0.09,
+    ('van-der-pol-stiff', 'auto'): 0.06,
 }
 
 # The rows of a run that took other steps than the application's are held to
