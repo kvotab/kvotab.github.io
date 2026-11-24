@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.1.13
+
+* The files bar: the files open are boxes at the top of the page, where the
+  file tabs were. A box's tick puts its file in the tree and the charts; its
+  number is its place among the ticked files, the first drawn with full
+  lines in a chart of several and the others thinner; a drag, or Alt with
+  an arrow key, moves it; × or Delete closes it. *Add Files* comes after the
+  boxes, and at the bar's right end ∅ ∩ ∪ (for two files ticked or more)
+  and the light/dark toggle.
+* From the site: the tree's search tries a term on whole paths when no name
+  holds it, and there a star stands for slashes too: `Kd*Po` finds
+  `Kd/…/Po`. In a large file it searches the names first and loads up to 200
+  matches a file, so what it finds is shown.
+* From the site: in a chart of exposed groups the drilled well has a colour
+  of its own, a deeper blue than the garden plot's.
+* From the site: a vector of 200,000 values can be the x axis others are
+  drawn against; JSON, XML and MAT-files that held the page, or claimed
+  sizes no file holds, open at once.
+* From the site: the Total of a group of statistics comes from the
+  `_total_` a summed result file keeps with it, the statistics of each
+  iteration's sum, so its CI and SEM bands are drawn too.
+
 ## 0.1.12
 
 * The extension is called Data Browser, as the page on kvotab.se now is: its
