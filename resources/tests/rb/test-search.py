@@ -12,14 +12,17 @@ A star term that some name holds stays a name search, for 'Pu*9' is a search
 for Pu-239: on full paths it would also find every name with a 9 below a group
 whose name holds 'pu' (input_data).
 
-A search also loads the folders its matches are in, at most 50 matches a file.
-Those used to be found by trying the term on whole paths too, so the 50 went
-on items the filter then hid -- everything below a match, and every name under
-a group whose name held the letters -- and matches further on were never
-loaded: in a results file 'Pu*9' showed 5 of its 49 Pu-239 items. The file's
-names are now asked first, and its paths only when no name holds the term.
-A file built in the page has a group searched first that holds 120 such
-items, and three Pu-239 datasets in folders of their own beyond it.
+A search also loads the folders its matches are in, at most 200 matches a file
+(SEARCH_LOAD_LIMIT; 50 until 2026-11-24). Those used to be found by trying the
+term on whole paths too, so the limit went on items the filter then hid --
+everything below a match, and every name under a group whose name held the
+letters -- and matches further on were never loaded: in a results file 'Pu*9'
+showed 5 of its 49 Pu-239 items. The file's names are now asked first, and its
+paths only when no name holds the term. A file built in the page has a group
+searched first that holds more such items than the limit (250 for 'Pu-239',
+500 for 'Pu*9'), and three Pu-239 datasets in folders of their own beyond it.
+Another has 250 Pu-239 datasets, each in a folder of its own, of which a
+search loads 200.
 
 Uses the committed fixture sample-a.h5. Start the server and the browser as in
 README.md, then
@@ -63,12 +66,15 @@ HELPERS = r"""(() => {
     const box = document.getElementById('treeSearch');
     box.value = term;
     box.dispatchEvent(new Event('input', { bubbles: true }));
+    const t0 = performance.now();
     await __wait(600);
-    for (let i = 0; i < 100 && window._searchExpansionState.inProgress; i++) await __wait(100);
+    for (let i = 0; i < 600 && window._searchExpansionState.inProgress; i++) await __wait(100);
+    const ms = Math.round(performance.now() - t0);
     await __wait(600);
     const tree = document.getElementById('tree');
     const rows = [...tree.querySelectorAll('.tree-item')];
     return {
+      ms,
       pathSearch: isPathSearchTerm(term),
       matches: rows.filter(r => r.classList.contains('search-match')).map(r => r.getAttribute('data-path')).sort(),
       shown: rows.filter(r => !r.classList.contains('search-hidden')).map(r => r.getAttribute('data-path')).sort(),
@@ -79,57 +85,80 @@ HELPERS = r"""(() => {
   return true;
 })()"""
 
-# Three Pu-239 datasets in folders of their own under a_res, and z_input, which
-# the search walks first (it is the last pushed), holding a Pu-239 group of 60
-# members and 60 names with a 9 in them. On whole paths 'Pu-239' holds for the
-# group's members and 'Pu*9' for all 120 ('pu' in z_input); in their own names
-# for none of them.
-NOISE_BUILD = r"""(async () => {
+LIMIT = 200   # SEARCH_LOAD_LIMIT in rb-search.js
+
+# Build a file in the page with h5wasm and open it as the page's only file.
+# `body` fills the h5wasm File `w`, with `put(group, name)` for a dataset.
+BUILD = r"""(async () => {
   await waitForH5Wasm();
   const { FS, File } = window.h5wasm;
-  const path = '/noise-' + Date.now() + '.h5';
+  const path = '/built-' + Date.now() + '.h5';
   const w = new File(path, 'w');
   const data = Float64Array.from([1, 2, 3]);
   const put = (g, name) => g.create_dataset({ name, data, shape: [3], dtype: '<f8' });
   try {
-    const res = w.create_group('a_res');
-    for (const k of ['one', 'two', 'three']) put(res.create_group(k), 'Pu-239');
-    const z = w.create_group('z_input');
-    const pu = z.create_group('Pu-239');
-    for (let i = 0; i < 60; i++) put(pu, 'g' + String(i).padStart(2, '0'));
-    const t = z.create_group('tables');
-    for (let i = 0; i < 60; i++) put(t, 'x9' + String(i).padStart(2, '0'));
+    %s
   } finally {
     w.close();
   }
-  loadedFileBuffers['noise.h5'] = FS.readFile(path).slice().buffer;
-  loadedFiles['noise.h5'] = new File(path, 'r');
-  fileStates['noise.h5'] = true;
-  if (!fileOrder.includes('noise.h5')) fileOrder.push('noise.h5');
+  loadedFileBuffers[%s] = FS.readFile(path).slice().buffer;
+  loadedFiles[%s] = new File(path, 'r');
+  fileStates[%s] = true;
+  if (!fileOrder.includes(%s)) fileOrder.push(%s);
   await updateTabs(true);
   await new Promise(r => setTimeout(r, 1500));
   return fileOrder.slice();
 })()"""
 
+
+def build(name, body):
+    n = json.dumps(name)
+    return BUILD % (body, n, n, n, n, n)
+
+
+# Three Pu-239 datasets in folders of their own under a_res, and z_input, which
+# the search walks first (it is the last pushed), holding a Pu-239 group of 250
+# members and 250 names with a 9 in them, x9000 to x9249. On whole paths
+# 'Pu-239' holds for the group's members and 'Pu*9' for all 500 ('pu' in
+# z_input); in their own names for none of them. Both are past the limit.
+NOISE = build('noise.h5', r"""
+    const res = w.create_group('a_res');
+    for (const k of ['one', 'two', 'three']) put(res.create_group(k), 'Pu-239');
+    const z = w.create_group('z_input');
+    const pu = z.create_group('Pu-239');
+    for (let i = 0; i < 250; i++) put(pu, 'g' + String(i).padStart(3, '0'));
+    const t = z.create_group('tables');
+    for (let i = 0; i < 250; i++) put(t, 'x9' + String(i).padStart(3, '0'));""")
+
 PU239 = ['/a_res/one/Pu-239', '/a_res/three/Pu-239', '/a_res/two/Pu-239', '/z_input/Pu-239']
+
+# 250 Pu-239 datasets, each in a folder of its own, f000 to f249 under m.
+CAP = build('cap.h5', r"""
+    const m = w.create_group('m');
+    for (let i = 0; i < 250; i++) put(m.create_group('f' + String(i).padStart(3, '0')), 'Pu-239');""")
+
+
+async def fresh_search(bws, built, term, unloaded):
+    """Build a file on a fresh page and search it, so the search starts on a
+    tree with only its top level loaded, as a file just opened has."""
+    tid, page = await open_page(bws, settle=7)
+    try:
+        files = await page.ev(built, timeout=120)
+        await page.ev(HELPERS)
+        not_loaded = await page.ev(f"!findTreeItem({json.dumps(unloaded)}, {{ root: document.getElementById('tree') }})")
+        found = await page.ev(f"__search({json.dumps(term)})", timeout=120)
+        return files, not_loaded, found, page.logs[:3]
+    finally:
+        await bws.send(json.dumps({'id': 98, 'method': 'Target.closeTarget',
+                                   'params': {'targetId': tid}}))
+        await bws.recv()
 
 
 async def noise_session(bws):
-    """A fresh page for each term, so each search starts on a tree with only
-    its top level loaded, as a file just opened has."""
-    out = {}
-    for term in ('Pu-239', 'Pu*9', 'input*x95'):
-        tid, page = await open_page(bws, settle=7)
-        try:
-            out['files'] = await page.ev(NOISE_BUILD, timeout=120)
-            await page.ev(HELPERS)
-            out['loaded'] = await page.ev("!findTreeItem('/a_res/one', { root: document.getElementById('tree') })")
-            out[term] = await page.ev(f"__search({json.dumps(term)})", timeout=120)
-            out.setdefault('logs', []).extend(page.logs[:3])
-        finally:
-            await bws.send(json.dumps({'id': 98, 'method': 'Target.closeTarget',
-                                       'params': {'targetId': tid}}))
-            await bws.recv()
+    out = {'logs': []}
+    for term in ('Pu-239', 'Pu*9', 'input*x902'):
+        out['files'], out['loaded'], out[term], logs = await fresh_search(bws, NOISE, term, '/a_res/one')
+        out['logs'] += logs
     return out
 
 
@@ -190,19 +219,26 @@ async def main():
                                        'params': {'targetId': tid}}))
             await bws.recv()
 
-        # --- the 50 matches a file a search loads -------------------------
+        # --- the matches a file a search loads -----------------------------
         noise = await noise_session(bws)
         check('a file built in the page opens, its folders not loaded', (noise['files'], noise['loaded']),
               (['noise.h5'], True))
-        check('Pu-239 finds all four, past the 60 members of the first Pu-239 group',
+        check('Pu-239 finds all four, past the 250 members of the first Pu-239 group',
               noise['Pu-239']['matches'], PU239)
-        check('Pu*9 finds the same four, past 120 items whose paths alone hold it',
+        check('Pu*9 finds the same four, past 500 items whose paths alone hold it',
               (noise['Pu*9']['pathSearch'], noise['Pu*9']['matches']), (False, PU239))
         check('  and marks each Pu-239', set(noise['Pu*9']['marked'].values()), {'Pu-239'})
-        check('a star term no name holds still finds its paths: input*x95',
-              (noise['input*x95']['pathSearch'], noise['input*x95']['matches']),
-              (True, [f'/z_input/tables/x95{i}' for i in range(10)]))
-        check('no console errors in those pages', noise['logs'], [])
+        check('a star term no name holds still finds its paths: input*x902',
+              (noise['input*x902']['pathSearch'], noise['input*x902']['matches']),
+              (True, [f'/z_input/tables/x902{i}' for i in range(10)]))
+
+        files, loaded, cap, logs = await fresh_search(bws, CAP, 'Pu-239', '/m/f000')
+        check(f'250 matches, each in a folder of its own: the search loads {LIMIT}',
+              (files, loaded, len(cap['matches'])), (['cap.h5'], True, LIMIT))
+        check('  all of them Pu-239 datasets in their folders',
+              all(p.startswith('/m/f') and p.endswith('/Pu-239') for p in cap['matches']), True)
+        print(f'      ({len(cap["matches"])} folders loaded in {cap["ms"] / 1000:.1f} s)')
+        check('no console errors in those pages', noise['logs'] + logs, [])
 
     print(f'\n{checks - len(failures)} of {checks} checks passed')
     if failures:

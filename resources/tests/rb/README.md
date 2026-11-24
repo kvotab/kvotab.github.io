@@ -325,13 +325,16 @@ there a star stands for slashes too, so `vault*mire` finds what `vault*/mire`
 finds. Before, a star was tried on names alone, and `Kd*Po` found nothing in a
 file whose Po datasets sit in Kd groups while `Kd*/Po` found all eleven. A
 star term that a name holds stays a name search (`e*9` finds Se-79, not I-129
-below biosphere). A search also loads the folders of its matches, at most 50 a
-file. Those were found by trying the term on whole paths too, so the 50 went
-on items the filter then hid, and matches beyond them were never loaded: in a
-results file `Pu*9` showed 5 of its 49 Pu-239 items. A file built in the page
-with h5wasm has 120 such items in the group searched first and three Pu-239
-datasets beyond them, and each term runs on a fresh page. It also uses the
-committed fixture `sample-a.h5`.
+below biosphere). A search also loads the folders of its matches, at most 200
+a file (`SEARCH_LOAD_LIMIT`, 50 before). Those were found by trying the term
+on whole paths too, so the limit went on items the filter then hid, and
+matches beyond them were never loaded: in a results file `Pu*9` showed 5 of
+its 49 Pu-239 items. A file built in the page with h5wasm has more such items
+than the limit in the group searched first (250 for `Pu-239`, 500 for
+`Pu*9`) and three Pu-239 datasets beyond them; another has 250 Pu-239
+datasets, each in a folder of its own, of which a search loads 200. Each of
+those terms runs on a fresh page. It also uses the committed fixture
+`sample-a.h5`.
 
     python3 test-search.py
 

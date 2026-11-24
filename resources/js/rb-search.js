@@ -351,6 +351,15 @@ function filterTree(searchTerm) {
 if (!window._searchExpansionState) window._searchExpansionState = { lastTerm: null, inProgress: false };
 
 /**
+ * How many matches a search finds in each file, so as to load the folders
+ * they are in (rb-init.js, on 'search:changed'). A match in a folder not yet
+ * loaded costs that folder's load, so this bounds the work a broad term can
+ * start; matches past it are shown once their folders are opened. 200 shows
+ * all 94 of a results file's C-14*org items, where 50 showed half.
+ */
+const SEARCH_LOAD_LIMIT = 200;
+
+/**
  * Async, non-blocking search for matching paths inside an HDF5 file.
  * Traverses groups with periodic yields to avoid freezing the UI.
  * Returns up to `limit` matching full paths.
@@ -361,15 +370,16 @@ if (!window._searchExpansionState) window._searchExpansionState = { lastTerm: nu
  * whole paths too spent the limit on items the filter then hid: everything
  * below a match, and every name under a group whose name held the letters.
  * 'Pu*9' took I-129 below input_data for one, and in a results file 46 of
- * its 50 paths were of that kind, so 5 of 49 Pu-239 items were shown.
+ * the 50 paths the limit then allowed were of that kind, so 5 of 49 Pu-239
+ * items were shown.
  *
  * @param {Object} fileNode - The file (or group) to search from
  * @param {RegExp} regex - Tried on each item's own name
- * @param {number} [limit=50]
+ * @param {number} [limit=SEARCH_LOAD_LIMIT]
  * @param {RegExp|null} [pathRegex=null] - Tried on each item's full path
  * @returns {Promise<string[]>}
  */
-async function asyncFindMatchingPaths(fileNode, regex, limit = 50, pathRegex = null) {
+async function asyncFindMatchingPaths(fileNode, regex, limit = SEARCH_LOAD_LIMIT, pathRegex = null) {
   const matches = [];
   const hit = (key, path) => regex.test(key) || (pathRegex !== null && pathRegex.test(path));
   // A lazy file has every path already, and its groups need not be fetched

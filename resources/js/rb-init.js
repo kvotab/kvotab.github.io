@@ -219,8 +219,8 @@ EventBus.on('search:changed', ({ term }) => {
       // tree has loaded, and on a file just opened that is the top level, so
       // here the files are asked: their names first, and their paths only
       // when no name in any of them holds the term. Loading the groups of
-      // what is found gives the filter the same answer, and the limit of 50
-      // a file is spent on items the filter will show.
+      // what is found gives the filter the same answer, and the limit a file
+      // (SEARCH_LOAD_LIMIT, rb-search.js) is spent on items the filter shows.
       const enabled = getEnabledFiles();
       const nameRegex = wildcardToRegex(term);
       const pathRegex = term.includes('/') || /[.\s*]/.test(term)
@@ -230,7 +230,7 @@ EventBus.on('search:changed', ({ term }) => {
         for (const fk of enabled) {
           const file = loadedFiles[fk];
           if (!file) continue;
-          for (const p of await asyncFindMatchingPaths(file, nameRegex, 50, paths)) found.push([fk, p]);
+          for (const p of await asyncFindMatchingPaths(file, nameRegex, SEARCH_LOAD_LIMIT, paths)) found.push([fk, p]);
         }
         return found;
       };
