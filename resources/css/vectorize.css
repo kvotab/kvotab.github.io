@@ -90,6 +90,10 @@ kbd {
 #vz-preset { min-width: 0; flex: 0 1 190px; }
 
 .vz-group { border: 0; padding: 0; margin: 14px 0 0; min-width: 0; }
+.vz-trace .vz-check { margin: 0 0 6px; }
+.vz-trace .vz-check:has(input:checked) { font-weight: 600; }
+/* A setting the chosen way of tracing does not use. */
+.vz-field.vz-off > label, .vz-field.vz-off > input { opacity: .5; }
 .vz-group legend {
   padding: 0; margin-bottom: 6px; font-weight: 600; color: var(--text-primary);
 }
@@ -139,9 +143,10 @@ kbd {
 .vz-pane {
   position: relative; overflow: hidden; min-height: 0;
   background: var(--bg-secondary); touch-action: none; cursor: grab;
+  -webkit-user-select: none; user-select: none;
 }
 .vz-pane.vz-grabbing { cursor: grabbing; }
-.vz-pane canvas, .vz-pane svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.vz-pane > canvas, .vz-pane > svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .vz-ck-a { fill: var(--vz-ck-a); }
 .vz-ck-b { fill: var(--vz-ck-b); }
 .vz-pane-label {
@@ -175,7 +180,61 @@ kbd {
 }
 .vz-status { color: var(--text-secondary); }
 .vz-status.vz-error { color: var(--accent-text); }
+.vz-status .vz-linkbtn { margin-left: 4px; }
 .vz-stats { color: var(--text-muted); font-family: var(--font-mono); font-size: 12.5px; }
+.vz-edits { color: var(--text-secondary); margin-left: auto; }
+.vz-edits[hidden] { display: none; }
+.vz-linkbtn {
+  font: inherit; border: 0; padding: 0; margin-left: 6px; background: none; cursor: pointer;
+  color: var(--accent-text); text-decoration: underline; text-underline-offset: 2px;
+}
+.vz-linkbtn:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
+
+/* ── Editing the vector ──────────────────────────────────────────────────── */
+
+/* The tools sit over the vector's top right corner, clear of the pane's
+   name (the brush size wraps under them); in a narrow pane, at its foot. */
+#vz-pane-vec { container-type: inline-size; }
+.vz-tools {
+  position: absolute; top: 6px; right: 6px; z-index: 2; max-width: calc(100% - 200px);
+  display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px;
+  cursor: default;
+}
+.vz-tools[hidden] { display: none; }
+@container (max-width: 560px) { .vz-tools { top: auto; bottom: 6px; max-width: calc(100% - 12px); } }
+.vz-tools svg {
+  width: 15px; height: 15px; flex: none;
+  fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round;
+}
+.vz-seg-tools { background: var(--bg-primary); }
+.vz-seg-tools button { display: inline-flex; align-items: center; gap: 5px; }
+.vz-tools .vz-iconbtn { display: inline-flex; align-items: center; justify-content: center; background: var(--bg-primary); }
+/* Over the drawing, a button stays opaque when it cannot be used: only its
+   icon fades. */
+.vz-tools .vz-iconbtn:disabled { cursor: default; }
+.vz-tools .vz-iconbtn:disabled svg { opacity: .35; }
+.vz-tools .vz-iconbtn:disabled:hover { border-color: var(--border-color); }
+.vz-brushsize {
+  display: inline-flex; align-items: center; gap: 7px; min-height: 30px; padding: 0 9px; box-sizing: border-box;
+  border: 1px solid var(--border-color); border-radius: var(--radius); background: var(--bg-primary);
+  font-size: 12.5px; color: var(--text-secondary);
+}
+.vz-brushsize[hidden] { display: none; }
+.vz-brushsize input { width: 96px; margin: 0; }
+
+.vz-pane[data-edit="remove"] { cursor: crosshair; }
+/* The brush's own circle shows where it erases. */
+.vz-pane[data-edit="erase"] { cursor: none; }
+.vz-pane[data-edit].vz-panning { cursor: grab; }
+.vz-pane[data-edit].vz-panning.vz-grabbing { cursor: grabbing; }
+
+/* The vector's pane stays light in either theme, so these are fixed. */
+.vz-hl { fill: #e5484d; fill-opacity: .9; pointer-events: none; }
+.vz-boxsel {
+  fill: rgba(26, 111, 217, .08); stroke: #1a6fd9; stroke-width: 1px; stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke; pointer-events: none;
+}
+.vz-brush { fill: rgba(26, 111, 217, .1); stroke: #1a6fd9; stroke-width: 1.2px; vector-effect: non-scaling-stroke; pointer-events: none; }
 
 /* ── Dragging a file over the page ───────────────────────────────────────── */
 

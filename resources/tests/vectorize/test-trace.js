@@ -240,6 +240,247 @@ function grain(img, amp, seed) {
   check('checkerboard: every outline closes', ok && r.shapes > 0, ok ? `${r.shapes} shapes` : 'threw');
 }
 
+// ── Black lines only: a coloured cartoon ──────────────────────────────────────
+
+/* A colour image from colourAt(x, y) -> [r, g, b] averaged on an ss × ss grid
+   in each pixel, with the share of each pixel that is black ink (truth). */
+function colourImage(w, h, colourAt, ss = 4) {
+  const rgba = new Uint8ClampedArray(w * h * 4), truth = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let r = 0, g = 0, b = 0, k = 0;
+    for (let j = 0; j < ss; j++) for (let i = 0; i < ss; i++) {
+      const c = colourAt(x + (i + 0.5) / ss, y + (j + 0.5) / ss);
+      r += c[0]; g += c[1]; b += c[2];
+      if (c.black) k++;
+    }
+    const o = 4 * (y * w + x), n = ss * ss;
+    rgba[o] = Math.round(r / n); rgba[o + 1] = Math.round(g / n); rgba[o + 2] = Math.round(b / n); rgba[o + 3] = 255;
+    truth[y * w + x] = k / n;
+  }
+  return { width: w, height: h, rgba, truth };
+}
+
+/* The colour of a JPEG with 4:2:0 subsampling: brightness kept pixel by
+   pixel, colour averaged over 2 × 2 blocks. */
+function chromaBleed(img) {
+  const { width: w, height: h, rgba } = img, out = new Uint8ClampedArray(rgba);
+  const Y = (o) => 0.299 * rgba[o] + 0.587 * rgba[o + 1] + 0.114 * rgba[o + 2];
+  for (let by = 0; by < h; by += 2) for (let bx = 0; bx < w; bx += 2) {
+    let cb = 0, cr = 0, n = 0;
+    for (let y = by; y < Math.min(h, by + 2); y++) for (let x = bx; x < Math.min(w, bx + 2); x++) {
+      const o = 4 * (y * w + x), yy = Y(o);
+      cb += 0.564 * (rgba[o + 2] - yy); cr += 0.713 * (rgba[o] - yy); n++;
+    }
+    cb /= n; cr /= n;
+    for (let y = by; y < Math.min(h, by + 2); y++) for (let x = bx; x < Math.min(w, bx + 2); x++) {
+      const o = 4 * (y * w + x), yy = Y(o);
+      out[o] = yy + 1.402 * cr; out[o + 1] = yy - 0.344 * cb - 0.714 * cr; out[o + 2] = yy + 1.772 * cb;
+    }
+  }
+  return Object.assign({}, img, { rgba: out });
+}
+
+const BLACK = Object.assign([0, 0, 0], { black: true });
+/* A cartoon: flat fills of every kind with black outlines, a solid black
+   disc, a thin black fold line across the red, and a thin dark blue line,
+   not black, on the white. Regions name each fill's inside, away from any
+   black, for the checks. */
+const CARTOON_FILLS = {
+  red: { c: [220, 30, 30], inside: (x, y) => x > 18 && x < 62 && y > 18 && y < 62 && Math.abs(x - 40 - 0.25 * (y - 40)) > 3 },
+  navy: { c: [20, 30, 90], inside: (x, y) => Math.hypot(x - 105, y - 40) < 17 },
+  brown: { c: [70, 40, 20], inside: (x, y) => ((x - 160) / 22) ** 2 + ((y - 40) / 14) ** 2 < 0.7 },
+  grey: { c: [128, 128, 128], inside: (x, y) => x > 18 && x < 62 && y > 88 && y < 122 },
+  darkgrey: { c: [80, 80, 80], inside: (x, y) => Math.hypot(x - 105, y - 105) < 14 },
+};
+function cartoonAt(x, y) {
+  const ring = (d, r, lw) => d <= r && d >= r - lw;
+  // Red square, outlined 3 px, with a fold line 1.2 px wide across it.
+  if (x >= 12 && x <= 68 && y >= 12 && y <= 68) {
+    if (x < 15 || x > 65 || y < 15 || y > 65) return BLACK;
+    if (Math.abs(x - 40 - 0.25 * (y - 40)) < 0.6 && y > 22 && y < 58) return BLACK;
+    return CARTOON_FILLS.red.c;
+  }
+  const dn = Math.hypot(x - 105, y - 40);
+  if (ring(dn, 24, 2.5)) return BLACK;
+  if (dn < 21.5) return CARTOON_FILLS.navy.c;
+  const de = Math.hypot((x - 160) / 28, (y - 40) / 18);
+  if (de <= 1 && de >= 1 - 2.5 / 18) return BLACK;
+  if (de < 1) return CARTOON_FILLS.brown.c;
+  if (x >= 12 && x <= 68 && y >= 82 && y <= 128) {
+    if (x < 15 || x > 65 || y < 85 || y > 125) return BLACK;
+    return CARTOON_FILLS.grey.c;
+  }
+  const dg = Math.hypot(x - 105, y - 105);
+  if (ring(dg, 20, 2.5)) return BLACK;
+  if (dg < 17.5) return CARTOON_FILLS.darkgrey.c;
+  if (Math.hypot(x - 160, y - 105) < 8) return BLACK;                   // a solid black disc
+  if (x > 140 && x < 185 && Math.abs(y - 125 - 0.1 * (x - 160)) < 1) return [20, 30, 110]; // dark blue line
+  return [255, 255, 255];
+}
+{
+  const LINEART = { detail: 2, smooth: 0.7, faint: 70, threshold: 0.55 };
+  const score = (img, F) => {
+    const { width: w, height: h } = img;
+    let tp = 0, fp = 0, fn = 0;
+    const inside = {};
+    for (const k of Object.keys(CARTOON_FILLS)) inside[k] = [0, 0];
+    let blue = 0;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const gx = Math.round((x + 0.5) * F.sx - 0.5) + 1, gy = Math.round((y + 0.5) * F.sy - 0.5) + 1;
+      const ink = F.P[gy * F.GW + gx] > LINEART.threshold, tr = img.truth[y * w + x] > 0.5;
+      if (ink && tr) tp++; else if (ink) fp++; else if (tr) fn++;
+      for (const [k, f] of Object.entries(CARTOON_FILLS)) if (f.inside(x + 0.5, y + 0.5)) { inside[k][1]++; if (ink) inside[k][0]++; }
+      if (ink && x > 142 && x < 183 && Math.abs(y + 0.5 - 125 - 0.1 * (x + 0.5 - 160)) < 1.5) blue++;
+    }
+    return { iou: tp / (tp + fp + fn), inside, blue };
+  };
+  for (const [label, img] of [['clean', colourImage(200, 140, cartoonAt)], ['JPEG colour', chromaBleed(colourImage(200, 140, cartoonAt))]]) {
+    const dark = score(img, V.buildField(img, LINEART, 10e6));
+    const black = score(img, V.buildField(img, Object.assign({ black: true }, LINEART), 10e6));
+    if (label === 'clean') {
+      check('cartoon: traced by darkness, the dark fills come out as solid ink', dark.inside.navy[0] / dark.inside.navy[1] > 0.9 &&
+        dark.inside.brown[0] / dark.inside.brown[1] > 0.9, `navy ${dark.inside.navy[0]}/${dark.inside.navy[1]}, brown ${dark.inside.brown[0]}/${dark.inside.brown[1]}`);
+    }
+    const filled = Object.entries(black.inside).filter(([, v]) => v[0] > 0).map(([k, v]) => `${k} ${v[0]}/${v[1]}`);
+    check(`cartoon, ${label}: black lines only leaves every fill as paper (red, navy, brown, grey, dark grey)`, !filled.length, filled.join(', ') || 'none inked');
+    check(`cartoon, ${label}: black lines only traces the black lines (overlap over 0.8)`, black.iou > 0.8, black.iou.toFixed(3));
+    check(`cartoon, ${label}: a dark blue line on white is not black`, black.blue === 0, `${black.blue} px inked`);
+  }
+  // The fold line, 1.2 px wide on red, comes out unbroken; the black disc keeps its size.
+  const img = chromaBleed(colourImage(200, 140, cartoonAt));
+  const q = Object.assign({ black: true }, LINEART);
+  const F = V.buildField(img, q, 10e6);
+  let gaps = 0;
+  for (let y = 24; y <= 56; y += 0.5) {
+    const x = 40 + 0.25 * (y - 40);
+    if (!(F.P[Math.round(y * F.sy + 0.5) * F.GW + Math.round(x * F.sx + 0.5)] > q.threshold)) gaps++;
+  }
+  check('cartoon: a thin black fold line across a colour comes out unbroken', gaps === 0, `${gaps} gaps`);
+  const loops = V.traceContours(F.P, F.GW, F.GH, q.threshold);
+  const disc = loops.map(l => l.pts).filter(p => Math.abs(p[0] - (160 * F.sx + 0.5)) < 12 * F.sx && Math.abs(p[1] - (97 * F.sy + 0.5)) < 4 * F.sy);
+  const area = loops.filter(l => Math.abs(l.pts[0] - (160 * F.sx + 0.5)) < 12 * F.sx && Math.abs(l.pts[1] - (97 * F.sy + 0.5)) < 4 * F.sy)
+    .reduce((s, l) => s + Math.abs(l.area), 0) / (F.sx * F.sy);
+  // Its edge is measured against the white just outside it, so it is cut
+  // where it is half black; against the floor, it came out 6.5 % small.
+  check('cartoon: a solid black disc keeps its area (within 5 %)', disc.length === 1 && Math.abs(area / (Math.PI * 64) - 1) < 0.05,
+    `${area.toFixed(0)} px² against ${(Math.PI * 64).toFixed(0)}`);
+  // Transparency is paper, in this mode too.
+  const clear = image(40, 40, (x, y) => Math.hypot(x - 20, y - 20) < 8);
+  for (let i = 0; i < clear.rgba.length; i += 4) if (clear.rgba[i] > 128) clear.rgba[i + 3] = 0;
+  check('black lines only: a transparent background is paper', trace(clear, { black: true }).shapes === 1);
+}
+
+// ── Pieces: an outline and its holes are one piece ────────────────────────────
+{
+  // A ring, a disc in its hole, and a dot apart.
+  const img = image(100, 100, (x, y) => {
+    const d = Math.hypot(x - 45, y - 45);
+    return (d >= 25 && d <= 33) || d <= 10 || Math.hypot(x - 88, y - 88) < 4;
+  });
+  const r = trace(img, {});
+  const T = V.labelInk(r.F.P, r.F.GW, r.F.GH, BASE.threshold);
+  const labs = r.loops.map(l => T.labels[l.ink]);
+  check('pieces: three, for four outlines', T.count === 3 && r.loops.length === 4, `${T.count} pieces, ${r.loops.length} outlines`);
+  const byArea = r.loops.map((l, i) => [Math.abs(l.area), labs[i], Math.sign(l.area)]).sort((a, b) => b[0] - a[0]);
+  check('pieces: the ring\'s outline and its hole are one piece, the disc in the hole another',
+    byArea[0][1] === byArea[1][1] && byArea[0][2] === -byArea[1][2] && byArea[2][1] !== byArea[0][1], JSON.stringify(labs));
+  const seedInk = [1, 2, 3].every(k => r.F.P[T.seed[k]] > BASE.threshold && T.labels[T.seed[k]] === k);
+  check('pieces: each seed is ink of its own piece', seedInk);
+  // Saddles: the pieces join where the outlines do.
+  const cb = image(64, 64, (x, y) => ((Math.floor(x / 8) + Math.floor(y / 8)) & 1) === 1, 1);
+  const rc = trace(cb, { smooth: 0, detail: 1 });
+  const Tc = V.labelInk(rc.F.P, rc.F.GW, rc.F.GH, BASE.threshold);
+  const outer = new Map();
+  for (const l of rc.loops) if (l.area < 0) outer.set(Tc.labels[l.ink], (outer.get(Tc.labels[l.ink]) || 0) + 1);
+  check('pieces: on a checkerboard, every piece has one outer outline', outer.size === Tc.count && [...outer.values()].every(v => v === 1),
+    `${Tc.count} pieces, ${outer.size} with an outer outline`);
+  // Below half, every corner where four squares meet joins the black ones:
+  // one piece, the white squares its holes.
+  const loops4 = V.traceContours(rc.F.P, rc.F.GW, rc.F.GH, 0.4);
+  const T4 = V.labelInk(rc.F.P, rc.F.GW, rc.F.GH, 0.4);
+  const outer4 = loops4.filter(l => l.area < 0).length;
+  check('pieces: joined at the corners, a checkerboard is one piece with one outer outline',
+    T4.count === 1 && outer4 === 1 && loops4.every(l => T4.labels[l.ink] === 1), `${T4.count} pieces, ${outer4} outer outlines, ${loops4.length} in all`);
+}
+
+// ── The runner: removing pieces and erasing ───────────────────────────────────
+{
+  const posts = [];
+  const run = V.makeRunner((m) => posts.push(m));
+  // A ring with a disc in its hole, a bar, and a dot.
+  const img = image(120, 100, (x, y) => {
+    const d = Math.hypot(x - 40, y - 45);
+    return (d >= 22 && d <= 30) || d <= 9 || (x >= 80 && x <= 112 && y >= 40 && y <= 50) || Math.hypot(x - 100, y - 85) < 3;
+  });
+  run({ type: 'source', width: img.width, height: img.height, buffer: img.rgba.slice().buffer });
+  const params = (extra) => Object.assign({}, BASE, { specks: 0 }, extra);
+  const go = (extra, id) => {
+    posts.length = 0;
+    run({ type: 'run', id, maxWork: 10e6, params: params(extra) });
+    return { res: posts.find(m => m.type === 'result'), stages: posts.filter(m => m.type === 'progress').map(m => m.stage) };
+  };
+  const first = go({}, 1).res;
+  check('runner: four pieces, each with its slice of the path, box and seed',
+    first.n === 4 && first.cuts.length === 5 && first.cuts[4] === first.d.length && first.boxes.length === 16 && first.seeds.length === 8, `${first.n} pieces`);
+  const pieceOf = (res, x, y) => {
+    for (let k = 0; k < res.n; k++) {
+      const b = res.boxes.subarray(4 * k, 4 * k + 4);
+      if (x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3]) return k;
+    }
+    return -1;
+  };
+  // The ring's piece: the largest box.
+  let ring = 0;
+  for (let k = 1; k < first.n; k++) if (first.boxes[4 * k + 2] - first.boxes[4 * k] > first.boxes[4 * ring + 2] - first.boxes[4 * ring]) ring = k;
+  const ringD = first.d.slice(first.cuts[ring], first.cuts[ring + 1]);
+  check('runner: a piece\'s path is its outline and its hole', (ringD.match(/M/g) || []).length === 2, ringD.slice(0, 40) + '…');
+  const seed = [first.seeds[2 * ring], first.seeds[2 * ring + 1]];
+  const removed = go({ removed: [seed] }, 2);
+  check('runner: removing by the seed takes the ring, hole and all, and leaves the disc in it', removed.res.n === 3 &&
+    removed.res.removed === 1 && !removed.res.d.includes(ringD) && pieceOf(removed.res, 40, 45) >= 0, `${removed.res.n} pieces`);
+  check('runner: removing a piece only puts the drawing together again', removed.stages.join() === 'Fitting curves', removed.stages.join(', '));
+  const nearEdge = go({ removed: [[40 + 22.4, 45]] }, 3).res;
+  check('runner: a point at the edge of the ink finds the piece too', nearEdge.n === 3 && nearEdge.removed === 1, `${nearEdge.n} pieces`);
+  check('runner: a point on the paper removes nothing', go({ removed: [[60, 10]] }, 4).res.n === 4);
+  const thinner = go({ removed: [seed], threshold: 0.8 }, 5).res;
+  check('runner: the removed piece stays removed with thinner lines', thinner.n === 3 && thinner.removed === 1, `${thinner.n} pieces`);
+  // Erase a band across the bar: it falls in two, cut where the stroke ran.
+  const before = go({}, 6).res;
+  const keep = before.d.slice(before.cuts[pieceOf(before, 40, 45)], before.cuts[pieceOf(before, 40, 45) + 1]);
+  const cut = go({ erase: [{ r: 3, pts: [96, 30, 96, 60] }], eraseKey: 'a' }, 7);
+  const bars = [];
+  for (let k = 0; k < cut.res.n; k++) if (cut.res.boxes[4 * k + 1] >= 38 && cut.res.boxes[4 * k + 3] <= 52) bars.push(cut.res.boxes.slice(4 * k, 4 * k + 4));
+  bars.sort((a, b) => a[0] - b[0]);
+  check('runner: erasing across the bar cuts it in two', cut.res.n === 5 && bars.length === 2, `${cut.res.n} pieces`);
+  check('runner: the cut follows the stroke (edges within 0.5 px of 93 and 99)', bars.length === 2 &&
+    Math.abs(bars[0][2] - 93) < 0.5 && Math.abs(bars[1][0] - 99) < 0.5, bars.map(b => `${b[0].toFixed(2)}..${b[2].toFixed(2)}`).join(', '));
+  check('runner: an outline the stroke did not touch keeps its curves exactly', cut.res.d.includes(keep));
+  const back = go({}, 8).res;
+  check('runner: no strokes, the bar whole again', back.n === 4 && back.d === before.d);
+  const loose = go({ tolerance: 2 }, 9).res;
+  check('runner: a looser curve fit refits every outline', loose.curves < back.curves && !loose.d.includes(keep), `${loose.curves} curves against ${back.curves}`);
+}
+{
+  // A slanted stroke across a square's corner: the cut is as straight as
+  // the stroke's edge, not stepped by the samples (a hard-edged eraser was
+  // 0.5 px off, in 71 curves).
+  const posts = [], run = V.makeRunner((m) => posts.push(m));
+  const img = image(100, 100, (x, y) => x >= 20 && x <= 80 && y >= 20 && y <= 80);
+  run({ type: 'source', width: 100, height: 100, buffer: img.rgba.slice().buffer });
+  const R = 4, x0 = 0, y0 = 70, x1 = 100, y1 = 70 - 100 * Math.tan(25 * Math.PI / 180);
+  run({ type: 'run', id: 1, maxWork: 10e6, params: Object.assign({}, BASE, { erase: [{ r: R, pts: [x0, y0, x1, y1] }], eraseKey: 's' }) });
+  const res = posts.find(m => m.type === 'result');
+  const nx = y0 - y1, ny = x1 - x0, nl = Math.hypot(nx, ny);
+  let worst = 0, n = 0;
+  for (const [px, py] of samples(parse(res.d), 32)) {
+    if (px < 26 || px > 74 || py < 26 || py > 74) continue;
+    const dist = Math.abs((px - x0) * nx + (py - y0) * ny) / nl;
+    if (dist < R + 2) { n++; worst = Math.max(worst, Math.abs(dist - R)); }
+  }
+  check('erasing: a slanted cut follows the stroke\'s edge (within 0.3 px) in few curves', res.n === 2 && n > 50 && worst < 0.3 && res.curves < 40,
+    `${res.n} pieces, ${worst.toFixed(3)} px off, ${res.curves} curves`);
+}
+
 // ── The whole picture: the fill matches the drawing, and in good time ─────────
 {
   const img = doodle(1080, 810, 160, 1.6, 7);

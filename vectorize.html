@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="base-uri 'self'; object-src 'none'">
   <title>Vectorize — kvot ab</title>
-  <meta name="description" content="Turn a drawing, scan or logo into a smooth SVG in the browser: drop, paste or link an image, tune the smoothing, line weight and curves while you watch, and download the vector file, or a poster to print over many sheets of paper. Nothing is uploaded.">
+  <meta name="description" content="Turn a drawing, scan or logo into a smooth SVG in the browser: drop, paste or link an image, tune the smoothing, line weight and curves while you watch, trace only the black lines of a coloured cartoon, take out the parts you do not want, and download the vector file, or a poster to print over many sheets of paper. Nothing is uploaded.">
   <link rel="canonical" href="https://kvotab.se/vectorize.html">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="kvot ab">
@@ -27,7 +27,7 @@
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-fullwin.css?v=20261124">
   <script src="./resources/js/kvot-fullwin.js?v=20261124"></script>
-  <link rel="stylesheet" href="./resources/css/vectorize.css?v=20261124">
+  <link rel="stylesheet" href="./resources/css/vectorize.css?v=20261124b">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
 </head>
@@ -69,12 +69,21 @@
       <h2 class="vz-h" id="vz-set-h">Settings</h2>
       <select id="vz-preset" aria-label="Preset">
         <option value="lineart">Line art / colouring page</option>
+        <option value="cartoon">Cartoon: black lines only</option>
         <option value="logo">Logo / lettering</option>
         <option value="sketch">Pencil sketch</option>
         <option value="shape">Silhouette from a photo</option>
         <option value="custom" disabled>Custom</option>
       </select>
     </div>
+
+    <fieldset class="vz-group vz-trace">
+      <legend>Trace</legend>
+      <label class="vz-check"><input type="radio" name="vz-ink" value="dark"> Everything dark</label>
+      <label class="vz-check"><input type="radio" name="vz-ink" value="black"> Black lines only, not colours</label>
+      <label class="vz-check"><input type="radio" name="vz-ink" value="light"> Light lines on a dark background</label>
+      <p class="vz-hint" id="vz-ink-hint"></p>
+    </fieldset>
 
     <fieldset class="vz-group">
       <legend>Clean-up</legend>
@@ -88,12 +97,11 @@
         <input type="range" id="vz-detail" min="1" max="4" step="0.5">
         <p class="vz-hint">Traces an enlarged copy. Higher follows fine lines more closely, but takes longer.</p>
       </div>
-      <div class="vz-field">
+      <div class="vz-field" id="vz-faint-field">
         <label for="vz-faint">Faint lines <output id="vz-faint-out" for="vz-faint"></output></label>
         <input type="range" id="vz-faint" min="0" max="100" step="1">
-        <p class="vz-hint">Brings light grey lines up to full strength so they are kept unbroken, at their own width. Higher reaches fainter lines.</p>
+        <p class="vz-hint" id="vz-faint-hint">Brings light grey lines up to full strength so they are kept unbroken, at their own width. Higher reaches fainter lines.</p>
       </div>
-      <label class="vz-check"><input type="checkbox" id="vz-invert"> Light lines on a dark background</label>
     </fieldset>
 
     <fieldset class="vz-group">
@@ -179,12 +187,38 @@
               <rect class="vz-ck-b" id="vz-ck-1" width="8" height="8"/>
               <rect class="vz-ck-b" id="vz-ck-2" x="8" y="8" width="8" height="8"/>
             </pattern>
+            <!-- What is being erased, hidden at once, until the trace has it. -->
+            <mask id="vz-erasing" maskUnits="userSpaceOnUse">
+              <rect id="vz-erasing-all" fill="#fff"/>
+              <g id="vz-erasing-strokes" fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round"></g>
+            </mask>
           </defs>
           <rect id="vz-page" width="0" height="0" fill="url(#vz-checker)"/>
           <image id="vz-underimg" preserveAspectRatio="none" opacity="0.35" display="none"/>
           <path id="vz-path" d=""/>
+          <path id="vz-hl" class="vz-hl" d=""/>
+          <rect id="vz-boxsel" class="vz-boxsel" display="none"/>
+          <circle id="vz-brush" class="vz-brush" r="0" display="none"/>
         </svg>
         <span class="vz-pane-label">Vector <span class="vz-busy" id="vz-busy" hidden></span></span>
+        <!-- Editing the vector: take out whole parts, or erase where the
+             brush goes. Both are kept as the settings change. -->
+        <div class="vz-tools" id="vz-tools" role="toolbar" aria-label="Edit the vector" hidden>
+          <div class="vz-seg vz-seg-tools" role="group" aria-label="Tool">
+            <button type="button" data-tool="move" aria-pressed="true" title="Drag to move the picture">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5v13M1.5 8h13M8 1.5 6 3.5M8 1.5l2 2M8 14.5l-2-2M8 14.5l2-2M1.5 8l2-2M1.5 8l2 2M14.5 8l-2-2M14.5 8l-2 2"/></svg>Move</button>
+            <button type="button" data-tool="remove" aria-pressed="false" title="Click a part to take it out, or drag a box round several">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="4" cy="12" r="2.2"/><circle cx="12" cy="12" r="2.2"/><path d="M5.6 10.4 12.5 1.5M10.4 10.4 3.5 1.5"/></svg>Remove</button>
+            <button type="button" data-tool="erase" aria-pressed="false" title="Paint over what should go">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 2.5 14 7l-6.5 6.5H4L2 11.5Z"/><path d="M6.2 5.8l4.5 4.5M7.5 13.5H14"/></svg>Erase</button>
+          </div>
+          <button type="button" class="vz-iconbtn" id="vz-undo" aria-label="Undo" title="Undo" disabled>
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 3.5 2.5 6.5l3 3"/><path d="M2.5 6.5h7a4 4 0 0 1 0 8H7"/></svg></button>
+          <button type="button" class="vz-iconbtn" id="vz-redo" aria-label="Redo" title="Redo" disabled>
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.5 3.5l3 3-3 3"/><path d="M13.5 6.5h-7a4 4 0 0 0 0 8H9"/></svg></button>
+          <label class="vz-brushsize" id="vz-brushsize" hidden>Size
+            <input type="range" id="vz-brush-size" min="6" max="120" step="1" aria-label="Brush size"></label>
+        </div>
       </div>
 
       <div class="vz-empty" id="vz-empty">
@@ -204,6 +238,8 @@
 
     <div class="vz-foot">
       <span class="vz-status" id="vz-status" role="status" aria-live="polite"></span>
+      <span class="vz-edits" id="vz-edits" hidden><span id="vz-edits-text"></span>
+        <button type="button" class="vz-linkbtn" id="vz-restore">Restore all</button></span>
       <span class="vz-stats" id="vz-stats"></span>
     </div>
   </section>
@@ -291,6 +327,6 @@
   KVOT.renderFooter();
 </script>
 <script src="./resources/js/vectorize-poster.js?v=20261121b"></script>
-<script src="./resources/js/vectorize.js?v=20261121b"></script>
+<script src="./resources/js/vectorize.js?v=20261124"></script>
 </body>
 </html>
