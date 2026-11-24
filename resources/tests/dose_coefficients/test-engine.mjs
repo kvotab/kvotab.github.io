@@ -248,6 +248,8 @@ if (!SYSTEM || SYSTEM === '103') {
     ['103', { nuclide: 'I-134', route: 'injection' }, 7300, 3.8724e-11, 'Oesophagus'],
     // gallium formed in zinc's kidneys is in gallium's kidneys, which empty to the bladder (Publication 134 para 437; 2 % high otherwise)
     ['103', { nuclide: 'Zn-72', route: 'injection' }, 7300, 1.4087e-9],
+    // rubidium formed from strontium on rubidium's own model, kidneys explicit (Publication 151 Table 22.3; 0.26 of this with para 484's)
+    ['103', { nuclide: 'Sr-80', route: 'injection' }, 365, 1.1967e-9, 'Kidneys'],
     ['103', { nuclide: 'Ra-226', route: 'ingestion', form: 'all' }, 7300, 1.2646e-7],
     ['60', { nuclide: 'Po-210', route: 'ingestion' }, 7300, 1.206e-6],
   ];
