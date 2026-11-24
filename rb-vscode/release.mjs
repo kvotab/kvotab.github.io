@@ -110,7 +110,12 @@ if (prior && prior.version === pkg.version && !args.has('--force')) {
 
 if (!args.has('--no-build')) run('node', ['build.mjs']);
 const out = path.join(HERE, `${pkg.name}-${pkg.version}.vsix`);
-run('npx', ['--no-install', 'vsce', 'package', '--out', out]);
+// The extension has no npm dependencies to package (package.json names
+// none; what it runs is in media/ and node/), so vsce is told so rather than
+// asking npm: it reads the folders to package from `npm list --parseable`,
+// and npm 11 writes a part of a path that looks like a UUID, as a temporary
+// checkout's can, as ***. vsce then found no files at all.
+run('npx', ['--no-install', 'vsce', 'package', '--no-dependencies', '--out', out]);
 
 fs.mkdirSync(DIST, { recursive: true });
 fs.copyFileSync(out, PACKAGE);
