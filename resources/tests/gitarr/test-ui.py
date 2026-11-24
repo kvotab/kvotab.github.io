@@ -16,14 +16,19 @@ ports too:
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \\
       --headless=new --remote-debugging-port=9349 --no-first-run \\
       --user-data-dir=/tmp/gttest --disable-gpu \\
-      --autoplay-policy=no-user-gesture-required about:blank
+      --mute-audio about:blank
 
     python3 resources/tests/gitarr/test-ui.py
+
+--mute-audio keeps the strings it plays out of the speakers (the page still
+hears them). The suite taps the page (a real mouse click) before it plays
+sound, as a person would, so it needs no autoplay flag.
 
 With GT_SHOTS=<folder> it saves screenshots. Exit status is 0 when every
 check passes.
 """
 import asyncio
+import atexit
 import base64
 import json
 import os
@@ -152,12 +157,24 @@ async def settle(page, expr, want, tries=60, pause=0.1):
     return got
 
 
+def close_at_exit(port, target_id):
+    """Close the test's tab however the run ends: a tab left open goes on
+    playing what the suite played into it, and keeps its page running."""
+    def close():
+        try:
+            urllib.request.urlopen(f'http://127.0.0.1:{port}/json/close/{target_id}', timeout=5).read()
+        except Exception:
+            pass   # closed already
+    atexit.register(close)
+
+
 async def attach(port):
     ver = json.load(urllib.request.urlopen(f'http://127.0.0.1:{port}/json/version'))
     bws = await websockets.connect(ver['webSocketDebuggerUrl'], max_size=200 * 1024 * 1024)
     page = Page(bws)
     asyncio.create_task(page.pump())
     tid = (await page.call('Target.createTarget', {'url': 'about:blank'}))['result']['targetId']
+    close_at_exit(port, tid)
     page.sid = (await page.call('Target.attachToTarget', {'targetId': tid, 'flatten': True}))['result']['sessionId']
     for m in ('Runtime.enable', 'Page.enable', 'Network.enable'):
         await page.call(m)
@@ -407,6 +424,10 @@ async def main_suite(page):
 
     # ── The real audio path, a buffer in place of the microphone ─────────
     await page.load()
+    # A tap first, as a person gives one: a browser starts a page's sound only after it. Without
+    # it (Chrome started without --autoplay-policy=no-user-gesture-required) the context waited,
+    # the page gave up and closed it, and these checks failed with "AudioContext is closed".
+    await page.click('.gt-title')
     state = await page.ev("GT.test.play(GT_SYNTH.pluck({ sr: 48000, f0: %f, dur: 1.5, hp: 150 }), 48000, true)" % at(1, -15))
     check('played through Web Audio: the context runs', state, 'running')
     await settle(page, 'GT.inspect().active', 1, tries=40)

@@ -54,11 +54,15 @@ sessions use ports too:
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
       --headless=new --remote-debugging-port=9349 --no-first-run \
       --user-data-dir=/tmp/gttest --disable-gpu \
-      --autoplay-policy=no-user-gesture-required about:blank
+      --mute-audio about:blank
 
     python3 resources/tests/gitarr/test-ui.py
 
-About 15 seconds; exits 0 when all 106 checks pass. `GT_SHOTS=<folder>` saves
+`--mute-audio` keeps the strings the suite plays out of the speakers; the
+page still hears them. The suite taps the page (a real mouse click) before
+it plays, as a person would, so it needs no autoplay flag.
+
+About 15 seconds; exits 0 when all 111 checks pass. `GT_SHOTS=<folder>` saves
 screenshots. Sound reaches the page three ways:
 
 - `GT.test.feed(samples, rate, clock)` runs the page's own frame logic on a

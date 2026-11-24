@@ -19,7 +19,7 @@ ports too:
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \\
       --headless=new --remote-debugging-port=9351 --no-first-run \\
       --user-data-dir=/tmp/pntest --disable-gpu \\
-      --autoplay-policy=no-user-gesture-required about:blank
+      --autoplay-policy=no-user-gesture-required --mute-audio about:blank
 
     python3 resources/tests/piano/test-ui.py
 
@@ -27,6 +27,7 @@ With PN_SHOTS=<folder> it saves screenshots. Exit status is 0 when every
 check passes.
 """
 import asyncio
+import atexit
 import base64
 import json
 import os
@@ -168,12 +169,24 @@ async def settle(page, expr, want, tries=60, pause=0.1):
     return got
 
 
+def close_at_exit(port, target_id):
+    """Close the test's tab however the run ends: a tab left open goes on
+    playing what the suite played into it, and keeps its page running."""
+    def close():
+        try:
+            urllib.request.urlopen(f'http://127.0.0.1:{port}/json/close/{target_id}', timeout=5).read()
+        except Exception:
+            pass   # closed already
+    atexit.register(close)
+
+
 async def attach(port):
     ver = json.load(urllib.request.urlopen(f'http://127.0.0.1:{port}/json/version'))
     bws = await websockets.connect(ver['webSocketDebuggerUrl'], max_size=200 * 1024 * 1024)
     page = Page(bws)
     asyncio.create_task(page.pump())
     tid = (await page.call('Target.createTarget', {'url': 'about:blank'}))['result']['targetId']
+    close_at_exit(port, tid)
     page.sid = (await page.call('Target.attachToTarget', {'targetId': tid, 'flatten': True}))['result']['sessionId']
     for m in ('Runtime.enable', 'Page.enable', 'Network.enable'):
         await page.call(m)

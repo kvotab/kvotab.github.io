@@ -76,6 +76,13 @@ DC_HTTP_PORT=8791 DC_CDP_PORT=9241 python3 resources/tests/dose_coefficients/tes
 
 Stop the two by the PIDs you started, not by pattern.
 
+Each run starts from a clean origin: the page's saved settings and its
+databases are deleted before its scripts run, both `kvot-dose-decay` and
+`kvot-ensdf`, which the Chart of Nuclides shares (after that page's suite,
+on the same port, ensdf.137 opened here gave 1357 nuclides). The suite closes
+its tab however the run ends. Another tab of the same origin that holds the
+databases open stops it at once, with a message saying so.
+
 The section headings of the settings follow Chrome's rule that a `<summary>`
 holds no control: each heading's (i) is in a slot just before its `<details>`,
 in a `<div class="kvot-info-sec">` (kvot-info.css and kvot-info.js place it on

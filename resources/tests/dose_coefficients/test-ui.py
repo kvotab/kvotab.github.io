@@ -29,6 +29,7 @@ then
 Exit status is 0 when every check passes.
 """
 import asyncio
+import atexit
 import re
 import csv
 import io
@@ -44,6 +45,19 @@ import websockets
 HTTP = int(os.environ.get('DC_HTTP_PORT', '8765'))
 CDP = int(os.environ.get('DC_CDP_PORT', '9222'))
 URL = f'http://127.0.0.1:{HTTP}/dose_coefficients.html'
+
+
+def close_at_exit(target_id):
+    """Close the test's tab however the run ends. A tab left open keeps the
+    page's databases open on its origin, among them 'kvot-ensdf', the Chart of
+    Nuclides' too, and that suite's clean start then cannot delete it."""
+    def close():
+        try:
+            urllib.request.urlopen(f'http://127.0.0.1:{CDP}/json/close/{target_id}', timeout=5).read()
+        except Exception:
+            pass   # closed already
+    atexit.register(close)
+
 
 failures = []
 checks = 0
@@ -175,6 +189,7 @@ class Page:
 async def main():
     req = urllib.request.Request(f'http://127.0.0.1:{CDP}/json/new?about:blank', method='PUT')
     tab = json.loads(urllib.request.urlopen(req).read())
+    close_at_exit(tab['id'])
     async with websockets.connect(tab['webSocketDebuggerUrl'], max_size=2 ** 27) as ws:
         p = Page(ws)
         asyncio.ensure_future(p.pump())
@@ -185,11 +200,25 @@ async def main():
         # earlier run's copies would otherwise stay in the profile's cache.
         await p.call('Network.clearBrowserCache')
         await p.call('Emulation.setDeviceMetricsOverride', {'width': 1400, 'height': 1000, 'deviceScaleFactor': 1, 'mobile': False})
-        # Start from no saved settings: clear them on the page's own origin, then reload.
+        # Start from no saved settings: clear them on the page's own origin, then reload. And from
+        # no decay data or ENSDF releases another run left on this origin ('kvot-ensdf' is the
+        # Chart of Nuclides' too: after its suite, ensdf.137 opened here gave 1357 nuclides):
+        # deleted once per tab, before the page's scripts open them.
+        await p.call('Page.addScriptToEvaluateOnNewDocument', {'source': """
+          try { if (!sessionStorage.getItem('dc-test-started')) {
+            sessionStorage.setItem('dc-test-started', '1');
+            for (const name of ['kvot-dose-decay', 'kvot-ensdf'])
+              indexedDB.deleteDatabase(name).onblocked = () => sessionStorage.setItem('dc-test-blocked', name);
+          } } catch (e) {}"""})
         await p.call('Page.navigate', {'url': URL})
         await p.until("document.readyState === 'complete'", 30)
         await p.ev("try { localStorage.removeItem('kvot.dose'); localStorage.removeItem('kvot.dose.full') } catch (e) {}")
         await p.call('Page.navigate', {'url': URL})
+        await p.until("document.readyState === 'complete'", 30)
+        blocked = await p.ev("sessionStorage.getItem('dc-test-blocked')")
+        if blocked:
+            sys.exit(f"Another tab of this origin holds the database '{blocked}' open (a run cut short leaves one, a Chart of "
+                     "Nuclides run too), so the clean start cannot delete it: close it, or use another port.")
         loaded = await p.until("document.getElementById('dcNuclideCount') && /nuclides/.test(document.getElementById('dcNuclideCount').textContent)", 60)
         check('the ICRP 103 catalogue loads', loaded)
         n103 = await p.ev("parseInt(document.getElementById('dcNuclideCount').textContent)")

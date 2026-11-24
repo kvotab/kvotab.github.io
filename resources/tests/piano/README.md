@@ -12,9 +12,12 @@ The fourth drives the page in headless Chrome:
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
       --headless=new --remote-debugging-port=9351 --no-first-run \
       --user-data-dir=/tmp/pntest --disable-gpu \
-      --autoplay-policy=no-user-gesture-required about:blank
+      --autoplay-policy=no-user-gesture-required --mute-audio about:blank
 
     python3 resources/tests/piano/test-ui.py
+
+`--mute-audio` keeps the melodies the suite plays out of the speakers; the
+page still hears them.
 
 Check the ports first (`lsof -nP -iTCP:8851 -sTCP:LISTEN`, and 9351): other
 sessions use ports too. `PN_HTTP_PORT` and `PN_CDP_PORT` choose others, and

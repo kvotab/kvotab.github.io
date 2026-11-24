@@ -19,6 +19,7 @@ Start the server and the browser as in ../rb/README.md, then
 Exit status is 0 when every check passes.
 """
 import asyncio
+import atexit
 import base64
 import io
 import json
@@ -35,6 +36,18 @@ HTTP_PORT = os.environ.get('SITE_HTTP_PORT', '8765')
 CDP_PORT = os.environ.get('SITE_CDP_PORT', '9222')
 BASE = f'http://127.0.0.1:{HTTP_PORT}/ensdf.html'
 FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fixture', 'ensdf.003')
+
+
+def close_at_exit(target_id):
+    """Close the test's tab however the run ends. A tab left open keeps the
+    database 'kvot-ensdf' open on its origin (the Dose Coefficients page's too),
+    and the next run's clean start cannot delete it."""
+    def close():
+        try:
+            urllib.request.urlopen(f'http://127.0.0.1:{CDP_PORT}/json/close/{target_id}', timeout=5).read()
+        except Exception:
+            pass   # closed already
+    atexit.register(close)
 
 failures = []
 checks = 0
@@ -157,6 +170,7 @@ async def main():
         pump = asyncio.ensure_future(page.pump())
         t = await page.call('Target.createTarget', {'url': 'about:blank'})
         tid = t['result']['targetId']
+        close_at_exit(tid)
         a = await page.call('Target.attachToTarget', {'targetId': tid, 'flatten': True})
         page.sid = a['result']['sessionId']
         for m in ('Runtime.enable', 'Page.enable', 'Network.enable'):
@@ -169,11 +183,14 @@ async def main():
             sessionStorage.setItem('nz-test-started', '1');
             localStorage.removeItem('kvot-ensdf-v1'); localStorage.setItem('kvot-theme', 'light');
             localStorage.removeItem('kvot.ensdf.full');
-            indexedDB.deleteDatabase('kvot-ensdf');
+            indexedDB.deleteDatabase('kvot-ensdf').onblocked = () => sessionStorage.setItem('nz-test-blocked', '1');
           } } catch (e) {}"""}, session=page.sid)
 
         # ---------------------------------------------------------- loading
         await page.goto(BASE + '#60Co')
+        if await page.ev("sessionStorage.getItem('nz-test-blocked') === '1' && !(window.ENSDFPage && ENSDFPage.state.idx)"):
+            sys.exit("Another tab of this origin holds the database 'kvot-ensdf' open (a run cut short leaves one, "
+                     "a Dose Coefficients run too), so the clean start cannot delete it: close it, or use another port.")
         info = await page.ev("""JSON.stringify({
           label: ENSDFPage.state.source.label, shown: ENSDFPage.state.idx.shown.length,
           legend: document.querySelectorAll('#nzLegend li').length,

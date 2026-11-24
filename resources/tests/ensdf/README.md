@@ -84,7 +84,13 @@ the two on others and say which:
 
     SITE_HTTP_PORT=8857 SITE_CDP_PORT=9357 python3 resources/tests/ensdf/test-ui.py
 
-165 checks: the built-in release loads; the tab icon (drawn by
+The suite starts from a clean origin (its settings, and the database
+`kvot-ensdf`, which the Dose Coefficients page shares, deleted before the
+page's scripts run). It closes its tab however the run ends. Another tab of
+the same origin that holds `kvot-ensdf` open stops it at once, with a message
+saying so.
+
+169 checks: the built-in release loads; the tab icon (drawn by
 `scripts/gen-ensdf-icon.py`) is linked as a 32-pixel PNG, then an SVG, and a
 180-pixel touch icon, each decodes at its size, and the SVG is XML, in the
 64-unit square, named for the page and drawn in the kvot mark's three tones
