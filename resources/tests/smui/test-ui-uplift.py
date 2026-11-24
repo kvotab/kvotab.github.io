@@ -535,7 +535,7 @@ async def main():
                box: getComputedStyle(box).fill, text: getComputedStyle(text).fill }};
     }})()''')
     check('the dark theme redraws the report without errors', (r['dark'], r['errors']), ('dark', 0))
-    check('... the node boxes and their text change with it', r['box'] != 'rgb(252, 247, 242)' and r['text'] != 'rgb(53, 41, 33)', True)
+    check('... the node boxes and their text change with it', r['box'] != 'rgb(248, 249, 251)' and r['text'] != 'rgb(22, 27, 34)', True)
     await shot(page, 'uplift-02-dark.png')
     await page.ev("KVOT.setTheme ? KVOT.setTheme('light') : document.documentElement.setAttribute('data-theme', 'light')")
     await page.call('Emulation.setDeviceMetricsOverride', {'width': 390, 'height': 844, 'deviceScaleFactor': 2, 'mobile': True}, session=page.sid)

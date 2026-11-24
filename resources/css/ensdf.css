@@ -20,7 +20,7 @@
 :root {
   --nz-chart-bg: #fcfdfe;
   --nz-magic: #c3cad2;
-  --nz-select: #bb6c5d;
+  --nz-select: #b4533f;
   /* What fills a circle of the series as a bucket (Inventory): rdc.html's yellow. */
   --nz-bucket: #fff4a3;
 }

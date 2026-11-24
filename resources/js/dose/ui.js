@@ -1122,7 +1122,7 @@ function csvExternal(r) {
 function plotTheme() {
   const css = getComputedStyle(document.documentElement);
   const v = (n, d) => css.getPropertyValue(n).trim() || d;
-  return { text: v('--text-primary', '#352921'), muted: v('--text-muted', '#786b5d'), grid: v('--border-color', '#e0d7ce'), bg: v('--bg-primary', '#fff') };
+  return { text: v('--text-primary', '#161b22'), muted: v('--text-muted', '#5d6773'), grid: v('--border-color', '#dbe0e6'), bg: v('--bg-primary', '#fff') };
 }
 /* The colours come from the theme when the chart is drawn, so a theme change
    redraws the charts (kvot-theme-change, at the end of this file). The

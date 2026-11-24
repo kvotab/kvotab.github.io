@@ -1210,7 +1210,7 @@ async def main():
         await page.ev("document.querySelector('footer .theme-toggle').click(); 'ok'")
         await asyncio.sleep(0.3)
         dark = await page.ev(swatch)
-        check('the theme switch recolours the chart (stable is dark, then light)', (light, dark), ('rgb(27, 21, 17)', 'rgb(251, 246, 238)'))
+        check('the theme switch recolours the chart (stable is dark, then light)', (light, dark), ('rgb(19, 23, 28)', 'rgb(245, 247, 249)'))
         await page.ev("document.querySelector('footer .theme-toggle').click(); 'ok'")
         await page.goto(BASE + '#Cs-137', 390, 844)
         wide = json.loads(await page.ev("JSON.stringify({ sw: document.documentElement.scrollWidth, iw: innerWidth, right: Math.max(...[...document.querySelectorAll('.nz-bar > *:not([hidden]), .nz-main, .nz-panel')].map(e => e.getBoundingClientRect().right)) })"))

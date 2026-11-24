@@ -122,8 +122,8 @@
       const theme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
       return {
         theme,
-        bg: v('--bg-surface', '#fcf7f2'), ink: v('--text-primary', '#352921'), muted: v('--text-muted', '#786b5d'),
-        grid: v('--border-color', '#e0d7ce'), axis: v('--text-secondary', '#6b5d4f'), accent: v('--accent-line', '#bb7d37'),
+        bg: v('--bg-surface', '#f8f9fb'), ink: v('--text-primary', '#161b22'), muted: v('--text-muted', '#5d6773'),
+        grid: v('--border-color', '#dbe0e6'), axis: v('--text-secondary', '#454e59'), accent: v('--accent-line', '#b0682a'),
       };
     }
 

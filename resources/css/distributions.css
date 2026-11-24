@@ -15,7 +15,7 @@
 .ds {
   --ds-c1: #2a78d6; --ds-c2: #eb6834; --ds-c3: #1baf7a; --ds-c4: #eda100;
   --ds-c5: #e87ba4; --ds-c6: #008300; --ds-c7: #4a3aa7; --ds-c8: #e34948;
-  --ds-data: #8a8178;
+  --ds-data: #798490;
   display: grid;
   grid-template-columns: var(--ds-side-width, 340px) 8px minmax(0, 1fr);
   height: 100%;

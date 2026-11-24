@@ -40,12 +40,12 @@ export function theme() {
   const v = (name, fallback) => (cs.getPropertyValue(name) || doc.getPropertyValue(name) || fallback).trim() || fallback;
   return {
     series: [1, 2, 3, 4, 5, 6, 7, 8].map((i) => v(`--ds-c${i}`, '#2a78d6')),
-    data: v('--ds-data', '#8a8178'),
+    data: v('--ds-data', '#798490'),
     bg: v('--bg-primary', '#ffffff'),
-    text: v('--text-primary', '#352921'),
-    text2: v('--text-secondary', '#6b5d4f'),
-    muted: v('--text-muted', '#786b5d'),
-    grid: v('--border-color', '#e0d7ce'),
+    text: v('--text-primary', '#161b22'),
+    text2: v('--text-secondary', '#454e59'),
+    muted: v('--text-muted', '#5d6773'),
+    grid: v('--border-color', '#dbe0e6'),
   };
 }
 

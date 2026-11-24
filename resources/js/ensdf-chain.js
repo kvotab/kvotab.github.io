@@ -755,7 +755,7 @@
       muted: v('--text-muted', '#5d6773'),
       line: v('--text-secondary', '#454e59'),
       grid: v('--border-color', '#dbe0e6'),
-      select: v('--nz-select', '#bb6c5d'),
+      select: v('--nz-select', '#b4533f'),
       accent: v('--accent-line', '#b0682a'),
       label: v('--bg-surface', '#f8f9fb'),
       /* What fills a circle of the series as a bucket: rdc.html's yellow. */

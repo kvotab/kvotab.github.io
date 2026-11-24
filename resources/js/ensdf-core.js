@@ -360,7 +360,7 @@
      light one and the short-lived end recedes into the dark page. Stable is
      its own colour off the end of the ramp. Checked with the dataviz
      validator: adjacent steps 0.062 apart in OKLCH lightness (0.060 dark),
-     stable 16.7 (light) / 10.9 (dark) OKLab ΔE×100 from the longest class.
+     stable 15.6 (light) / 12.2 (dark) OKLab ΔE×100 from the longest class.
      --------------------------------------------------------------------- */
   const HALF_LIFE_CLASSES = [
     { min: 1e9 * YEAR_S, label: '> 10⁹ y' },
@@ -378,10 +378,10 @@
   const PALETTE = {
     light: {
       halfLife: ['#3a1463', '#5b1b6d', '#7e216e', '#a12968', '#c2355c', '#e04746', '#f0673f', '#fc863e', '#ffa954', '#feca73', '#ffe890'],
-      stable: '#1b1511', unknown: '#cfc6bd', missing: '#e6ded5',
+      stable: '#13171c', unknown: '#c2c9d1', missing: '#dbe0e6',
       /* decay modes: the documented categorical slots, assigned by search over
          the pairs that touch on the chart; see the note in ensdf.css */
-      mode: { stable: '#1b1511', bm: '#2a78d6', ec: '#e87ba4', a: '#eda100', sf: '#008300', p: '#4a3aa7', n: '#1baf7a', it: '#eb6834', other: '#eb6834', unknown: '#cfc6bd' },
+      mode: { stable: '#13171c', bm: '#2a78d6', ec: '#e87ba4', a: '#eda100', sf: '#008300', p: '#4a3aa7', n: '#1baf7a', it: '#eb6834', other: '#eb6834', unknown: '#c2c9d1' },
       seq: ['#cde2fb', '#9ec5f4', '#6da7ec', '#3987e5', '#256abf', '#1c5cab', '#104281', '#0d366b'],
       /* Diverging arms run from the midpoint outwards: blue steps 250/400/550/700
          of the documented ramp, and a red arm matched to them step for step in
@@ -390,8 +390,8 @@
     },
     dark: {
       halfLife: ['#ffe890', '#fecf82', '#feb570', '#fc9a63', '#fd7a54', '#f65b58', '#dc4e71', '#be4581', '#9d3f8b', '#7b3c8e', '#593888'],
-      stable: '#fbf6ee', unknown: '#5d534a', missing: '#3a312a',
-      mode: { stable: '#fbf6ee', bm: '#3987e5', ec: '#d55181', a: '#c98500', sf: '#008300', p: '#9085e9', n: '#199e70', it: '#d95926', other: '#d95926', unknown: '#5d534a' },
+      stable: '#f5f7f9', unknown: '#4d5661', missing: '#2c343d',
+      mode: { stable: '#f5f7f9', bm: '#3987e5', ec: '#d55181', a: '#c98500', sf: '#008300', p: '#9085e9', n: '#199e70', it: '#d95926', other: '#d95926', unknown: '#4d5661' },
       seq: ['#0d366b', '#104281', '#184f95', '#1c5cab', '#2a78d6', '#5598e7', '#86b6ef', '#b7d3f6'],
       /* Dark: the anchor flips, so the arms grow lighter away from a dark midpoint. */
       div: { neg: ['#184f95', '#2a78d6', '#6da7ec', '#b7d3f6'], mid: '#383835', pos: ['#892c27', '#c74941', '#e5857a', '#febeb6'] },
@@ -451,7 +451,7 @@
     const [r, g, b] = [1, 3, 5].map((i) => s2l(parseInt(h.slice(i, i + 2), 16) / 255));
     return 0.2126 * r + 0.7152 * g + 0.0722 * b;
   }
-  const inkOn = (fill) => (luminance(fill) > 0.28 ? '#1b1511' : '#ffffff');
+  const inkOn = (fill) => (luminance(fill) > 0.28 ? '#13171c' : '#ffffff');
 
   /* ---------------------------------------------------------------------
      Colour modes of the chart. Each gives a value per nuclide (ground
