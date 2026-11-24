@@ -469,6 +469,17 @@ console.log('\n--- sulphide tables ---');
   close('log10-normal: 84.13th percentile = 10^(mu+sigma)', l[Math.round(10000 - (0.8413447 * 10001 - 0.5))], Math.pow(10, -5.79757 + 0.63849), 2e-4);
   const c = ECHS.parseCustom('1e-4 2e-5\n3,5e-6; abc 0.001');
   check('custom text: numbers out, descending, junk counted', c.values.length === 4 && c.values[0] === 1e-3 && c.values[3] === 3.5e-6 && c.dropped === 1);
+  // As many values as the generic table allows (200,000), and as many pasted:
+  // spread into Math.min, they ran past the stack at some 125,000.
+  const g200k = ECHS.generic({ n: 200000 });
+  let d200k = null;
+  try { d200k = ECHS.describe(g200k); } catch (e) { d200k = { error: e.message }; }
+  check('the generic table of 200,000 values described: its count and ends',
+    d200k.n === 200000 && d200k.max === g200k[0] && d200k.min === g200k[199999], JSON.stringify(d200k));
+  const pasted = ECHS.parseCustom(Array.from({ length: 150000 }, (_, k) => `${1 + k % 97}e-6`).join(' '));
+  let dp = null;
+  try { dp = ECHS.describe(pasted.values); } catch (e) { dp = { error: e.message }; }
+  check('a pasted table of 150,000 values described', dp.n === 150000 && dp.max === 9.7e-5 && dp.min === 1e-6, JSON.stringify(dp));
 }
 
 /* ======================================================================

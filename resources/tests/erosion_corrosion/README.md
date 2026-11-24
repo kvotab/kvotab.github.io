@@ -60,7 +60,9 @@ the aperture and U0 derived as the 2.0 port derives them), padding to the
 layout, an inflow list, a round trip through `toCsv`, and the refusal of a
 table without U0 with the header quoted back. And the sulphide tables against
 the workbook's HSData sheet to the digit, the generated distributions against
-their own quantiles, and the custom-text parser.
+their own quantiles, and the custom-text parser; a generated table of 200,000
+values and a pasted one of 150,000 described (spread into `Math.min`, so many
+ran past the stack).
 
 **The failure histogram**, on a layout of the test's own (60 holes with a
 rising fracture flow): that its bars add up to the corrected mean, the mean

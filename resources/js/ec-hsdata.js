@@ -126,10 +126,20 @@
     return { values: Float64Array.from(values).sort((a, b) => b - a), dropped };
   }
 
+  /* The positive values' count, ends and mean, by one loop: a generic table
+     holds up to 200,000 values, and a pasted one any number, which spread
+     into Math.min ran past the stack at some 125,000. */
   function describe(values) {
-    const v = Array.from(values).filter((x) => Number.isFinite(x) && x > 0);
-    if (!v.length) return { n: 0, min: null, max: null, mean: null };
-    return { n: v.length, min: Math.min(...v), max: Math.max(...v), mean: v.reduce((s, x) => s + x, 0) / v.length };
+    let n = 0, min = Infinity, max = -Infinity, sum = 0;
+    for (const x of values) {
+      if (!(Number.isFinite(x) && x > 0)) continue;
+      n++;
+      sum += x;
+      if (x < min) min = x;
+      if (x > max) max = x;
+    }
+    if (!n) return { n: 0, min: null, max: null, mean: null };
+    return { n, min, max, mean: sum / n };
   }
 
   return { TABLES, HS_FORSMARK, HS_LAXEMAR, HS_TEST, GENERIC_DEFAULTS, generic, parseCustom, describe };
