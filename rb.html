@@ -363,7 +363,7 @@
                   <ul>
                     <li><kbd>Ctrl</kbd>-click (<kbd>⌘</kbd> on Mac) datasets to <strong>compare multiple</strong> in one chart.</li>
                     <li><kbd>Ctrl</kbd>-click groups that draw a chart of their own to draw them together, <strong>a panel each</strong>, or in one chart with <strong>Same chart</strong>.</li>
-                    <li>Use the <strong>search bar</strong> to filter the tree — supports <code>*</code> wildcards and <code>/</code> full-path search.</li>
+                    <li>Use the <strong>search bar</strong> to filter the tree — supports <code>*</code> wildcards and <code>/</code> full-path search. A term no name holds is tried on full paths, where a <code>*</code> stands for slashes too: <code>Kd*Po</code> finds <code>Kd/…/Po</code>.</li>
                     <li>Load <strong>multiple files</strong> and use the ∩ (intersect) or ∪ (union) toggle to combine trees.</li>
                     <li>An <strong>Ecolego assessment</strong> (<code>.eas</code>) opens too: each run it keeps opens as a file of its own.</li>
                     <li>A <strong>MATLAB MAT-file</strong> (<code>.mat</code>) opens too, in any format MATLAB saves (<code>-v4</code>, <code>-v6</code>, <code>-v7</code> and <code>-v7.3</code>): each variable is a dataset or a group in the tree, its class and size as MATLAB gives them. A cell array's elements are <code>{1}</code>, <code>{2}</code>, …, but a cell of numbers and text, as from a spreadsheet, is one table, and so is a struct array's field.</li>
@@ -527,10 +527,10 @@
   <script src="./resources/js/rb-chart.js?v=20261120"></script>
   <script src="./resources/js/rb-legend.js?v=20260926"></script>
   <script src="./resources/js/rb-info.js?v=20261102"></script>
-  <script src="./resources/js/rb-search.js?v=20260926"></script>
+  <script src="./resources/js/rb-search.js?v=20261124a"></script>
   <script src="./resources/js/rb-dragdrop.js?v=20260921"></script>
   <script src="./resources/js/rb-export.js?v=20260921"></script>
-  <script src="./resources/js/rb-init.js?v=20261102"></script>
+  <script src="./resources/js/rb-init.js?v=20261124a"></script>
   <script src="./resources/js/rb-resize.js?v=20260921"></script>
   <script src="./resources/js/rb-handoff.js?v=20261102"></script>
   <script src="./resources/js/rb-smui.js?v=20261102"></script>

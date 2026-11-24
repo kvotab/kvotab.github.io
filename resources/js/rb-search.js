@@ -16,7 +16,8 @@ function wildcardToRegex(pattern) {
 
 /**
  * Detect whether the search term appears to be a full-path search.
- * We treat terms containing '/', '.' or whitespace as path searches.
+ * A term containing '/' is one. A term containing '.', whitespace or '*' is
+ * one when it matches no name in the tree as written.
  * @param {string} term
  * @returns {boolean}
  */
@@ -28,15 +29,24 @@ function isPathSearchTerm(term) {
     the label nor the full path. Only treat dots and spaces as separators when
     the term does not already match a name as written.
   */
+  // A star stands for any characters, slashes among them, so 'Kd*Po' finds
+  // .../Kd/soil/Po as the same term with a slash before Po does; tried on
+  // names alone it found nothing. (Written as line comments: that term ends a
+  // block comment.) It goes to the full path on the same terms as a dot, only
+  // when no name holds the whole term: 'Pu*9' looks for Pu-239, and on full
+  // paths it would also find every item below one, and every name with a 9
+  // below a group whose name holds 'pu' (input_data) -- three times the items
+  // in a results file.
   const value = String(term);
   if (value.includes('/')) return true;
-  if (!/[.\s]/.test(value)) return false;
+  if (!/[.\s*]/.test(value)) return false;
   return !labelMatchesSomeTreeItem(value);
 }
 
 /**
  * True when the term, taken literally, already matches a visible tree label.
- * Used to decide that a dot belongs to a name rather than separating a path.
+ * Used to decide that a dot, a space or a star belongs to a name rather than
+ * standing for a slash in a path.
  *
  * @param {string} term
  * @returns {boolean}
@@ -66,10 +76,21 @@ function normalizePathSearchTerm(term) {
 /**
  * Return the last non-empty segment of a path-like search term for
  * highlighting the node label (final name) in the tree.
+ *
+ * Where that segment has a star and the name does not hold all of it, the
+ * star stood for a slash ('Kd*Po' matching .../Kd/soil/Po), and what the
+ * name holds is the part after the last star.
+ *
+ * @param {string} term
+ * @param {string} [name] - The matching item's own name
+ * @returns {string}
  */
-function labelSegmentFromPathTerm(term) {
+function labelSegmentFromPathTerm(term, name) {
   const parts = normalizePathSearchTerm(term).split('/').filter(Boolean);
-  return parts.length ? parts[parts.length - 1] : term;
+  const last = parts.length ? parts[parts.length - 1] : term;
+  if (name == null || !last.includes('*') || wildcardToRegex(last).test(name)) return last;
+  const pieces = last.split('*').filter(Boolean);
+  return pieces.length ? pieces[pieces.length - 1] : last;
 }
 
 /**
@@ -250,8 +271,9 @@ function filterTree(searchTerm) {
     const text = getLabelText(label);
     let matches = regexLabel.test(text);
 
-    // If user typed a path-style query (contains /, . or space), also test the
-    // element's `data-path` attribute (full HDF5 path) using a normalized regex.
+    // If user typed a path-style query (contains /, or a ., space or * that no
+    // name holds), also test the element's `data-path` attribute (full HDF5
+    // path) using a normalized regex.
     if (!matches && isPathSearch) {
       const pathAttr = item.getAttribute('data-path') || '';
       if (pathRegex && pathRegex.test(pathAttr)) matches = true;
@@ -261,7 +283,7 @@ function filterTree(searchTerm) {
       matchingItems.add(item);
       item.classList.add('search-match');
       // Highlight only the final name in the label when doing path searches
-      const labelSearch = isPathSearch ? labelSegmentFromPathTerm(searchTerm) : searchTerm;
+      const labelSearch = isPathSearch ? labelSegmentFromPathTerm(searchTerm, text) : searchTerm;
       setLabelHtml(label, highlightText(text, labelSearch));
     } else {
       const wasMatch = item.classList.contains('search-match');
@@ -332,16 +354,31 @@ if (!window._searchExpansionState) window._searchExpansionState = { lastTerm: nu
  * Async, non-blocking search for matching paths inside an HDF5 file.
  * Traverses groups with periodic yields to avoid freezing the UI.
  * Returns up to `limit` matching full paths.
+ *
+ * A path matches when its own name matches `regex`, as the tree's filter
+ * matches a name search; given `pathRegex`, also when the whole path matches
+ * that, as the filter matches a path search. A name search's term tried on
+ * whole paths too spent the limit on items the filter then hid: everything
+ * below a match, and every name under a group whose name held the letters.
+ * 'Pu*9' took I-129 below input_data for one, and in a results file 46 of
+ * its 50 paths were of that kind, so 5 of 49 Pu-239 items were shown.
+ *
+ * @param {Object} fileNode - The file (or group) to search from
+ * @param {RegExp} regex - Tried on each item's own name
+ * @param {number} [limit=50]
+ * @param {RegExp|null} [pathRegex=null] - Tried on each item's full path
+ * @returns {Promise<string[]>}
  */
-async function asyncFindMatchingPaths(fileNode, regex, limit = 50) {
+async function asyncFindMatchingPaths(fileNode, regex, limit = 50, pathRegex = null) {
   const matches = [];
+  const hit = (key, path) => regex.test(key) || (pathRegex !== null && pathRegex.test(path));
   // A lazy file has every path already, and its groups need not be fetched
   // to be searched (rb-lazy.js).
   const lazy = lazyStateOf(fileNode);
   if (lazy) {
     for (const path of lazy.paths) {
       const key = path.slice(path.lastIndexOf('/') + 1);
-      if (regex.test(key) || regex.test(path)) {
+      if (hit(key, path)) {
         matches.push(path);
         if (matches.length >= limit) break;
       }
@@ -358,7 +395,7 @@ async function asyncFindMatchingPaths(fileNode, regex, limit = 50) {
 
     for (const key of keys) {
       const path = prefix ? `${prefix}/${key}` : `/${key}`;
-      if (regex.test(key) || regex.test(path)) {
+      if (hit(key, path)) {
         matches.push(path);
         if (matches.length >= limit) break;
       }

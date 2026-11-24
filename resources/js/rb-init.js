@@ -213,25 +213,38 @@ EventBus.on('search:changed', ({ term }) => {
 
   (async () => {
     try {
-      const isPathSearchLocal = isPathSearchTerm(term);
-      const patternForSearch = isPathSearchLocal ? normalizePathSearchTerm(term) : term;
-      const regexLocal = wildcardToRegex(patternForSearch);
+      // The filter shows names that hold the term, unless no name does and
+      // the term has a slash, a dot, a space or a star; then it shows the
+      // paths that hold it (isPathSearchTerm). It can only ask the names the
+      // tree has loaded, and on a file just opened that is the top level, so
+      // here the files are asked: their names first, and their paths only
+      // when no name in any of them holds the term. Loading the groups of
+      // what is found gives the filter the same answer, and the limit of 50
+      // a file is spent on items the filter will show.
       const enabled = getEnabledFiles();
-      let expansions = 0;
-
-      for (const fk of enabled) {
-        const file = loadedFiles[fk];
-        if (!file) continue;
-        const matches = await asyncFindMatchingPaths(file, regexLocal, 50);
-        for (const p of matches) {
-          const exists = hasTreeItemForPath(p, fk);
-          if (!exists) {
-            const parentPath = p.substring(0, p.lastIndexOf('/')) || '/';
-            await expandAndLoadPath(fk, parentPath);
-            expansions++;
-            await new Promise(r => setTimeout(r, 10));
-          }
+      const nameRegex = wildcardToRegex(term);
+      const pathRegex = term.includes('/') || /[.\s*]/.test(term)
+        ? wildcardToRegex(normalizePathSearchTerm(term)) : null;
+      const find = async (paths) => {
+        const found = [];
+        for (const fk of enabled) {
+          const file = loadedFiles[fk];
+          if (!file) continue;
+          for (const p of await asyncFindMatchingPaths(file, nameRegex, 50, paths)) found.push([fk, p]);
         }
+        return found;
+      };
+      // A name never holds a slash, so a term with one goes to the paths.
+      let found = term.includes('/') ? [] : await find(null);
+      if (!found.length && pathRegex) found = await find(pathRegex);
+
+      let expansions = 0;
+      for (const [fk, p] of found) {
+        if (hasTreeItemForPath(p, fk)) continue;
+        const parentPath = p.substring(0, p.lastIndexOf('/')) || '/';
+        await expandAndLoadPath(fk, parentPath);
+        expansions++;
+        await new Promise(r => setTimeout(r, 10));
       }
 
       if (expansions > 0) setTimeout(() => filterTree(term), 80);

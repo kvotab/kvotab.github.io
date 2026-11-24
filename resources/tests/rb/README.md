@@ -317,6 +317,24 @@ colour. It uses the committed fixture `sample-a.h5`.
 
     python3 test-tree.py
 
+`test-search.py` covers what the tree's search finds, typed into the search
+box on a tree whose folders are not loaded yet. A term is searched in names,
+with `*` for any characters. A term with a slash is searched in full paths,
+and so is a term with a dot, a space or a star that no name holds as written:
+there a star stands for slashes too, so `vault*mire` finds what `vault*/mire`
+finds. Before, a star was tried on names alone, and `Kd*Po` found nothing in a
+file whose Po datasets sit in Kd groups while `Kd*/Po` found all eleven. A
+star term that a name holds stays a name search (`e*9` finds Se-79, not I-129
+below biosphere). A search also loads the folders of its matches, at most 50 a
+file. Those were found by trying the term on whole paths too, so the 50 went
+on items the filter then hid, and matches beyond them were never loaded: in a
+results file `Pu*9` showed 5 of its 49 Pu-239 items. A file built in the page
+with h5wasm has 120 such items in the group searched first and three Pu-239
+datasets beyond them, and each term runs on a fresh page. It also uses the
+committed fixture `sample-a.h5`.
+
+    python3 test-search.py
+
 `test-log-range.py` covers auto range on a log y axis. The top is the decade at
 or above the highest value drawn, and the bottom the decade at or below the
 lowest, but never more than 12 decades below the top. It used to be Plotly's
