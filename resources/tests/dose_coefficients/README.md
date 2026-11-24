@@ -476,3 +476,85 @@ than its own curve folded with the ICRP 38 spectrum; with the trapezoid on
 the spectrum's grid it is worse). FGR 12 with the trapezoid instead of the
 PCHIP spectrum is as good overall (medians 1.0000) but not for Sm-151, so
 both reports are calculated the one way.
+
+## What the comparisons found (2026-11-24)
+
+ICRP 103 system against every case of the annex, effective dose at the six
+ages and organ doses of both sexes, before the day's changes and after them:
+
+| | values | within 1 % | within 2 % | within 5 % |
+| --- | --- | --- | --- | --- |
+| injection | 1740 | 91.8 → 96.6 % | 96.6 → 99.7 % | 99.3 → 100.0 % |
+| ingestion | 2526 | 96.4 → 98.2 % | 99.2 → 100.0 % | 99.9 → 100.0 % |
+| inhalation at 1 µm | 5238 | 98.0 → 98.6 % | 99.7 → 100.0 % | 100.0 % |
+| gases and vapours | 522 | 94.8 → 97.1 % | 98.3 → 99.8 % | 100.0 % |
+| organ doses (male and female) | 536798 | | 95.8 → 98.2 % | 97.9 → 99.1 % |
+
+The coefficients printed in Publication 158 and the Part 2 and Part 3 drafts
+hardly move (inhalation against Publication 158 and Part 2, within 5 %,
+99.8 → 99.9 %): what changed is mostly below their two figures.
+
+Each change started from a nuclide the annex had off, split by chain member
+and tissue, fitted to the S coefficients of source regions, checked against
+the section's text, and then run against the whole annex and the
+publications:
+
+- **Caesium formed in barium's bone volume** (db2f3725). A progeny in its
+  parent's bone volume has that bone volume as a source region of its own,
+  so its "Other" leaves it out (Publication 158 paras 149–150). Ba-129 by
+  injection at 3 months 0.908 → 0.999.
+- **Thallium formed in lead's or bismuth's red cells** (337b0c7b) stays in
+  thallium's red cells: only thallium formed in a part of the blood the
+  thallium model lacks goes to plasma (Publication 137 para 481). Pb-194 to
+  Pb-200 were up to 7.5 % low; now 0.993–1.007.
+- **Lanthanum formed on barium's bone surfaces** (db582b9d) is on its own
+  bone surfaces (Publication 137 para 354; para 356's bone turnover rate only
+  for barium's bone volume). Cerium formed from lanthanum takes lanthanum's
+  compartments, the soft-tissue pools too where they are lanthanum's
+  (`sameOther: 'progeny'`). Ba-140 at 3 months 0.954 → 0.981; Ba-141's liver
+  0.95 → 1.00.
+- **Iodine formed from tellurium or antimony** (45ab9dcc) has one compartment
+  for inorganic iodide in other tissue, the simplified model of Publication 137
+  para 135 that para 175 assigns. Its organic iodine keeps iodine's
+  age-specific compartments: para 135's adult rates take Te-131m at 3 months
+  0.6 % low. Te-134 1.04 → 1.00, Te-132 1.02 → 1.00.
+- **Saliva** (e6d5967d) passes the oesophagus by the slow transit alone, as
+  material cleared from the airways does (Publication 158 section 2.3.2.3). The
+  oesophagus of iodine and technetium: I-128 0.62–0.81 → 1.00, I-134
+  0.79–0.88 → 1.00, I-131 0.97–0.99 → 1.00.
+- **Gallium formed in zinc's kidneys** (3525c2ba) is in gallium's kidneys,
+  which empty into the bladder (Publication 134 para 437 gives it their
+  half-time). Zn-72 1.02–1.03 → 1.00; its bladder 0.82 → 0.99–1.02.
+- **Rubidium formed from strontium** (b0438f09) follows rubidium's own model,
+  with kidneys and liver (Publication 151 Table 22.3; the Part 3 draft's
+  Table 20.2 by age), not the condensed model of Publication 134 para 484.
+  Sr-80's kidneys 0.26 → 1.00; the organ doses of Sr-80, Sr-81 and Sr-83
+  within 5 %, 70–88 % → 99–100 %.
+
+Found on the way: Publication 155's photon SAF from cortical marrow
+(C-marrow) to red marrow is 20 to 50 times that from trabecular marrow at
+every paediatric age (newborn: 5.7 against 0.12 kg⁻¹ near 1 MeV). It is the
+ICRP's own data and the annex has it: Ba-140's red marrow at 3 months comes
+from the 0.5 % of its La-140 that lanthanum's model carries into cortical
+marrow.
+
+Still open:
+
+- **3-month-olds.** 142 of the 1671 cases are more than 1 % low at 3 months
+  (46 nuclides; tritium 0.986, Sr-89 0.983, Cs-137 0.988), and none at
+  1 year. Short-lived nuclides are right, so S at the age of intake is.
+  The annex's S falls about 0.3 % a day after 100 days where Publication
+  158's eq. 2.16 gives 0.46 %, and is back on eq. 2.16 by about 150–230 days.
+  Several shapes fit about equally (98 % within 1 %) and no published rule
+  gives any of them, so the page keeps eq. 2.16. Ruled out: eq. 2.16's first
+  branch for the whole year (77.6 % within 1 %), S tabulated by month,
+  quarter or half-year, and transfer rates following eq. 2.16 or held at the
+  3-month values in the first year (Sr-90 0.932 and 1.070).
+- **Strontium chains, females from 15 years.** Rubidium's muscle up to 12 %
+  low and other soft tissue up to 13 % high; males within 0.6 % at every age.
+  It makes the adult e of Sr-80 and Sr-83 1.016. Publication 158 takes the
+  reference male's biokinetics for both sexes.
+- **Zn-72 in children.** Bone surface 0.905–0.97, red marrow 0.945–0.98.
+- **Ba-141 and Ba-142.** Red marrow 1–3 % and bone surface 1–2 % high from
+  5 years (e within 0.6 %).
+- **The largest e left.** Ra-227 (1.009–1.024) and Ag-113's adult (1.022).
