@@ -202,8 +202,7 @@ async def main():
         await p.call('Emulation.setDeviceMetricsOverride', {'width': 1400, 'height': 1000, 'deviceScaleFactor': 1, 'mobile': False})
         # Start from no saved settings: clear them on the page's own origin, then reload. And from
         # no decay data or ENSDF releases another run left on this origin ('kvot-ensdf' is the
-        # Chart of Nuclides' too: after its suite, ensdf.137 opened here gave 1357 nuclides):
-        # deleted once per tab, before the page's scripts open them.
+        # Chart of Nuclides' too): deleted once per tab, before the page's scripts open them.
         await p.call('Page.addScriptToEvaluateOnNewDocument', {'source': """
           try { if (!sessionStorage.getItem('dc-test-started')) {
             sessionStorage.setItem('dc-test-started', '1');
@@ -983,8 +982,11 @@ async def main():
         if os.path.exists(ens137):
             doc = await p.call('DOM.getDocument')
             node = await p.call('DOM.querySelector', {'nodeId': doc['result']['root']['nodeId'], 'selector': '#dcDecayFile'})
+            # the count of the catalogue shown before: the choice changes first, the opened data's catalogue comes after it
+            before = await p.ev("document.getElementById('dcNuclideCount').textContent")
             await p.call('DOM.setFileInputFiles', {'files': [ens137], 'nodeId': node['result']['nodeId']})
-            made = await p.until("document.getElementById('dcDecay').value.startsWith('open:ensdf.137|') && /nuclides/.test(document.getElementById('dcNuclideCount').textContent)", 120)
+            made = await p.until("document.getElementById('dcDecay').value.startsWith('open:ensdf.137|') && /nuclides/.test(document.getElementById('dcNuclideCount').textContent)"
+                                 f" && document.getElementById('dcNuclideCount').textContent !== {json.dumps(before)}", 120)
             got = await p.ev("""[parseInt(document.getElementById('dcNuclideCount').textContent), !document.getElementById('dcDecayForget').hidden,
               [...document.querySelectorAll('#dcDecay optgroup')].find((g) => /opened/.test(g.label))?.textContent || '']""")
             check(f'opening ensdf.137 makes its decay data in the browser and chooses them: {got}', made and got[0] < 20 and got[1] and 'ensdf.137 (opened' in got[2])
@@ -1154,13 +1156,14 @@ async def main():
         await p.call('Emulation.setDeviceMetricsOverride', {'width': 390, 'height': 844, 'deviceScaleFactor': 2, 'mobile': True})
         await asyncio.sleep(1)
         check('no horizontal scroll at 390 px', await p.ev("document.documentElement.scrollWidth <= window.innerWidth + 1"))
-        # Help: the two tables of ratios with a column per age under an age row; on a phone each table scrolls, not the pane.
+        # Help: the tables of ratios (ICRP 60's, and ICRP 103's when something there differs by more than 10 %) with a column
+        # per age under an age row; on a phone each table scrolls, not the pane.
         await p.ev("document.querySelector('.dc-tabs button[data-tab=\"help\"]').click()")
         await asyncio.sleep(0.6)
         shape = await p.ev("""[...document.querySelectorAll('table.dc-ratios')].map((t) => [t.tHead.rows[1].textContent,
           [...t.tBodies[0].rows].every((r) => r.querySelectorAll('td.num').length === 6), t.parentElement.className])""")
         check('Help’s ratio tables give a column per age under the ages, each in a scroller',
-              bool(shape) and len(shape) == 2 and all(a == '3 months1 year5 years10 years15 yearsAdult' and b and c == 'dc-table-wrap' for a, b, c in shape))
+              bool(shape) and all(a == '3 months1 year5 years10 years15 yearsAdult' and b and c == 'dc-table-wrap' for a, b, c in shape))
         check('nor does the Help pane at 390 px', await p.ev("(() => { const pane = document.getElementById('pane-help'); return pane.scrollWidth <= pane.clientWidth + 1; })()"))
         await p.ev("document.querySelector('.dc-tabs button[data-tab=\"model\"]').click()")
         await asyncio.sleep(0.8)

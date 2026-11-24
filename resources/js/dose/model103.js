@@ -723,6 +723,14 @@ export function assemble103(data, spec) {
   }
   if (decays.some((d) => d.to === undefined || d.to < 0)) throw new Error('a decay without a destination compartment');
 
+  // Progeny formed in a parent's bone volume stay there with the parent
+  // (ICRP 158 paras 149-150), and the ICRP's coefficients count that bone
+  // volume as one of the progeny's own source regions: their "Other" leaves
+  // it out, as it leaves out the regions of their own models. Caesium's model
+  // has no bone volume, and caesium formed in barium's is most of what would
+  // otherwise be its "Other" (Ba-129 by injection: 9 % low at 3 months).
+  for (const c of comps) if (c.region === 'T-bone-V' || c.region === 'C-bone-V') members[c.member].named.add(c.region);
+
   // Descriptions for the page.
   const memberInfo = members.map((m) => ({
     name: m.name, el: m.el, lambda: m.lambda, T: m.T, kind: m.kind, of: m.of ?? null,

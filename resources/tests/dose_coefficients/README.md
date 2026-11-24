@@ -78,10 +78,12 @@ Stop the two by the PIDs you started, not by pattern.
 
 Each run starts from a clean origin: the page's saved settings and its
 databases are deleted before its scripts run, both `kvot-dose-decay` and
-`kvot-ensdf`, which the Chart of Nuclides shares (after that page's suite,
-on the same port, ensdf.137 opened here gave 1357 nuclides). The suite closes
+`kvot-ensdf`, which the Chart of Nuclides shares. The suite closes
 its tab however the run ends. Another tab of the same origin that holds the
-databases open stops it at once, with a message saying so.
+databases open stops it at once, with a message saying so. Opening ensdf.137
+waits for the nuclide count to change as well as for the choice: the choice
+changes first and the opened data's catalogue after it, so the count read at
+once could still be the previous catalogue's (1357).
 
 The section headings of the settings follow Chrome's rule that a `<summary>`
 holds no control: each heading's (i) is in a slot just before its `<details>`,
