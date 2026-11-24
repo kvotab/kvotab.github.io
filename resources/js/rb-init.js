@@ -186,6 +186,9 @@ EventBus.on('theme:changed', ({ isDark }) => {
       if (/^[xy]axis\d*$/.test(key) && ax) update[`${key}.minor.showgrid`] = ax.type === 'log';
     }
     Plotly.relayout(el, update);
+    // A black line is the text's colour on a dark chart, and black again on
+    // a light one; so is what was drawn from it (rb-chart-axes.js).
+    recolorLinesForTheme(el, isDark);
     setTimeout(() => { _suppressPresetSync = false; }, 0);
   } catch (e) {
     kvotWarn('theme:changed handler failed', e);

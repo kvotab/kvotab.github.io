@@ -101,6 +101,9 @@ let _xlColorProbe = null;
 
 /** A CSS colour as { hex: 'RRGGBB', alpha }, whatever CSS spelling Plotly used. */
 function xlColor(css, fallback = '000000') {
+  // Exports are drawn in the light theme: a black line the dark chart shows
+  // in its text's colour is black again (rb-chart-axes.js). pyColour comes here too.
+  css = lightThemeColor(css);
   let m = /^#([0-9a-f]{3,8})$/i.exec(String(css || '').trim());
   if (!m) {
     if (!_xlColorProbe) {

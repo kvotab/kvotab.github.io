@@ -181,6 +181,43 @@ async def main():
             await page.ev("__toggle('showSDOM', false)")
             await page.ev("__toggle('showCI', false)")
 
+            # --- the dark theme: the Total in the text's colour, exported black ---
+            # Black all but vanishes on the dark theme's plot (#151a20). There a
+            # black line, the Total's, and what is drawn from it take the chart's
+            # text colour; the exports are drawn in the light theme, and have it
+            # black (rb-chart-axes.js chartLineColor, lightThemeColor).
+            colours = """(() => { const data = document.getElementById('plotlyChart').data || [];
+              const total = data.find(t => t.name === 'Total');
+              return { line: total.line.color,
+                bands: data.filter(t => (t._isCIBand || t._isSDOMBand) && t._bandOf && t._bandOf === total._bandKey).map(b => b.fillcolor),
+                hatch: data.filter(t => t._isSDOMHatch).map(h => h.line.color).filter(c => /^rgba\\((0, 0, 0|228, 232, 236),/.test(c)),
+                others: data.filter(t => t.name === 'Cs-137' || t.name === 'I-129').map(t => t.line.color),
+                export: xlColor(total.line.color).hex }; })()"""
+            # the light theme first: a browser in the computer's dark mode opens the page dark
+            await page.ev("document.documentElement.setAttribute('data-theme', 'light'); true")
+            await asyncio.sleep(0.6)
+            await page.ev("__click('/new')")
+            await page.ev("__toggle('showCI', true)")
+            await page.ev("__toggle('showSDOM', true)")
+            light = await page.ev(colours)
+            await page.ev("document.documentElement.setAttribute('data-theme', 'dark'); true")
+            await asyncio.sleep(1)
+            dark = await page.ev(colours)
+            check('in the dark theme the Total is drawn in the chart\'s text colour, not black',
+                  (light['line'] in ('#000000', 'rgb(0, 0, 0)'), dark['line']), (True, 'rgb(228, 232, 236)'))
+            check('  and so are its CI and SEM bands, and the SEM\'s hatching',
+                  (len(dark['bands']), all(b.startswith('rgba(228, 232, 236, ') for b in dark['bands']),
+                   len(dark['hatch']) > 0 and all(h.startswith('rgba(228, 232, 236, ') for h in dark['hatch'])), (2, True, True))
+            check('  the other lines keep their colours', dark['others'], light['others'])
+            check('  the Excel and Python exports, drawn in the light theme, have it black', (light['export'], dark['export']), ('000000', '000000'))
+            await page.ev("__toggle('showSDOM', false)")
+            await page.ev("__toggle('showCI', false)")
+            await page.ev("__click('/old')")
+            check('  a chart drawn in the dark theme starts so', (await page.ev(colours))['line'], 'rgb(228, 232, 236)')
+            await page.ev("document.documentElement.setAttribute('data-theme', 'light'); true")
+            await asyncio.sleep(1)
+            check('  and the light theme has it black again', (await page.ev(colours))['line'], 'rgb(0, 0, 0)')
+
             errors = [m for kind, m in page.logs if kind in ('error', 'exception') and 'favicon' not in m.lower()]
             check('no errors in the console', errors, [])
         finally:

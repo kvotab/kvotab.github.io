@@ -1366,7 +1366,7 @@ function buildRadionuclideTrace({ series, dataset, datasetKey, path, fileKey, en
     traceName = `${datasetKey} (${filenameDiff(enabledFiles[0], fileKey)})`;
     lineWidth = lineWidth / 2;
   }
-  const traceObj = ChartService.timeSeriesTrace({ x: trimmedTimeData, y: trimmedYData, name: traceName, line: { color: lineStyle.color, dash: lineStyle.dash, width: lineWidth }, _datasetKey: datasetKey });
+  const traceObj = ChartService.timeSeriesTrace({ x: trimmedTimeData, y: trimmedYData, name: traceName, line: { color: chartLineColor(lineStyle.color), dash: lineStyle.dash, width: lineWidth }, _datasetKey: datasetKey });
   traceObj._py = series.py;
   traceObj._isProbabilistic = isProbabilistic || !!ciFromColumns;
   markTraceSource(traceObj, fileKey, dataset);
@@ -1462,7 +1462,8 @@ function insertTotalTraces(ctx) {
           mode: 'lines',
           name: traceName,
           line: {
-            color: '#000000',
+            // black, or the text's colour on a dark chart (chartLineColor)
+            color: chartLineColor('#000000'),
             dash: 'solid',
             width: lineWidth
           },

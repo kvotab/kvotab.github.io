@@ -213,6 +213,75 @@ function getLineStyle(name) {
   return defaultStyle;
 }
 
+/*
+  Black on a dark chart. The Total line is black, and so is Sn-126's; on the
+  dark theme's plot (#151a20) black all but vanishes. There a black line is
+  drawn in the chart's own text colour instead (relayoutForTheme's
+  #e4e8ec), and so is what is drawn from it -- a band's fill, its hatching,
+  an iteration's dotted line -- which take the line's colour as they are
+  made. A change of theme recolours what is on the chart
+  (recolorLinesForTheme, from rb-init.js). What is exported, Python and
+  Excel, is drawn in the light theme whatever the page's, so there the
+  colour goes back to black (lightThemeColor, in xlColor).
+*/
+const DARK_BLACK = Object.freeze([228, 232, 236]);
+
+/** {r, g, b, a} of a hex or rgb()/rgba() colour, or null for anything else. */
+function parseCssRgb(css) {
+  const s = String(css || '').trim();
+  let m = /^#([0-9a-f]{6})$/i.exec(s);
+  if (m) {
+    const n = parseInt(m[1], 16);
+    return { r: n >> 16, g: (n >> 8) & 255, b: n & 255, a: 1 };
+  }
+  m = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/i.exec(s);
+  if (m) return { r: parseInt(m[1] + m[1], 16), g: parseInt(m[2] + m[2], 16), b: parseInt(m[3] + m[3], 16), a: 1 };
+  m = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+)\s*)?\)$/i.exec(s);
+  if (m) return { r: +m[1], g: +m[2], b: +m[3], a: m[4] === undefined ? 1 : +m[4] };
+  return null;
+}
+
+function isDarkChart() {
+  return document.documentElement.getAttribute('data-theme') === 'dark';
+}
+
+/** A line's colour as the chart draws it in the theme: black is the text's colour on a dark one. */
+function chartLineColor(css, dark = isDarkChart()) {
+  if (!dark) return css;
+  const c = parseCssRgb(css);
+  if (!c || c.r || c.g || c.b) return css;
+  return c.a < 1 ? `rgba(${DARK_BLACK.join(', ')}, ${c.a})` : `rgb(${DARK_BLACK.join(', ')})`;
+}
+
+/** The colour as the light theme has it: the dark theme's stand-in for black is black again. */
+function lightThemeColor(css) {
+  const c = parseCssRgb(css);
+  if (!c || c.r !== DARK_BLACK[0] || c.g !== DARK_BLACK[1] || c.b !== DARK_BLACK[2]) return css;
+  return c.a < 1 ? `rgba(0, 0, 0, ${c.a})` : 'rgb(0, 0, 0)';
+}
+
+/**
+ * Recolour what is on a chart for a change of theme: every line, fill and
+ * marker that is black, or the dark theme's stand-in for it, in the colour
+ * the theme gives it.
+ *
+ * @param {HTMLElement} el - The chart
+ * @param {boolean} dark - Whether the theme is now the dark one
+ */
+function recolorLinesForTheme(el, dark) {
+  const to = dark ? (c) => chartLineColor(c, true) : lightThemeColor;
+  for (const prop of ['line.color', 'fillcolor', 'marker.color']) {
+    const idx = [], values = [];
+    (el.data || []).forEach((t, i) => {
+      const was = prop === 'fillcolor' ? t.fillcolor : (t[prop.split('.')[0]] || {}).color;
+      if (typeof was !== 'string') return;
+      const now = to(was);
+      if (now !== was) { idx.push(i); values.push(now); }
+    });
+    if (idx.length) Plotly.restyle(el, { [prop]: values }, idx);
+  }
+}
+
 
 /* ==========================================================================
    8. CHART CONTROLS
