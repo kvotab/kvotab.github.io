@@ -111,8 +111,9 @@ function chainRegions(sys) {
   female's skin, say, holds the male's share. Null where no other member
   names anything of it. colsFor(region, named) gives the S columns.
 */
-function otherParts(saf, named, chainNamed, colsFor) {
-  const male = PHANTOMS_103.M.map((id) => saf.phantoms[id]), female = PHANTOMS_103.F.map((id) => saf.phantoms[id]);
+function otherParts(saf, named, chainNamed, colsFor, sharesOf = 'M') {
+  // The individual whose masses give the shares: the reference male, or, where the model is the female's own (radon), her.
+  const male = PHANTOMS_103[sharesOf].map((id) => saf.phantoms[id]), female = PHANTOMS_103[sharesOf === 'M' ? 'F' : 'M'].map((id) => saf.phantoms[id]);
   const src = male[0].sources;
   const mine = (ph, s) => ph.other[s] && !named.has(src[s]);
   const X = [];
@@ -158,6 +159,10 @@ export function coefficients103(data, spec, ages = AGES_103, opt = {}) {
   // do without ("*shares": false).
   const head = data.progeny?.sets?.[data.progeny?.parents?.[spec.nuclide.split('-')[0]]];
   const otherShares = step > 0 && (spec.rules?.otherShares ?? (head?.['*shares'] !== false && OPTIONS103.otherShares));
+  // Where an element has a model for each sex (radon), whose masses give the
+  // female's shares: the male's as everywhere, or her own for the nuclides the
+  // set lists ("*sexShares": 222Rn, as the annex of Publication 158 has it).
+  const sexShares = spec.rules?.sexShares ?? head?.['*sexShares']?.[spec.nuclide] ?? OPTIONS103.sexShares;
   return ages.map((age0) => {
     const adultAge = data.elements[spec.nuclide.split('-')[0]]?.adultAge || 7300;
     const intakeAge = age0 === 7300 ? adultAge : age0;
@@ -196,7 +201,8 @@ export function coefficients103(data, spec, ages = AGES_103, opt = {}) {
         const key = keyOf(c);
         if (splitCache.has(key)) return splitCache.get(key);
         const named = new Set(sys.members[c.otherOf ?? c.member].named);
-        const parts = otherParts(saf, named, chainNamed, (region, set) => colsFor(sys.members[c.member].name, region, set));
+        const parts = otherParts(saf, named, chainNamed, (region, set) => colsFor(sys.members[c.member].name, region, set),
+          sex === 'F' && sexShares === 'own' ? 'F' : 'M');
         splitCache.set(key, parts);
         return parts;
       }) : undefined;

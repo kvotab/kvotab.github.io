@@ -137,6 +137,14 @@ export const OPTIONS103 = {
                           // member's rest of the body by the reference male's masses, for both sexes
                           // (dose103.js otherParts; needs ageStep); false = all of it spread by the
                           // masses of the sex whose dose it is
+  sexShares: 'male',      // where an element has a model for each sex (radon), the female's shares of the
+                          // rest of the body: 'male' = by the male's masses, as where one model serves
+                          // both (220Rn in the annex of Publication 158); 'own' = by her own, which a
+                          // set of progeny.json can ask for by nuclide ("*sexShares": 222Rn in the annex)
+  contentsTransit: 'parent', // progeny formed in the contents of the alimentary tract move on at the rate the
+                          // model of the nuclide taken in has there, where it has one of its own (radon:
+                          // stomach to small intestine, 15.2 d-1 in the female from 15 years where the
+                          // tract's own is 20.6); 'own' = at the tract's rate
   marrowNamed: true,      // a model with the marrow of trabecular and cortical bone names red and yellow
                           // marrow with it: no marrow in its "Other" (below, where the members' named
                           // regions are set, with what the annex and the printed coefficients show)
@@ -620,8 +628,14 @@ export function assemble103(data, spec) {
     }
     systemicOf(j);
     const over = (m.kind === 'mirror' ? st[m.of] : st[j]).giOverride;
+    // What is formed in the contents moves on with them: where the model of
+    // the nuclide taken in has a rate of its own from one part of the tract's
+    // contents to the next (radon's stomach emptying, slower in the female
+    // from 15 years), its progeny there have it too.
+    if (j > 0 && rules.contentsTransit !== 'own') systemicOf(0);
+    const carriedOn = j > 0 && rules.contentsTransit !== 'own' ? st[0].giOverride.filter((x) => x.toRegion) : [];
     for (const [a, b, rates] of HATM) {
-      const o = over.find((x) => x.from === a && x.toRegion === b);
+      const o = over.find((x) => x.from === a && x.toRegion === b) || carriedOn.find((x) => x.from === a && x.toRegion === b);
       if (o) { tr(g[a], g[b], o.ages, o.rates, o.origin); continue; }
       // Saliva passes the oesophagus by the slow transit alone, as material
       // cleared from the respiratory tract does (ICRP 158 section 2.3.2.3,

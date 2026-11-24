@@ -146,9 +146,32 @@ function significantMembers(index, names, cutoff, horizon, measure) {
   // energy all comes through it.
   const at = new Set(names);
   const keep = new Set();
+  if (measure !== 'either') {
+    for (let i = names.length - 1; i >= 0; i--) {
+      const n = names[i];
+      if (i === 0 || w[i] / total >= cutoff || (index[n].d || []).some(([d]) => at.has(d) && keep.has(d))) keep.add(n);
+    }
+    return keep;
+  }
+  // 'either': what is below it counts only if it comes through it. 218At, on
+  // a branch of 0.02 % of 218Po that joins 214Po again, is no member for that
+  // (counted, astatine's thyroid, salivary glands and stomach wall were
+  // tissues of radon's chain). The share of a kept member's making that
+  // passes a member: the products of the branching fractions along the ways.
+  const pos = new Map(names.map((n, i) => [n, i]));
+  const ways = (from) => {
+    const v = new Float64Array(names.length);
+    v[from] = 1;
+    for (let j = from; j < names.length; j++) if (v[j] > 0) for (const [d, b] of index[names[j]].d || []) if (pos.has(d) && pos.get(d) > j) v[pos.get(d)] += v[j] * b;
+    return v;
+  };
+  const fromParent = ways(0);
   for (let i = names.length - 1; i >= 0; i--) {
-    const n = names[i];
-    if (i === 0 || w[i] / total >= cutoff || (index[n].d || []).some(([d]) => at.has(d) && keep.has(d))) keep.add(n);
+    if (i === 0 || w[i] / total >= cutoff) { keep.add(names[i]); continue; }
+    const below = ways(i);
+    for (let x = i + 1; x < names.length; x++) {
+      if (keep.has(names[x]) && below[x] > 0 && fromParent[i] * below[x] >= cutoff * fromParent[x]) { keep.add(names[i]); break; }
+    }
   }
   return keep;
 }

@@ -20,14 +20,18 @@
              chains) or the adult model of Publication 151 is kept
              (selenium and silver chains)
     key      which of the element's models to start from (mercury: inorganic)
-    from     "set": start from that set's spec for X, then apply ops
+    from     "set": start from that set's spec for X, then apply ops (its
+             identifications kept, the spec's own added to them)
     ops      changes to the model, in order:
                {op: 'carve', from: [names], add: [{name, region, rate | like +
-                 factor | share (+ per) | ofOutflow (+ excluding), out}]}
+                 factor | share (+ per) | ofOutflow (+ excluding), out,
+                 shareOf: {el, key, from}}]}
                  adds compartments fed from central blood and takes their
                  inflow from the `from` compartments, so that the total
                  outflow from blood is kept; at other ages the added inflows
-                 keep their ratio to the inflow they are taken from
+                 keep their ratio to the inflow they are taken from, or, with
+                 shareOf, follow the share that the compartment of that name
+                 has of the flow out of `from` in element el's model (key)
                {op: 'rename', name, to, region}
                {op: 'remove', name}           a compartment and its transfers
                {op: 'set', from, to, rate}    a constant transfer coefficient
@@ -110,6 +114,8 @@ function resolve(progeny, setName, el, depth) {
     if (!prior) throw new Error(`progeny set ${spec.from} has no ${fromEl}`);
     const { from, fromEl: _, ops, ...rest } = spec;
     spec = { ...prior, ...rest, ops: [...(prior.ops || []), ...(ops || [])] };
+    // Its identifications are added to those it starts from.
+    if (prior.identify && rest.identify) spec.identify = { ...prior.identify, ...rest.identify };
     if (fromEl !== el && !spec.base && !spec.model) spec.base = fromEl;
   }
   return { ...spec, set: setName };
@@ -130,6 +136,15 @@ export function buildProgenyModel(spec, el, elements, modelOf) {
     const E = elements[spec.base || el];
     if (!E) throw new Error(`progeny model for ${el}: no element ${spec.base || el}`);
     model = clone(modelOf(E, spec.key || 'default'));
+  }
+  // An inflow that follows a tissue's share of the cardiac output by age
+  // (shareOf, below) needs the model's rates by age: a model given for
+  // adults alone gets the ages of the model the shares are read from.
+  const shared = (spec.ops || []).flatMap((op) => op.add || []).find((it) => it.shareOf);
+  if (shared && model.ages.length === 1) {
+    const ages = modelOf(elements[shared.shareOf.el], shared.shareOf.key || 'default').ages.slice();
+    for (const t of model.transfers) if (t[2].length === 1) t[2] = ages.map(() => t[2][0]);
+    model.ages = ages;
   }
   const n = model.ages.length;
   const full = (rates) => (rates.length === n ? rates.slice() : Array.from({ length: n }, (_, a) => rateAt(rates, a)));
@@ -200,6 +215,19 @@ export function buildProgenyModel(spec, el, elements, modelOf) {
         else if (it.share != null) rin = sumOf(it.per || from).map((x) => x * it.share);
         else if (it.ofOutflow != null) rin = total(it.excluding || []).map((x) => x * it.ofOutflow);
         else throw new Error(`carve: ${it.name} has no inflow`);
+        if (it.shareOf) {
+          // The adult's rate, and at other ages in proportion to the share of
+          // the flow out of `from` that this compartment has in that model:
+          // radon's arterial blood to its breast compartments, the share of
+          // the cardiac output the tissue receives at each age.
+          const ref = modelOf(elements[it.shareOf.el], it.shareOf.key || 'default');
+          if (ref.ages.length !== n) throw new Error(`carve: ${it.name} by the shares of ${it.shareOf.el}: ${ref.ages.length} ages, the model has ${n}`);
+          const out = ref.transfers.filter(([x]) => x === it.shareOf.from);
+          const to = out.find(([, y]) => y === (it.shareOf.to || it.name));
+          if (!to) throw new Error(`carve: ${it.shareOf.el} has no flow from ${it.shareOf.from} to ${it.shareOf.to || it.name}`);
+          const share = Array.from({ length: n }, (_, a) => rateAt(to[2], a) / out.reduce((q, t) => q + rateAt(t[2], a), 0));
+          rin = rin.map((_, a) => rin[n - 1] * share[a] / share[n - 1]);
+        }
         // Out as the compartment it is taken from (or is like) goes out: at
         // its rates and to where it goes (plutonium's ST1 returns to Blood 2,
         // not to the Blood 1 that feeds it), or to blood at a given rate.

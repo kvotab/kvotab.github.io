@@ -746,17 +746,97 @@ to source regions as before:
   what had spoilt them was 234U's 230Th, which is not carried. Printed
   uranium now 238U 48 of 48 (47), 234U 48, 235U 46.
 
+Still open: the list at the end of the next section.
+
+## Radon and thoron against the annex (2026-11-24, last)
+
+Radon was half of what was left in the annex. Rn-222 as a gas and by
+ingestion and Rn-220 as a gas, organ doses of both sexes at the six ages:
+
+| | rms of ln(page/annex) | more than 5 % off | e |
+| --- | --- | --- | --- |
+| Rn-222, gas | 11.0 → 0.9 % | 175 → 0 | 0.977–1.007 → 0.998–1.001 |
+| Rn-222, ingestion | 10.9 → 1.1 % | 233 → 0 | 0.987–1.018 → 0.997–1.000 |
+| Rn-220, gas | 4.1 → 0.6 % | 32 → 0 | 0.999–1.004 → 0.998–1.002 |
+
+The annex as a whole: organ doses more than 5 % off 796 → 336 (more than 2 %
+off 2,256 → 1,584), effective doses more than 1 % off 19 → 13 values (Ca-41,
+Po-206 and Po-210 at 3 months, Te-118 for adults). The printed gas and
+ingestion coefficients of Tables 32.6 and C.7: 11 of 18 → 18 of 18 round to
+the page's; all printed values 97.2 → 97.4 %. The OIR Data Viewer does not
+have radon; nothing in it moved.
+
+After the gas is inhaled, 73 % of the chain's transformations are in fat
+(82 % in the adult female), 7–10 % in yellow marrow, 4–8 % in other tissue:
+what the short-lived progeny do where they are formed decides the organ
+doses. Publication 137 paras 652–654 give them the models of lead's chains
+with fat and breast compartments added, and rules for the air of the lungs
+and for blood only. Read off the annex, variant by variant
+(`rn/rnscore.mjs` in the notes):
+
+- **Radon's liver and kidneys are the progeny's own** (identify in the radon
+  set). Formed there, lead, bismuth and polonium are in their Liver 1 and
+  Kidneys 1; the four compartments of para 652 were added so that every
+  compartment of radon's model has its counterpart. Sent to blood at ST0's
+  rates (bismuth 66.5 d⁻¹, which takes 57 % of 214Bi away before it decays),
+  the liver was 0.87 at 3 months and 1.13 for adults, the kidneys 0.96 and
+  1.38, the tissues of the rest 1.03 and 1.17–1.21. Radon's "Other" stays
+  foreign: with bismuth leaving it at 200 d⁻¹ the kidneys are 1.07 and muscle
+  0.96.
+- **Yellow marrow like fat.** Publication 158 added two yellow marrow
+  compartments to the model of Publication 137; an adult's hold 10 % of the
+  radon (a 3-month-old's as much as the red marrow's). A progeny formed
+  there leaves at the rate of its intermediate soft tissue, as from the fat
+  compartments (lead 0.004161, bismuth 0.034657, polonium 0.099021, thallium
+  2.5 d⁻¹). At ST0's rates, red marrow and bone surface were 0.98 at 3
+  months falling to 0.78 and 0.83 for adults; held there for good, 1.16 and
+  1.21 for adults, because the 210Pb then stays for decades. Any slow
+  release fits (lead at 0.004 to 1 d⁻¹: 0.99–1.01).
+- **The breast's inflow by age.** The progeny's uptake to the two breast
+  compartments is para 653's for adults, and at other ages in proportion to
+  the share of the cardiac output that radon's model gives the compartment
+  (`shareOf` in a carve; a 3-month-old's glandular breast has 0.018 of the
+  adult's share). With the adult's inflow at every age the breast after
+  Rn-220 was 1.12, 1.08 and 1.05 at 3 months, 1 and 5 years, and after
+  ingested Rn-222 1.06 at 3 months. The fat compartments' share is 4.0 % at
+  every age.
+- **Progeny formed in the stomach move on with its contents**
+  (`OPTIONS103.contentsTransit`): at radon's own rate, 15.2 d⁻¹ in the
+  female from 15 years where the tract's is 20.6. At the tract's rate her
+  stomach after ingested Rn-222 was 0.87, her small intestine 1.11 and every
+  systemic tissue 1.05–1.08: more of the 214Pb left the stomach before it
+  decayed.
+- **A side branch is no member.** `carriedMembers` kept what leads to a
+  carried member, and 218At, on a branch of 0.02 % of 218Po that joins
+  214Po again, was kept for it. Astatine's own model names thyroid,
+  salivary glands and stomach wall, which then took shares of radon's
+  "Other": a 3-month-old's thyroid 1.06 and salivary glands 1.09, the adult
+  female's 0.86 and 0.83, her stomach 0.85. A member now counts for what is
+  below it only if a thousandth of that comes through it (the products of
+  the branching fractions). 218At, 218Rn and 210Tl are out of radon's
+  chains, 219At, 215Bi and 211Po out of 227Ac's.
+- **The female's shares.** Radon has a model for each sex, and the female's
+  skin, spleen and ovaries at 15 years and for adults tell whose masses
+  give her shares. Female over male dose, 15 years and adult: after Rn-222
+  1.24, 1.13, 1.31 and 1.30, 1.21, 1.51 in the annex; 1.24, 1.12, 1.30 and
+  1.30, 1.20, 1.53 by her own masses; 1.12, 1.00, 1.09 and 1.23, 1.08, 1.22
+  by the male's. After Rn-220: 1.23, 1.06, 1.08 and 1.43, 1.20, 1.56 in the
+  annex; 1.23, 1.06, 1.08 and 1.43, 1.20, 1.57 by the male's; 1.35, 1.15,
+  1.32 and 1.51, 1.29, 1.92 by her own. Each fits to a per cent, and they
+  are opposite. Not the male's model for thoron (her breast would be 0.25 of
+  the annex's); not lead and bismuth without their added tissues (skin 1.13,
+  red marrow 0.85–0.95 in both sexes); not polonium decaying in place
+  (kidneys 0.70). The radon set lists the nuclides that take her own
+  (`"*sexShares"`: Rn-222); `OPTIONS103.sexShares` is the male's.
+- progeny103.js: a spec that starts `from` another keeps that spec's
+  identifications and adds its own (it replaced them; astatine's polonium,
+  the one spec that had both, repeated the lead set's).
+
 Still open:
 
-- **Radon.** Rn-222 as a gas: e 0.977–1.007, by ingestion 0.987–1.018; 428
-  organ doses more than 5 % off, half of what is left in the annex. After
-  the gas is inhaled, 73 % of the chain's transformations are in fat, 8 %
-  in other tissue and 7 % in yellow marrow (adult). The tissues of the rest
-  are 3 % high at 3 months and 17–21 % for adults, red marrow and bone
-  surface 2 % low and 17–22 %, liver 0.85 by ingestion at every age, and at
-  15 years and for adults the female's stomach, thyroid, salivary glands,
-  spleen and skin part from the male's. No single shift between source
-  regions fits (rms 0.19 → 0.11 at best).
+- **Radon's kidneys.** 0.96–0.97 after the gas at every age, 0.98 by
+  ingestion; 1.01–1.03 after thoron. And the testes of boys after ingested
+  Rn-222, 0.95–0.96.
 - **Bi-214 and Pb-214 by ingestion and inhalation.** Testes 0.87–0.94 and
   ovaries 0.90–0.94; by injection 0.99–1.00.
 - **3-month-olds of calcium, polonium and zinc.** Ca-41, Ca-45 and Ca-47

@@ -314,6 +314,34 @@ if (!SYSTEM || SYSTEM === '103') {
     ['103', { nuclide: 'Np-241', route: 'injection' }, 7300, 1.8710e-12, 'Muscle'],
     ['103', { nuclide: 'Ra-225', route: 'injection' }, 7300, 2.1581e-8, 'Spleen'],
     ['103', { nuclide: 'Ra-227', route: 'injection' }, 5475, 1.1357e-10, 'Skin'],
+    // radon's chains (progeny.json, the radon set): lead and bismuth formed in radon's liver and kidneys are in
+    // their own (sent to blood, the adult's liver after the gas had 1.13 of this and a 3-month-old's 0.87, the adult's
+    // kidneys 1.38), those formed in its yellow marrow leave as they leave fat (red marrow 0.78 otherwise, or 1.16
+    // held there for good), and the progeny's uptake to breast follows the breast's share of the blood flow by age
+    // (a 3-month-old's breast after thoron 1.12 with the adult's)
+    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas' }, 7300, 5.0020e-10],
+    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas' }, 7300, 2.4362e-10, 'Liver'],
+    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas' }, 100, 8.6922e-10, 'Liver'],
+    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas' }, 7300, 7.4573e-10, 'Kidneys'],
+    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas' }, 7300, 5.9194e-10, 'Red marrow'],
+    ['103', { nuclide: 'Rn-220', route: 'inhalation', form: 'gas' }, 7300, 1.7681e-10],
+    ['103', { nuclide: 'Rn-220', route: 'inhalation', form: 'gas' }, 100, 3.0529e-11, 'Breast'],
+    // progeny formed in the stomach move on with its contents, at radon's own rate (OPTIONS103.contentsTransit):
+    // 15.2 d-1 in the female from 15 years; at the tract's 20.6 her stomach has 0.87 of this and her small intestine 1.11
+    ['103', { nuclide: 'Rn-222', route: 'ingestion', form: 'gas' }, 5475, 1.8957e-9, 'Stomach', 'F'],
+    ['103', { nuclide: 'Rn-222', route: 'ingestion', form: 'gas', rules: { contentsTransit: 'own' } }, 5475, 1.6535e-9, 'Stomach', 'F'],
+    ['103', { nuclide: 'Rn-222', route: 'ingestion', form: 'gas' }, 5475, 4.0706e-10, 'Small intestine', 'F'],
+    ['103', { nuclide: 'Rn-222', route: 'ingestion', form: 'gas', rules: { contentsTransit: 'own' } }, 5475, 4.5146e-10, 'Small intestine', 'F'],
+    // the female's shares where she has a model of her own (OPTIONS103.sexShares; "*sexShares" of the radon set):
+    // by her own masses after 222Rn, by the male's after 220Rn, as the annex has each
+    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas' }, 7300, 1.3269e-10, 'Gonads', 'F'],
+    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas', rules: { sexShares: 'male' } }, 7300, 1.0500e-10, 'Gonads', 'F'],
+    ['103', { nuclide: 'Rn-220', route: 'inhalation', form: 'gas' }, 7300, 1.9339e-11, 'Gonads', 'F'],
+    ['103', { nuclide: 'Rn-220', route: 'inhalation', form: 'gas', rules: { sexShares: 'own' } }, 7300, 2.3714e-11, 'Gonads', 'F'],
+    // 218At, on a branch of 0.02 %, is no member whose tissues count: with astatine's thyroid counted a 3-month-old's
+    // thyroid has 1.05 of this
+    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas' }, 100, 4.2783e-10, 'Thyroid'],
+    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas', rules: { carried: false } }, 100, 4.4966e-10, 'Thyroid'],
     // antimony formed in the gut takes the fA of its forms other than in food (OPTIONS103.giProgenyFA); with the
     // highest, the brain has 1.5 times this
     ['103', { nuclide: 'Sb-124n', route: 'ingestion', form: 'food' }, 7300, 5.3939e-14, 'Brain'],
@@ -340,11 +368,14 @@ if (!SYSTEM || SYSTEM === '103') {
 // without. Only their models' tissues count as named by a chain.
 {
   const carriedOf = (n) => carriedMembers(d103.index, buildChain(d103.index, n, { cutoff: 1e-4 }).members.map((m) => m.name));
-  const c = { cm243: carriedOf('Cm-243'), u234: carriedOf('U-234'), pu238: carriedOf('Pu-238'), pu239: carriedOf('Pu-239'), u233: carriedOf('U-233'), u237: carriedOf('U-237'), ac225: carriedOf('Ac-225'), ac227: carriedOf('Ac-227') };
+  const c = { cm243: carriedOf('Cm-243'), u234: carriedOf('U-234'), pu238: carriedOf('Pu-238'), pu239: carriedOf('Pu-239'), u233: carriedOf('U-233'), u237: carriedOf('U-237'), ac225: carriedOf('Ac-225'), ac227: carriedOf('Ac-227'), rn222: carriedOf('Rn-222'), th232: carriedOf('Th-232') };
   check('carried members: 239Pu after 243Cm, 230Th after 234U, 234U after 238Pu and 235mU after 239Pu are not; 229Th after 233U, 237Np after 237U, 209Pb after 225Ac and 207Tl after 227Ac are',
     !c.cm243.has('Pu-239') && !c.u234.has('Th-230') && !c.pu238.has('U-234') && !c.pu239.has('U-235m')
     && c.u233.has('Th-229') && c.u237.has('Np-237') && c.ac225.has('Pb-209') && c.ac227.has('Tl-207'),
     Object.entries(c).map(([k, v]) => `${k}: ${[...v].join(' ')}`).join(' | '));
+  check('carried members: 218At and 218Rn, on a branch of 0.02 % that joins 214Po again, and 210Tl are not, though 214Po and 210Pb below them are; 228Ra, which emits next to nothing, is',
+    !c.rn222.has('At-218') && !c.rn222.has('Rn-218') && !c.rn222.has('Tl-210') && c.rn222.has('Po-214') && c.rn222.has('Pb-210') && c.rn222.has('Po-210') && c.th232.has('Ra-228') && c.th232.has('Tl-208'),
+    `${[...c.rn222].join(' ')} | ${[...c.th232].join(' ')}`);
   // What a progeny's model is, as progeny.json and the element files give it.
   const modelOf = async (parent, member) => {
     await d103.prepare(parent);
@@ -368,6 +399,28 @@ if (!SYSTEM || SYSTEM === '103') {
   const out = d103.elements.Gd.systemic.default.transfers.filter(([a]) => a === 'Blood').reduce((s, t) => s + t[2].at(-1), 0);
   check('gadolinium: the adult\'s liver takes 15 % of what leaves the circulation (3.49 d-1), the outflow from blood 33.3 d-1 as for every lanthanide',
     near(gd.at(-1), 3.49, 1e-9) && near(out, 33.27, 2e-3), `${gd.at(-1)} of ${out.toFixed(3)}`);
+  // Radon's progeny: the identifications of the lead set kept and radon's liver and kidneys added, the yellow marrow
+  // left as fat is, the breast's inflow by the breast's share of the blood flow at each age.
+  await d103.prepare('Rn-222');
+  const rn = assemble103(d103, { nuclide: 'Rn-222', route: 'inhalation', form: 'gas', cutoff: 1e-4, intakeAge: 7300, sex: 'M' });
+  const pb = rn.members.find((m) => m.name === 'Pb-214'), bi = rn.members.find((m) => m.name === 'Bi-214');
+  const comp = (member, name) => rn.comps.findIndex((x) => rn.members[x.member].name === member && x.name === name);
+  const compLike = (member, start) => rn.comps.findIndex((x) => rn.members[x.member].name === member && x.name.startsWith(start));
+  const outOf = (k) => rn.transfers.filter((t) => t.from === k).map((t) => t.rates.at(-1));
+  check('radon\'s progeny: no compartment of lead\'s or bismuth\'s in radon\'s liver or kidneys but their own; in its yellow marrow they leave at 0.004161 and 0.034657 d-1',
+    compLike('Pb-214', 'Liver (Rn-222)') < 0 && compLike('Bi-214', 'Kidneys (Rn-222)') < 0 && comp('Pb-214', 'Liver 1') >= 0 && compLike('Pb-214', 'Other (Rn-222)') >= 0
+    && near(outOf(compLike('Pb-214', 'Y-marrow 1 (Rn-222)'))[0], 0.004161, 1e-9) && near(outOf(compLike('Bi-214', 'Y-marrow 2 (Rn-222)'))[0], 0.034657, 1e-9),
+    `${compLike('Pb-214', 'Liver (Rn-222)')} ${compLike('Bi-214', 'Kidneys (Rn-222)')} ${JSON.stringify(outOf(compLike('Pb-214', 'Y-marrow 1 (Rn-222)')))} ${JSON.stringify(outOf(compLike('Bi-214', 'Y-marrow 2 (Rn-222)')))}`);
+  const bg = rate(bi.progeny.model, 'Blood', 'Breast-g'), fat = rate(bi.progeny.model, 'Blood', 'Fat 1');
+  const rnm = d103.elements.Rn.systemic.male;
+  const shareAt = (a) => rnm.transfers.find(([x, y]) => x === 'Blood-A' && y === 'Breast-g')[2][a] / rnm.transfers.filter(([x]) => x === 'Blood-A').reduce((q, t) => q + t[2][a], 0);
+  check('bismuth as radon\'s progeny: blood to glandular breast 0.0009 d-1 for adults and by the breast\'s share of radon\'s arterial flow before (0.018 of it at 3 months); to fat 0.2 d-1 at every age',
+    near(bg[5], 0.0009, 1e-9) && near(bg[0], 0.0009 * shareAt(0) / shareAt(5), 1e-9) && bg[0] < 0.02 * bg[5] && fat.every((x) => near(x, 0.2, 1e-9)),
+    `${JSON.stringify(bg.map((x) => +x.toPrecision(3)))} ${JSON.stringify(fat)}`);
+  check('lead as radon\'s progeny keeps the identifications of the lead set beside radon\'s own',
+    pb.progeny && (() => { const sp = d103.progeny.sets.radon.Pb.identify, lead = d103.progeny.sets.lead.Pb.identify; return sp['Rn:Liver'] === 'Liver 1' && lead.RBC === 'Blood 1'; })()
+    && comp('Po-214', 'RBC') >= 0 && compLike('Po-214', 'Blood 1 (') < 0,
+    `${comp('Po-214', 'RBC')} ${compLike('Po-214', 'Blood 1 (')}`);
   const adult25 = ['Ac', 'Pa', 'Bk', 'Cf', 'Es', 'Fm', 'La', 'Ce', 'Pr', 'Nd', 'Pm', 'Sm', 'Eu', 'Gd', 'Tb', 'Dy', 'Ho', 'Er', 'Tm', 'Yb', 'Lu', 'Al'];
   check('adult rates from 25 years for actinium, protactinium, berkelium to fermium, the lanthanides and aluminium',
     adult25.every((el) => d103.elements[el].adultAge === 9125 && Object.values(d103.elements[el].systemic).every((m) => m.ages.at(-1) === 9125)),
