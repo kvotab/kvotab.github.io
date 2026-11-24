@@ -98,6 +98,8 @@ export const HATM = [
   ['RS-cont', 'Faeces', [2, 2, 2, 2, 2, 2]],
 ];
 export const HATM_COMPS = ['O-cavity', 'Oesophag-f', 'Oesophag-s', 'St-cont', 'SI-cont', 'RC-cont', 'LC-cont', 'RS-cont'];
+/* The mouth's rates to the fast oesophageal transit: saliva takes them to the slow one (giOf). */
+const HATM_MOUTH_FAST = HATM.find(([a, b]) => a === 'O-cavity' && b === 'Oesophag-f')[2];
 const SI_TO_RC = [6, 6, 6, 6, 6, 6];
 /* Urinary bladder (ICRP 158 para 146). */
 export const BLADDER = { ages: [100, 365, 1825], rates: [40, 32, 12] };
@@ -571,6 +573,16 @@ export function assemble103(data, spec) {
     for (const [a, b, rates] of HATM) {
       const o = over.find((x) => x.from === a && x.toRegion === b);
       if (o) { tr(g[a], g[b], o.ages, o.rates, o.origin); continue; }
+      // Saliva passes the oesophagus by the slow transit alone, as material
+      // cleared from the respiratory tract does (ICRP 158 section 2.3.2.3,
+      // "Material entering from the respiratory tract or in saliva", para
+      // 123); food and drink take the 90 % fast and 10 % slow of the intake's
+      // tract. The annex's oesophagus doses of iodine and technetium need it:
+      // with the split of food and drink, I-128 was 20-38 % low, I-131 1-3 %.
+      if (track === 'S' && a === 'O-cavity') {
+        if (b === 'Oesophag-s') tr(g[a], g[b], hatmAges, rates.map((r, k) => r + HATM_MOUTH_FAST[k]), 'saliva to the oesophagus (slow transit)');
+        continue;
+      }
       if (b === 'Faeces') tr(g[a], -1, hatmAges, rates, `${a} to faeces`, 'Faeces');
       else tr(g[a], g[b], hatmAges, rates, `${a} to ${b}`);
     }

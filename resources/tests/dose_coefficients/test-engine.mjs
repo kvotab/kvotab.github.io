@@ -243,16 +243,19 @@ if (!SYSTEM || SYSTEM === '103') {
     // lanthanum formed on barium's bone surfaces is on its own (Publication 137 para 354; 2.8 % low at 3 months otherwise)
     ['103', { nuclide: 'Ba-140', route: 'injection' }, 100, 3.1742e-8],
     // iodine formed from tellurium: one compartment for inorganic iodide in other tissue (Publication 137 para 135; 3.7 % high otherwise)
-    ['103', { nuclide: 'Te-134', route: 'injection' }, 7300, 6.6631e-11],
+    ['103', { nuclide: 'Te-134', route: 'injection' }, 7300, 6.6817e-11],
+    // saliva passes the oesophagus by the slow transit (ICRP 158 section 2.3.2.3; 17 % low otherwise): the male's oesophagus
+    ['103', { nuclide: 'I-134', route: 'injection' }, 7300, 3.8724e-11, 'Oesophagus'],
     ['103', { nuclide: 'Ra-226', route: 'ingestion', form: 'all' }, 7300, 1.2646e-7],
     ['60', { nuclide: 'Po-210', route: 'ingestion' }, 7300, 1.206e-6],
   ];
-  for (const [sys, spec, age, want] of pins) {
+  for (const [sys, spec, age, want, tissue] of pins) {
     await (sys === '103' ? d103 : d60).prepare(spec.nuclide);
     const r = sys === '103'
       ? coefficients103(d103, { ...spec, cutoff: 1e-4 }, [age])[0]
       : coefficients60(d60, recipe60(d60.cases, spec.route, { nuclide: spec.nuclide, bio: null, f1file: null }), [age])[0];
-    check(`pinned: ${sys} ${spec.nuclide} ${spec.route} ${spec.form || ''} at ${age} d is ${want.toExponential(3)}`, near(r.E, want, 0.002), r.E.toExponential(4));
+    const got = tissue ? r.H.M[tissue] : r.E;
+    check(`pinned: ${sys} ${spec.nuclide} ${spec.route} ${spec.form || ''} at ${age} d${tissue ? `, ${tissue} (male),` : ''} is ${want.toExponential(3)}`, near(got, want, 0.002), got.toExponential(4));
   }
 }
 

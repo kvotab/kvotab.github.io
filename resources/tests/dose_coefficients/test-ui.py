@@ -369,7 +369,7 @@ async def main():
         opts = await p.ev("[...document.getElementById('dcCutoff').options].map(o => o.textContent)")
         check('each cut-off says how many nuclides it keeps (whole chain 14, 0.01 % 12)', bool(opts) and opts[0].endswith('(14 nuclides)') and any(o.startswith('0.01 %') and o.endswith('(12 nuclides)') for o in opts))
         body = await p.ev("(() => { document.getElementById('dcSize').open = true; return document.getElementById('dcSizeBody').innerText; })()")
-        check('the details name the chain, the transfers, the equations and the runs', all(w in (body or '') for w in ('Po-210', '781 transfers', '293 groups', '43 target regions of each sex', '5,615 coefficients', 'integrations')))
+        check('the details name the chain, the transfers, the equations and the runs', all(w in (body or '') for w in ('Po-210', '771 transfers', '293 groups', '43 target regions of each sex', '5,605 coefficients', 'integrations')))
         await p.ev("document.getElementById('dcSize').open = false")
         await p.ev("document.querySelector('.dc-tabs button[data-tab=\"model\"]').click()")
         await asyncio.sleep(0.6)
