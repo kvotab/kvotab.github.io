@@ -937,7 +937,7 @@ async function refreshTreeStructure() {
   window._treeRefreshCancelled = false;
   
   if (enabledFiles.length === 0) {
-    tree.innerHTML = '<div class="loading">Drop HDF5 files or click "+ Add Files" to start...</div>';
+    tree.innerHTML = '<div class="loading">Drop files on the page, or use Open, to start…</div>';
     tree.classList.add('loading');
     resetInfoPanel();
     hideChart();

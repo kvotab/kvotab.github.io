@@ -1,5 +1,9 @@
 /* ==========================================================================
-   5. TAB MANAGEMENT
+   5. THE FILES BAR
+
+   The files open, a box each in the bar above the panels (rb.html #rbBar).
+   They were tabs in the site's header once, and the names here (updateTabs,
+   .file-tab, the tab's tooltip) are theirs still.
    ========================================================================== */
 
 'use strict';   // see the script manifest in rb.html for why
@@ -162,19 +166,28 @@ function updateTabs(forceRefresh) {
     infoHtmlByFile[key] = getRootInformationHtml(loadedFiles[key]);
   }
   
-  // Render tabs (no inline event handlers — listeners attached below)
+  // What had the keyboard among the boxes, which are about to be drawn anew.
+  const focus = focusedFileBox(tabsContainer);
+
+  // Render the boxes (no inline event handlers — listeners attached below).
+  // A ticked file is numbered by its place among the ticked ones: 1 is the
+  // one the others are drawn against (rb-chart.js gives it the full lines).
+  let ticked = 0;
   tabsContainer.innerHTML = fileOrder.map(key => {
-    const isEnabled = fileStates[key];
-    return `
-      <div class="file-tab ${isEnabled ? 'enabled' : 'disabled'}" data-file="${escapeHtml(key)}">
-        <div class="file-tab-name">${escapeHtml(key)}</div>
-        <div class="file-tab-close" title="Remove file">×</div>
-      </div>
-    `;
+    const isEnabled = !!fileStates[key];
+    const name = escapeHtml(key);
+    return `<div class="file-tab ${isEnabled ? 'enabled' : 'disabled'}" role="listitem" data-file="${name}">`
+      + '<label class="file-tab-main">'
+      + `<input type="checkbox" class="file-tab-check"${isEnabled ? ' checked' : ''} aria-label="Show ${name} in the tree and the charts">`
+      + `<span class="file-tab-order" aria-hidden="true">${isEnabled ? ++ticked : ''}</span>`
+      + `<span class="file-tab-name">${name}</span>`
+      + '</label>'
+      + `<button type="button" class="file-tab-close" aria-label="Close ${name}" title="Close the file">×</button>`
+      + '</div>';
   }).join('');
 
-  // Attach event listeners to each tab
-  document.querySelectorAll('.file-tab').forEach(tab => {
+  // Attach event listeners to each box
+  tabsContainer.querySelectorAll('.file-tab').forEach(tab => {
     const fileName = tab.getAttribute('data-file');
     tab.removeAttribute('title');
 
@@ -201,51 +214,45 @@ function updateTabs(forceRefresh) {
       ensureFileTabTooltip().style.display = 'none';
     });
 
-    // Close button — stopPropagation prevents the tab toggle from also firing
-    const closeBtn = tab.querySelector('.file-tab-close');
-    if (closeBtn) {
-      closeBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        // Before the tab goes: this one stays away until the pointer moves,
-        // rather than re-appearing for whichever tab slides into its place.
-        hideFileTabTooltip(e);
-        removeFile(fileName);
-      });
-    }
+    // × closes the file — stopPropagation keeps the click from the box itself
+    tab.querySelector('.file-tab-close').addEventListener('click', (e) => {
+      e.stopPropagation();
+      // Before the box goes: its tooltip stays away until the pointer moves,
+      // rather than re-appearing for whichever box slides into its place.
+      hideFileTabTooltip(e);
+      closeFileBox(fileName, tab.contains(document.activeElement));
+    });
 
-    // Tab body — toggle enabled/disabled state
-    tab.addEventListener('click', () => toggleFileState(fileName));
+    // The tick: the file in the tree and the charts, or not. A click on the
+    // box's edge, beside its label, ticks it as the label does.
+    tab.querySelector('.file-tab-check').addEventListener('change', () => toggleFileState(fileName));
+    tab.addEventListener('click', (e) => { if (e.target === tab) toggleFileState(fileName); });
+
+    // Delete closes the file; Alt with an arrow moves it.
+    tab.addEventListener('keydown', (e) => fileBoxKey(e, fileName));
   });
-  
-  // Initialize SortableJS for drag reordering
-  if (window.Sortable && tabsContainer.children.length > 0) {
+
+  restoreFileBoxFocus(tabsContainer, focus);
+
+  // Drag to reorder (SortableJS), set up once: the boxes are drawn anew in
+  // the same list, and an instance made at every drawing answered each drag
+  // once for every drawing there had been.
+  if (window.Sortable && !Sortable.get(tabsContainer)) {
     Sortable.create(tabsContainer, {
       animation: 150,
+      draggable: '.file-tab',
       ghostClass: 'sortable-ghost',
       dragClass: 'sortable-drag',
-      onEnd: function(evt) {
-        const previousFirst = currentTreeFile;
-        
-        const newOrder = Array.from(tabsContainer.children).map(
-          tab => tab.getAttribute('data-file')
-        );
-        fileOrder = newOrder;
-        
-        const newTreeFile = getTreeFile();
-        currentTreeFile = newTreeFile;
-        
-        const treeFileChanged = previousFirst !== newTreeFile;
-
-        // Reset tree mode and selections on reorder
-        resetTreeModeToSeparated();
-
-        if (treeFileChanged) {
-          refreshTreeStructure();
-        }
-      }
+      // A press on × is a click on it, never the start of a drag.
+      filter: '.file-tab-close',
+      preventOnFilter: false,
+      // On a touch screen a box moves after a short press, so a tap ticks it.
+      delay: 150,
+      delayOnTouchOnly: true,
+      onEnd: () => reorderFiles([...tabsContainer.querySelectorAll('.file-tab')].map(b => b.getAttribute('data-file')))
     });
   }
-  
+
   // Check if tree file changed
   const newTreeFile = getTreeFile();
   const treeFileChanged = previousTreeFile !== newTreeFile;
@@ -313,3 +320,208 @@ function updateTabs(forceRefresh) {
   return refreshPromise;
 }
 
+
+/* ==========================================================================
+   THE FILES BAR: what the boxes do besides being drawn, the Open menu, and
+   the full window
+   ========================================================================== */
+
+/**
+ * Which box has the keyboard, and on which of its two controls, if any.
+ *
+ * @param {HTMLElement} list - #fileTabs
+ * @returns {{file: string, close: boolean}|null}
+ */
+function focusedFileBox(list) {
+  const el = document.activeElement;
+  const box = el && list && list.contains(el) ? el.closest('.file-tab') : null;
+  if (!box) return null;
+  return { file: box.getAttribute('data-file'), close: el.classList.contains('file-tab-close') };
+}
+
+/**
+ * Give the keyboard back to the box it was on, after the boxes were drawn
+ * anew: a tick, a move or a close with the keyboard keeps its place.
+ *
+ * @param {HTMLElement} list - #fileTabs
+ * @param {{file: string, close: boolean}|null} focus
+ */
+function restoreFileBoxFocus(list, focus) {
+  if (!focus) return;
+  const box = [...list.querySelectorAll('.file-tab')].find(b => b.getAttribute('data-file') === focus.file);
+  const target = box && box.querySelector(focus.close ? '.file-tab-close' : '.file-tab-check');
+  if (target) target.focus({ preventScroll: true });
+}
+
+/**
+ * Close a file from its box. With the keyboard on the box, it goes to the
+ * next box (the one before, at the end), or to Open when none is left.
+ *
+ * @param {string} fileName
+ * @param {boolean} keepFocus - Whether the keyboard was on the box
+ * @returns {Promise<void>}
+ */
+async function closeFileBox(fileName, keepFocus) {
+  const at = fileOrder.indexOf(fileName);
+  const next = at < 0 ? null : (fileOrder[at + 1] ?? fileOrder[at - 1] ?? null);
+  await removeFile(fileName);
+  if (!keepFocus) return;
+  const list = document.getElementById('fileTabs');
+  if (next && fileOrder.includes(next)) restoreFileBoxFocus(list, { file: next, close: false });
+  else document.getElementById('rbOpen')?.focus({ preventScroll: true });
+}
+
+/**
+ * Put the files in a new order: the boxes are drawn with their new numbers,
+ * and the tree is drawn again when its first file changed (updateTabs).
+ * The same order again does nothing, as when a box is pressed and let go
+ * where it was.
+ *
+ * @param {string[]} order - Every file open, in the new order
+ */
+function reorderFiles(order) {
+  if (order.length !== fileOrder.length || order.every((key, i) => key === fileOrder[i])) return;
+  fileOrder = order;
+  updateTabs();
+}
+
+/**
+ * The keys on a box, besides Tab, and Space on its tick: Delete (or
+ * Backspace) closes the file; Alt with an arrow moves it one place, as a
+ * drag would.
+ *
+ * @param {KeyboardEvent} e
+ * @param {string} fileName
+ */
+function fileBoxKey(e, fileName) {
+  if (e.ctrlKey || e.metaKey) return;
+  if ((e.key === 'Delete' || e.key === 'Backspace') && !e.altKey) {
+    e.preventDefault();
+    hideFileTabTooltip();
+    closeFileBox(fileName, true);
+    return;
+  }
+  const step = e.altKey ? { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[e.key] : undefined;
+  if (!step) return;
+  e.preventDefault();
+  const at = fileOrder.indexOf(fileName);
+  const to = at + step;
+  if (at < 0 || to < 0 || to >= fileOrder.length) return;
+  const order = fileOrder.slice();
+  order.splice(at, 1);
+  order.splice(to, 0, fileName);
+  reorderFiles(order);
+}
+
+/*
+  Open: a menu that is a popover (rb.html), opened and shut by the browser --
+  its button, a click elsewhere, Escape. Here it is put under its button, left
+  edges together, or where the window has room; the first way takes the focus
+  and the arrow keys move through the rest; a way chosen shuts it, and so does
+  the page scrolling under it. A browser without popovers (Safari before 17,
+  Firefox before 125) opens the file picker from the button, the way most
+  used.
+*/
+function setupOpenMenu() {
+  const menu = document.getElementById('rbOpenMenu');
+  const button = document.getElementById('rbOpen');
+  if (!menu || !button) return;
+  if (typeof HTMLElement.prototype.showPopover !== 'function') {
+    button.addEventListener('click', () => document.getElementById('fileInput').click());
+    return;
+  }
+  const items = () => [...menu.querySelectorAll('.rb-menu-item')].filter(b => !b.hidden && !b.disabled);
+  button.setAttribute('aria-expanded', 'false');
+  menu.addEventListener('beforetoggle', (ev) => {
+    if (ev.newState !== 'open') return;
+    const r = button.getBoundingClientRect();
+    menu.style.top = `${Math.round(r.bottom + 4)}px`;
+    menu.style.left = `${Math.max(4, Math.round(r.left))}px`;
+  });
+  menu.addEventListener('toggle', (ev) => {
+    button.setAttribute('aria-expanded', String(ev.newState === 'open'));
+    if (ev.newState !== 'open') return;
+    const m = menu.getBoundingClientRect();
+    const width = document.documentElement.clientWidth;
+    if (m.right > width - 4) menu.style.left = `${Math.max(4, Math.round(width - 4 - m.width))}px`;
+    if (m.bottom > window.innerHeight - 4) {
+      menu.style.top = `${Math.max(4, Math.round(button.getBoundingClientRect().top - 4 - m.height))}px`;
+    }
+    const first = items()[0];
+    if (first) first.focus({ preventScroll: true });
+  });
+  // A way chosen shuts the menu; its action runs all the same (kvot-actions,
+  // on the document, hears the click after the menu does).
+  menu.addEventListener('click', (ev) => {
+    if (ev.target.closest('.rb-menu-item') && menu.matches(':popover-open')) menu.hidePopover();
+  });
+  menu.addEventListener('keydown', (ev) => {
+    const list = items();
+    const at = list.indexOf(document.activeElement);
+    const to = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: list.length - 1 }[ev.key];
+    if (to === undefined || !list.length) return;
+    ev.preventDefault();
+    list[(to + list.length) % list.length].focus();
+  });
+  document.addEventListener('scroll', (ev) => {
+    if (menu.matches(':popover-open') && !menu.contains(ev.target)) menu.hidePopover();
+  }, true);
+  // A press anywhere but on the menu or its button shuts it. The browser does
+  // that itself, except over a chart: Plotly lays a cover over the page on
+  // the press, the release lands on the cover, and the menu stayed open.
+  document.addEventListener('pointerdown', (ev) => {
+    if (menu.matches(':popover-open') && !menu.contains(ev.target) && !button.contains(ev.target)) menu.hidePopover();
+  }, true);
+}
+
+/*
+  The full window (rb.css :root.rb-full): the page without the site's header
+  and footer, by the button at the files bar's right end; kept for the next
+  visit, which the page's head puts in it before the first paint. The chart
+  follows its box (rb-init.js watches it), so nothing is redrawn here.
+*/
+const RB_FULL_KEY = 'kvot.rb.full';
+
+function toggleFullWindow() {
+  setFullWindow(!document.documentElement.classList.contains('rb-full'));
+}
+
+/**
+ * @param {boolean} on - Whether the page is to be the full window
+ */
+function setFullWindow(on) {
+  document.documentElement.classList.toggle('rb-full', !!on);
+  try { localStorage.setItem(RB_FULL_KEY, on ? '1' : '0'); } catch (e) { /* storage unavailable: for this visit only */ }
+  fullWindowState();
+  placeUnderFilesBar();
+}
+
+/** The button says what it does from here: out to the full window, or back. */
+function fullWindowState() {
+  const on = document.documentElement.classList.contains('rb-full');
+  const button = document.getElementById('rbFull');
+  if (!button) return;
+  button.setAttribute('aria-pressed', String(on));
+  button.setAttribute('aria-label', on ? 'Leave the full window' : 'Full window');
+  button.title = on ? 'Show the site\'s header and footer again' : 'Full window: the page without the site\'s header and footer';
+}
+
+/*
+  The site's message banner (kvot-errors.js) is fixed 52px from the top of
+  the window, which is where the files bar is: while it showed it covered the
+  boxes and Open. rb.css puts it under the bar instead, from --rb-bar-bottom,
+  kept here as the bar grows a row of boxes or the full window moves it up.
+*/
+function placeUnderFilesBar() {
+  const bar = document.getElementById('rbBar');
+  if (bar) document.documentElement.style.setProperty('--rb-bar-bottom', `${Math.round(bar.getBoundingClientRect().bottom)}px`);
+}
+
+/** The bar's start, from rb-init.js: the Open menu, the full window's button, and the banner's place. */
+function setupFilesBar() {
+  setupOpenMenu();
+  fullWindowState();
+  const bar = document.getElementById('rbBar');
+  if (bar && window.ResizeObserver) new ResizeObserver(placeUnderFilesBar).observe(bar);
+  placeUnderFilesBar();
+}

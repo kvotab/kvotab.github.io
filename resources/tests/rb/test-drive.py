@@ -430,7 +430,18 @@ class Page:
         return res.get('result', {}).get('value')
 
     async def click(self, selector):
-        """A real click, with the mouse: what lets a page open a window."""
+        """A real click, with the mouse: what lets a page open a window. A way
+        in that is an item of the files bar's Open menu is clicked as a person
+        clicks it: Open first, then the item."""
+        opener = await self.ev("(() => { const e = document.querySelector(%s); const m = e && e.closest('[popover]');"
+                               " return m && !m.matches(':popover-open') ? '[popovertarget=\"' + m.id + '\"]' : null; })()"
+                               % json.dumps(selector))
+        if opener:
+            await self.click_center(opener)
+            await asyncio.sleep(0.3)
+        await self.click_center(selector)
+
+    async def click_center(self, selector):
         pos = await self.ev("(() => { const e = document.querySelector(%s); if (!e) return null;"
                             " const r = e.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()"
                             % json.dumps(selector))
@@ -523,7 +534,7 @@ async def main():
 
             # --- not configured ---------------------------------------------
             await page.load(1, EMPTY_CONFIG_JS)
-            check('with no project the Google Drive button is in the header but hidden',
+            check('with no project the Google Drive item is in the Open menu but hidden',
                   await page.ev(f"(() => {{ const b = document.querySelector('{BUTTON}');"
                                 " return !!b && b.hidden && getComputedStyle(b).display === 'none'; })()"))
             check('and the welcome panel does not name it',
@@ -545,12 +556,12 @@ async def main():
             # --- configured -------------------------------------------------
             page.requests.clear()
             await page.load(3, CONFIG_JS)
-            check('with a project the button shows, labelled Google Drive',
+            check('with a project the item shows, labelled Google Drive',
                   await page.ev(f"(() => {{ const b = document.querySelector('{BUTTON}');"
                                 " return !b.hidden && getComputedStyle(b).display !== 'none' && b.textContent.trim(); })()"),
-                  'Google Drive')
+                  'Google Drive…')
             check('beside URL, before Sample Data',
-                  await page.ev("[...document.querySelectorAll('header .add-file-btn')].map(b => b.dataset.onClick).join(' ')"),
+                  await page.ev("[...document.querySelectorAll('#rbOpenMenu .rb-menu-item')].map(b => b.dataset.onClick).join(' ')"),
                   'openFilePicker openUrlDialog openGoogleDrive openSampleDataDialog openVscodeDialog')
             check('and the welcome panel names it, among the ways to load files and for large ones',
                   await page.ev("[...document.querySelectorAll('#info .rb-drive-only')]"

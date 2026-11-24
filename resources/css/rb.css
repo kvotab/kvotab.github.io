@@ -92,122 +92,152 @@
     }
 
     /* ==========================================================================
-       5. FILE TABS & HEADER
+       5. THE FILES BAR
+       --------------------------------------------------------------------------
+       Above the two panels: the files open, a box each (#fileTabs; the class
+       names are those of the tabs they were), Open, and at the right end the
+       trees' ∅ ∩ ∪ and the full window. They used to be tabs and buttons
+       hanging from the site's header, which made a tab of what is a tick,
+       and left nothing in the header a full window could hide.
        ========================================================================== */
     header, footer {
       box-sizing: content-box;
     }
 
     header {
-      grid-template-columns: 60px auto 1fr 80px;
-      /* One row, the header's own height whatever its tallest item: the tabs
-         stand on the row's bottom (.tabs-container). */
-      grid-template-rows: 30px;
       z-index: 1000000000;
     }
 
-    .tabs-container {
+    /*
+      Its parts stand at the top: when the boxes wrap to more rows, the kvot
+      mark, Open and the right end stay on the first, rather than slide down
+      to the middle of the rows. Each part is a row high (28px, a box's height)
+      and centres what it holds, so on one row they line up as before.
+    */
+    .rb-bar {
       display: flex;
-      align-items: flex-end;
-      gap: 4px;
-      overflow-x: auto;
-      overflow-y: hidden;
-      margin-left: 12px;
-      /*
-        The tabs, and the buttons beside them, stand on the page: their bottom
-        edge is the header's own, over its hairline -- the row's bottom, then
-        the header's 6px of padding and its 1px border. A tab that stopped
-        short left a band of the header between it and the page, and did not
-        read as a tab.
-      */
-      align-self: end;
-      position: relative;
-      top: 7px;
+      align-items: flex-start;
+      gap: 8px;
+      flex: none;
+      min-height: 30px;
+      /* The panels' 16px either side (.container), so the bar's ends are
+         theirs; the 10px above is the 10px between the bar and the panels. */
+      padding: 10px 16px 0;
     }
 
-    /*
-      The strip the tabs scroll in. When they overflow it, its scrollbar goes
-      under them and the strip grows upward to hold it (.tabs-container stands
-      on its bottom edge), so the bar costs the tabs none of their height;
-      section 17 keeps it to 8px all the same. See the note there.
-    */
-    #fileTabs {
+    .rb-files {
       display: flex;
-      gap: 4px;
-      flex: 1;
-      overflow-x: auto;
-      overflow-y: hidden;
-    }
-    
-    .file-tab {
-      display: flex;
+      flex-wrap: wrap;
       align-items: center;
       gap: 6px;
-      padding: 4px 10px;
-      background: rgba(255, 255, 255, 0.1);
-      border: 1px solid var(--color-kvot-accent);
-      border-bottom: none;
-      border-radius: 4px 4px 0 0;
-      cursor: pointer;
-      user-select: none;
+      min-width: 0;
+      /* Three rows of boxes, as an assessment's runs can make; past that the
+         boxes scroll rather than push the panels down. */
+      max-height: 98px;
+      overflow-y: auto;
+    }
+    .rb-files:not(:has(.file-tab)) {
+      display: none;
+    }
+    .rb-files-hint {
+      color: var(--color-text-muted);
       font-size: 12px;
-      transition: all 0.2s;
-      position: relative;
-      max-width: 160px;
-      color: rgba(243, 184, 123, 0.7);
+      line-height: 28px;
       white-space: nowrap;
     }
-    
+    .rb-files:has(.file-tab) ~ .rb-files-hint {
+      display: none;
+    }
+
+    /* A file: its tick, its place among the ticked ones, its name, and × to
+       close it. The label is the tick's, so a click on the number or the name
+       ticks too; a drag anywhere on the box moves it. */
+    .file-tab {
+      display: inline-flex;
+      align-items: center;
+      flex: none;
+      max-width: 280px;
+      height: 28px;
+      border: 1px solid var(--color-panel-border);
+      border-radius: 6px;
+      background: var(--color-panel-bg);
+      box-shadow: 0 1px 2px rgba(19, 23, 28, 0.06);
+      color: var(--color-text-primary);
+      font-size: 12px;
+      cursor: grab;
+      user-select: none;
+      transition: border-color 0.15s, background-color 0.15s, color 0.15s;
+    }
     .file-tab:hover {
-      background: rgba(255, 255, 255, 0.15);
-      color: var(--color-kvot-bright);
+      border-color: var(--color-text-muted);
     }
-    
-    .file-tab.enabled {
-      background: var(--color-kvot-bright);
-      color: var(--color-kvot-background);
-      border-color: var(--color-kvot-bright);
-    }
-    
-    .file-tab.enabled:hover {
-      background: #f5c690;
-    }
-    
+    /* Not ticked: in the list still, out of the tree and the charts. */
     .file-tab.disabled {
-      opacity: 0.5;
-      background: rgba(255, 255, 255, 0.05);
+      border-style: dashed;
+      background: transparent;
+      box-shadow: none;
+      color: var(--color-text-muted);
     }
-    
-    .file-tab.disabled:hover {
-      opacity: 0.7;
+    .file-tab-main {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+      height: 100%;
+      padding: 0 4px 0 8px;
+      cursor: pointer;
     }
-    
+    .file-tab-check {
+      flex: none;
+      margin: 0;
+      cursor: pointer;
+    }
+    /* 1 is the file the others are drawn against: in a chart of several, its
+       lines are full and theirs thinner (rb-chart.js). */
+    .file-tab-order {
+      flex: none;
+      min-width: 16px;
+      height: 16px;
+      padding: 0 4px;
+      border-radius: 8px;
+      background: var(--accent-fill);
+      color: #fff;
+      font: 600 10px/16px var(--font-mono);
+      text-align: center;
+    }
+    .file-tab-order:empty {
+      display: none;
+    }
     .file-tab-name {
-      flex: 1;
+      min-width: 0;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-    
     .file-tab-close {
-      width: 16px;
-      height: 16px;
-      border-radius: 3px;
-      display: flex;
+      flex: none;
+      display: inline-flex;
       align-items: center;
       justify-content: center;
-      font-size: 14px;
-      line-height: 1;
-      flex-shrink: 0;
-      transition: background 0.2s;
+      width: 22px;
+      height: 22px;
+      margin-right: 2px;
+      padding: 0;
+      border: 0;
+      border-radius: 4px;
+      background: none;
+      color: var(--color-text-muted);
+      font: 15px/1 var(--font-sans);
+      cursor: pointer;
     }
-    
     .file-tab-close:hover {
-      background: rgba(0, 0, 0, 0.2);
+      background: var(--color-hover-bg);
+      color: var(--color-text-primary);
     }
-    
-    .file-tab.enabled .file-tab-close:hover {
-      background: rgba(19, 23, 28, 0.15);
+    .file-tab-check:focus-visible,
+    .file-tab-close:focus-visible {
+      outline: 2px solid var(--accent-line);
+      outline-offset: 1px;
     }
 
     .file-tab-tooltip {
@@ -306,53 +336,178 @@
       margin-bottom: 0;
     }
     
-    .add-file-btn {
-      padding: 4px 10px;
-      /*
-        The site's own accent rather than the brand dark green, which read as
-        the one thing on the bar that did not belong -- and on the dark theme
-        was a muddy pill on a near-black bar. White on the accent is the same
-        pairing the tick in a checkbox uses.
-      */
+    /* Open: the ways in, as a menu. It is a popover, so a click elsewhere or
+       Escape shuts it and it is drawn above everything; rb-tabs.js puts it
+       under its button and moves through it with the arrow keys. Each way's
+       few words come from data-hint. */
+    .rb-open {
+      display: flex;
+      flex: none;
+    }
+    .rb-open-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 28px;
+      padding: 0 10px 0 12px;
+      border: 0;
+      border-radius: 6px;
+      /* The site's accent with white on it, as the buttons in the header had. */
       background: var(--accent-fill);
       color: #fff;
-      border: none;
-      border-radius: 4px 4px 0 0;
-      cursor: pointer;
-      /* A button does not inherit the page's face unless told to. */
-      font-family: inherit;
-      font-size: 12px;
-      font-weight: 500;
-      line-height: 1.2;
-      box-sizing: border-box;
-      transition: background 0.2s;
-      margin-left: auto;
+      font: 600 12px var(--font-sans);
       white-space: nowrap;
+      cursor: pointer;
+      transition: background 0.2s;
     }
-    
-    /* Was #405533, a hard-coded dark green left over from before this button
-       moved to the accent -- the one off-palette hue in the button set. */
-    .add-file-btn:hover {
+    .rb-open-btn::after {
+      content: "";
+      margin-top: 2px;
+      border: 4px solid transparent;
+      border-top-color: currentColor;
+      border-bottom: 0;
+    }
+    .rb-open-btn:hover {
       background: var(--accent-fill-hover);
     }
+    .rb-open-btn:focus-visible {
+      outline: 2px solid var(--accent-line);
+      outline-offset: 2px;
+    }
+    .rb-menu {
+      position: fixed;
+      inset: auto;
+      margin: 0;
+      min-width: 17rem;
+      padding: 4px;
+      border: 1px solid var(--color-panel-border);
+      border-radius: 8px;
+      background: var(--color-panel-bg);
+      color: var(--color-text-primary);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+    }
+    .rb-menu-item {
+      display: flex;
+      align-items: baseline;
+      width: 100%;
+      padding: 6px 10px;
+      border: 0;
+      border-radius: 5px;
+      background: none;
+      color: inherit;
+      font: 600 12px var(--font-sans);
+      text-align: left;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+    .rb-menu-item::after {
+      content: attr(data-hint);
+      margin-left: auto;
+      padding-left: 18px;
+      color: var(--color-text-muted);
+      font-weight: 400;
+      font-size: 11px;
+    }
+    .rb-menu-item:hover,
+    .rb-menu-item:focus-visible {
+      background: var(--color-hover-bg);
+      outline: none;
+    }
+    .rb-menu-sep {
+      height: 1px;
+      margin: 4px 6px;
+      background: var(--color-panel-border);
+    }
 
-    /*
-      Only the first of the three is pushed to the right; the ones after it are
-      spaced by the container's 4px gap alone, the same 4px as between file
-      tabs. URL used to add a margin of its own on top, which made it the one
-      8px gap in the row.
-    */
-    .add-file-btn + .add-file-btn {
+    /* The right end: the trees' ∅ ∩ ∪ (shown for two files or more), and the
+       full window's buttons. */
+    .rb-bar-end {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex: none;
+      margin-left: auto;
+    }
+    .rb-bar-end > button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 28px;
+      height: 28px;
+      padding: 0 6px;
+      border: 0;
+      border-radius: 6px;
+      background: none;
+      color: var(--color-text-secondary);
+      cursor: pointer;
+    }
+    .rb-bar-end > button:hover {
+      background: var(--color-hover-bg);
+      color: var(--color-text-primary);
+    }
+    .rb-bar-end > button:focus-visible {
+      outline: 2px solid var(--accent-line);
+      outline-offset: -2px;
+    }
+    .rb-bar .file-load-ticker {
+      height: 28px;
       margin-left: 0;
+    }
+    .rb-homelink {
+      flex: none;
+      align-items: center;
+      height: 28px;
+      margin-right: 2px;
+    }
+    .rb-homelink img {
+      display: block;
+      width: 22px;
+      height: 22px;
     }
 
     /*
-      Google Drive (rb-drive.js): its button, and the welcome text that names
+      The full window (the button at the bar's right end): the page without
+      the site's header and footer. There the kvot mark at the bar's left goes
+      to the home page and the site's light/dark switch stands beside the
+      button; otherwise they are the header's and the footer's own. The page's
+      head sets the class before the first paint when it was left on.
+    */
+    :root.rb-full { --header-height: 0px; --footer-height: 0px; }
+    :root.rb-full body { padding-top: 0; }
+    :root.rb-full body > header,
+    :root.rb-full body > footer,
+    :root.rb-full body > .nav-toggle,
+    :root.rb-full body > #menu,
+    :root.rb-full #kvotmap { display: none; }
+    .rb-bar .rb-fullonly { display: none; }
+    :root.rb-full .rb-bar .rb-fullonly { display: inline-flex; }
+    .rb-fullbtn .rb-full-in,
+    :root.rb-full .rb-fullbtn .rb-full-out { display: none; }
+    :root.rb-full .rb-fullbtn .rb-full-in { display: inline; }
+
+    /* The site's message banner (kvot.css .failure-banner, 52px from the top
+       of the window) under the files bar, not over its boxes and Open;
+       rb-tabs.js keeps --rb-bar-bottom. */
+    .failure-banner {
+      top: calc(var(--rb-bar-bottom, 80px) + 8px);
+    }
+
+    /* A phone: the boxes in one row that scrolls sideways, with Open and the
+       right end's buttons always in sight. */
+    @media (max-width: 600px) {
+      .rb-bar { gap: 6px; padding: 8px 8px 0; }
+      .rb-files { flex: 0 1 auto; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; max-height: none; }
+      .file-tab { max-width: 170px; }
+      .rb-files-hint { display: none; }
+    }
+
+    /*
+      Google Drive (rb-drive.js): its way in, and the welcome text that names
       it, stay out of sight until a Google Cloud project is configured, which
       puts rb-drive-ready on the root element. A `hidden` attribute loses to
-      any display the button is given, so it is said here as well.
+      any display the item is given, so it is said here as well.
     */
-    .add-file-btn[hidden] {
+    .rb-menu-item[hidden] {
       display: none;
     }
     html:not(.rb-drive-ready) .rb-drive-only {
@@ -711,7 +866,8 @@
     .container { 
       display: flex; 
       gap: 4px;
-      padding: 16px;
+      /* 10px under the files bar (.rb-bar), which has the 16px either side. */
+      padding: 10px 16px 16px;
       flex: 1;
       overflow: hidden;
     }
@@ -1073,7 +1229,8 @@
       border-radius: 999px;
       background: var(--color-panel-bg);
       user-select: none;
-      margin-top: -10px;
+      height: 28px;
+      box-sizing: border-box;
     }
 
     .tree-mode-toggle button {

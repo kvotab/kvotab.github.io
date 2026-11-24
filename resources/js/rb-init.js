@@ -15,6 +15,9 @@
 // Initialize cached DOM element references
 initDOMReferences();
 
+// The files bar: its Open menu, and the full window's button (rb-tabs.js).
+setupFilesBar();
+
 /*
   A single delegated listener for the whole tree. buildTree used to attach seven
   closures per rendered node, so a large tree allocated thousands of listeners

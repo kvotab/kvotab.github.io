@@ -125,7 +125,7 @@ function toggleFileState(fileName) {
   fileStates[fileName] = !fileStates[fileName];
   kvotTrace('[toggleFileState]', fileName, 'newState=', fileStates[fileName]);
 
-  // Immediate visual update: change the tab element class so colour/state
+  // Immediate visual update: change the box's class so colour/state
   // responds instantly without waiting for the expensive tree recalculation.
   try {
     const tabs = document.querySelectorAll('.file-tab');
@@ -133,6 +133,10 @@ function toggleFileState(fileName) {
       if (t.getAttribute('data-file') === fileName) {
         t.classList.toggle('enabled', !!fileStates[fileName]);
         t.classList.toggle('disabled', !fileStates[fileName]);
+        // The tick too, when the toggle did not come from it (a click on the
+        // box's edge, or a call); the numbers follow with updateTabs.
+        const tick = t.querySelector('.file-tab-check');
+        if (tick) tick.checked = !!fileStates[fileName];
         break;
       }
     }
@@ -188,7 +192,7 @@ async function removeFile(fileName) {
     // No enabled files - show initial placeholder
     currentTreeFile = null;
     const tree = document.getElementById('tree');
-    tree.innerHTML = '<div class="loading">Drop HDF5 files or click "+ Add Files" to start...</div>';
+    tree.innerHTML = '<div class="loading">Drop files on the page, or use Open, to start…</div>';
     tree.classList.add('loading');
     
     document.querySelector('.search-container').classList.remove('visible');

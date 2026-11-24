@@ -54,11 +54,13 @@
         var t = localStorage.getItem('kvot-theme');
         if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
         document.documentElement.setAttribute('data-theme', t);
+        // the full window (the button at the files bar's right end): no site header or footer, from the first paint
+        if (localStorage.getItem('kvot.rb.full') === '1') document.documentElement.classList.add('rb-full');
       } catch (e) { /* storage unavailable — site.js will apply the default */ }
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
-  <link rel="stylesheet" href="./resources/css/rb.css?v=20261114a">
+  <link rel="stylesheet" href="./resources/css/rb.css?v=20261124c">
 </head>
 <body>
   <div id="dropOverlay">
@@ -202,13 +204,55 @@
     </div>
   </div>
 
+  <!-- ======================================================================
+       The files bar: the files open, a box each, and the ways to open more.
+       A box's tick says whether its file is in the tree and the charts; its
+       number, where it comes among the ticked ones (in a chart of several
+       files the first is drawn with full lines and the others thinner); a
+       drag moves it, and × closes it (rb-tabs.js, which made tabs of them
+       once, and whose class names say so still). Open is a menu of the ways
+       in. At the right end: how the trees of several files are put together,
+       and the full window, the page without the site's header and footer,
+       where the kvot mark goes to the home page and the site's light/dark
+       switch stands beside the button.
+       ====================================================================== -->
+  <div class="rb-bar" id="rbBar">
+    <a class="rb-homelink rb-fullonly" href="./index.html" title="kvot ab: the home page"><img src="./resources/images/kvot-logotype.svg" alt="kvot ab: the home page" width="20" height="20"></a>
+    <div id="fileTabs" class="rb-files" role="list" aria-label="Files open"></div>
+    <span class="rb-files-hint">No files open: drop them on the page, or</span>
+    <div id="fileLoadTicker" class="file-load-ticker" aria-live="polite" hidden>
+      <span class="spinner" aria-hidden="true"></span>
+      <span class="ticker-text">Loading files…</span>
+      <span class="ticker-progress" aria-hidden="true"><span class="ticker-progress-bar"></span></span>
+      <button class="ticker-cancel" data-on-click="cancelTreeRefresh" title="Cancel" style="display:none;">✕</button>
+    </div>
+    <div class="rb-open">
+      <button type="button" class="rb-open-btn" id="rbOpen" popovertarget="rbOpenMenu" aria-haspopup="menu" title="Open files: from this computer, from a URL, or the sample data">Open</button>
+      <div class="rb-menu" id="rbOpenMenu" popover role="menu" aria-label="Open">
+        <button type="button" class="rb-menu-item" role="menuitem" data-on-click="openFilePicker" data-hint="or drop them on the page">Files on this computer…</button>
+        <button type="button" class="rb-menu-item" role="menuitem" data-on-click="openUrlDialog" data-hint="a file on a web server">From a URL…</button>
+        <button type="button" class="rb-menu-item" role="menuitem" data-on-click="openGoogleDrive" data-hint="files in your Drive" hidden>Google Drive…</button>
+        <button type="button" class="rb-menu-item" role="menuitem" data-on-click="openSampleDataDialog" data-hint="files to try it on">Sample data…</button>
+        <div class="rb-menu-sep" role="separator"></div>
+        <button type="button" class="rb-menu-item" role="menuitem" data-on-click="openVscodeDialog" data-hint="this browser in VS Code">VS Code extension…</button>
+      </div>
+    </div>
+    <div class="rb-bar-end">
+      <div id="treeModeContainer" class="tree-mode-toggle" style="display: none;" title="Choose how data from multiple files is combined in the tree">
+        <button data-value="separated" class="active" title="Separated: one tree per file">∅</button><button data-value="intersect" title="Intersect: common paths only">∩</button><button data-value="union" title="Union: all paths combined">∪</button>
+      </div>
+      <button type="button" class="theme-toggle rb-fullonly" data-on-click="kvot:toggleTheme" title="Switch to dark mode" aria-label="Switch to dark mode">🌙</button>
+      <button type="button" class="rb-fullbtn" id="rbFull" data-on-click="toggleFullWindow" aria-pressed="false" aria-label="Full window" title="Full window: the page without the site's header and footer">
+        <!-- four corners: out to the full window, or in again (the stylesheet shows the one that fits) -->
+        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path class="rb-full-out" d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/><path class="rb-full-in" d="M6 2v4H2M10 2v4h4M14 10h-4v4M2 10h4v4"/></svg>
+      </button>
+    </div>
+  </div>
+
   <div class="container">
     <div class="panel" id="leftPanel">
       <div class="panel-heading">
         <h3>File Structure</h3>
-        <div id="treeModeContainer" class="tree-mode-toggle" style="display: none;" title="Choose how data from multiple files is combined in the tree">
-          <button data-value="separated" class="active" title="Separated: one tree per file">∅</button><button data-value="intersect" title="Intersect: common paths only">∩</button><button data-value="union" title="Union: all paths combined">∪</button>
-        </div>
       </div>
       <div class="search-container">
         <input 
@@ -219,7 +263,7 @@
         />
         <button id="clearSearch" class="clear-search-btn" title="Clear search">×</button>
       </div>
-      <div id="tree" class="loading">Drop HDF5 files or click "Add Files" to start...</div>
+      <div id="tree" class="loading">Drop files on the page, or use Open, to start…</div>
     </div>
 
     <div class="resize-handle" id="resizeHandle"></div>
@@ -353,7 +397,7 @@
                 <div class="welcome-section">
                   <h4>Getting Started</h4>
                   <ol>
-                    <li><strong>Load files</strong> — drag &amp; drop <code>.h5</code> / <code>.hdf5</code> / <code>.mat</code> files onto the page, click <em>Add Files</em>, or use <em>URL</em> to fetch from a remote server.<span class="rb-drive-only"> <em>Google Drive</em> opens files from your Drive (see <a href="privacy.html#google-drive">Privacy</a>).</span></li>
+                    <li><strong>Load files</strong> — drag &amp; drop <code>.h5</code> / <code>.hdf5</code> / <code>.mat</code> files onto the page, or choose <em>Open</em> above: files on this computer, a file from a URL, or the sample data.<span class="rb-drive-only"> <em>Google Drive</em> there opens files from your Drive (see <a href="privacy.html#google-drive">Privacy</a>).</span></li>
                     <li><strong>Browse</strong> — expand groups in the tree on the left to explore the file structure.</li>
                     <li><strong>Select</strong> — click a dataset to view its attributes and chart.</li>
                   </ol>
@@ -364,7 +408,9 @@
                     <li><kbd>Ctrl</kbd>-click (<kbd>⌘</kbd> on Mac) datasets to <strong>compare multiple</strong> in one chart.</li>
                     <li><kbd>Ctrl</kbd>-click groups that draw a chart of their own to draw them together, <strong>a panel each</strong>, or in one chart with <strong>Same chart</strong>.</li>
                     <li>Use the <strong>search bar</strong> to filter the tree — supports <code>*</code> wildcards and <code>/</code> full-path search. A term no name holds is tried on full paths, where a <code>*</code> stands for slashes too: <code>Kd*Po</code> finds <code>Kd/…/Po</code>.</li>
-                    <li>Load <strong>multiple files</strong> and use the ∩ (intersect) or ∪ (union) toggle to combine trees.</li>
+                    <li>Each <strong>file open</strong> is a box in the bar at the top: tick it to put it in the tree and the charts, drag it to change the order, × to close it. In a chart of several files the first ticked, numbered 1, is drawn with full lines and the others thinner.</li>
+                    <li>With <strong>several files</strong> ticked, ∅ ∩ ∪ at the bar's right end show a tree for each file, only the paths they all have (∩), or all their paths together (∪).</li>
+                    <li><strong>Full window</strong> — the four corners at the bar's right end hide the site's header and footer; the kvot mark then goes to the home page, and the light/dark switch is beside the corners.</li>
                     <li>An <strong>Ecolego assessment</strong> (<code>.eas</code>) opens too: each run it keeps opens as a file of its own.</li>
                     <li>A <strong>MATLAB MAT-file</strong> (<code>.mat</code>) opens too, in any format MATLAB saves (<code>-v4</code>, <code>-v6</code>, <code>-v7</code> and <code>-v7.3</code>): each variable is a dataset or a group in the tree, its class and size as MATLAB gives them. A cell array's elements are <code>{1}</code>, <code>{2}</code>, …, but a cell of numbers and text, as from a spreadsheet, is one table, and so is a struct array's field.</li>
                     <li>A <strong>MATLAB figure</strong> (<code>.fig</code>) opens too, as the tree of its objects — axes, lines, texts, controls — each a group of the objects it holds and of its properties. Select the file, the figure or an object in it to see the figure drawn as MATLAB shows it, that object set apart; click an object in the drawing to select it in the tree.</li>
@@ -405,27 +451,11 @@
   <script src="./resources/js/site.js?v=20261119b"></script>
   <script>
     /*
-      The file toolbar that sits in the shared site header. Kept as a template
-      literal so it reads as markup; it used to be a single-quoted one-liner
-      with backslash-escaped quotes inside it.
+      The site's header and footer, as every page has them. The files open
+      and the ways to open more are the page's own, in its files bar
+      (#rbBar), so that the full window, which hides the header, keeps them.
     */
-    const fileToolbar = `
-      <div class="tabs-container">
-        <div id="fileTabs"></div>
-        <div id="fileLoadTicker" class="file-load-ticker" aria-live="polite" hidden>
-          <span class="spinner" aria-hidden="true"></span>
-          <span class="ticker-text">Loading files…</span>
-          <span class="ticker-progress" aria-hidden="true"><span class="ticker-progress-bar"></span></span>
-          <button class="ticker-cancel" data-on-click="cancelTreeRefresh" title="Cancel" style="display:none;">✕</button>
-        </div>
-        <button class="add-file-btn" data-on-click="openFilePicker">Add Files</button>
-        <button class="add-file-btn url-file-btn" data-on-click="openUrlDialog" title="Load HDF5 file from URL"><span class="rb-ico rb-ico-link" aria-hidden="true"></span> URL</button>
-        <button class="add-file-btn" data-on-click="openGoogleDrive" title="Open files from your Google Drive" hidden><span class="rb-ico rb-ico-cloud" aria-hidden="true"></span> Google Drive</button>
-        <button class="add-file-btn" data-on-click="openSampleDataDialog" title="Load sample HDF5 files"><span class="rb-ico rb-ico-folder" aria-hidden="true"></span> Sample Data</button>
-        <button class="add-file-btn" data-on-click="openVscodeDialog" title="The Data Browser as an extension for VS Code"><span class="rb-ico rb-ico-download" aria-hidden="true"></span> VS Code</button>
-      </div>`;
-
-    KVOT.renderHeader('Data Browser', fileToolbar);
+    KVOT.renderHeader('Data Browser');
     KVOT.renderNav('rb.html');
     KVOT.renderFooter();
     KVOT.initMap('kvotmap');
@@ -505,19 +535,19 @@
     since they were one file and nothing runs at load time.
   -->
   <script src="./resources/js/pdf-sampler.js?v=20261004"></script>
-  <script src="./resources/js/rb-state.js?v=20261110c"></script>
+  <script src="./resources/js/rb-state.js?v=20261124c"></script>
   <script src="./resources/js/rb-utils.js?v=20261123"></script>
-  <script src="./resources/js/rb-actions.js?v=20261111b"></script>
+  <script src="./resources/js/rb-actions.js?v=20261124c"></script>
   <script src="./resources/js/rb-hdf5.js?v=20261031b"></script>
   <script src="./resources/js/rb-lazy.js?v=20261117a"></script>
-  <script src="./resources/js/rb-file.js?v=20261102b"></script>
+  <script src="./resources/js/rb-file.js?v=20261124c"></script>
   <script src="./resources/js/rb-eas.js?v=20261102"></script>
   <script src="./resources/js/rb-mat.js?v=20261123"></script>
   <script src="./resources/js/rb-fig.js?v=20261102"></script>
   <script src="./resources/js/rb-json.js?v=20261123"></script>
   <script src="./resources/js/rb-xml.js?v=20261123"></script>
-  <script src="./resources/js/rb-tabs.js?v=20261009"></script>
-  <script src="./resources/js/rb-tree.js?v=20261117a"></script>
+  <script src="./resources/js/rb-tabs.js?v=20261124c"></script>
+  <script src="./resources/js/rb-tree.js?v=20261124c"></script>
   <script src="./resources/js/rb-chart-axes.js?v=20261124a"></script>
   <script src="./resources/js/rb-chart-presets.js?v=20261008b"></script>
   <script src="./resources/js/rb-chart-export.js?v=20261031"></script>
@@ -530,7 +560,7 @@
   <script src="./resources/js/rb-search.js?v=20261124b"></script>
   <script src="./resources/js/rb-dragdrop.js?v=20260921"></script>
   <script src="./resources/js/rb-export.js?v=20260921"></script>
-  <script src="./resources/js/rb-init.js?v=20261124b"></script>
+  <script src="./resources/js/rb-init.js?v=20261124c"></script>
   <script src="./resources/js/rb-resize.js?v=20260921"></script>
   <script src="./resources/js/rb-handoff.js?v=20261102"></script>
   <script src="./resources/js/rb-smui.js?v=20261102"></script>

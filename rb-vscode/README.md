@@ -61,7 +61,7 @@ Marketplace, and does not reach this one; the setting does.
   in Data Browser*. They open in one tab, where the ∩ and ∪ buttons combine
   their trees. *Add Files* in the tab adds more.
 * **Drop files on a browser** — from the Explorer or from the Finder — and
-  they go into it as more file tabs, as *Add Files* would add them. VS Code
+  they go into it as more files, as *Add Files* would add them. VS Code
   opens a dropped file as an editor in the group it is dropped on, so this
   goes for any HDF5 file opened into a group while a browser shows there: a
   double-click in the Explorer adds it to that browser too. A single click (a
@@ -78,11 +78,13 @@ Marketplace, and does not reach this one; the setting does.
 * A file that **changes on disk** — a run that has written new results — is
   read again when it has been left alone for a moment.
 * **Light or dark**: the page follows VS Code's theme as it changes, unless you
-  choose with the sun/moon toggle at the right of its header. The choice holds
+  choose with the sun/moon toggle at the right end of its files bar. The choice holds
   for every view and every session (the `hdf5Browser.theme` setting);
   toggling back to the mode VS Code is in goes back to following VS Code.
-* The header is the file tabs alone, with *Add Files* and the toggle at its
-  right end: the editor's own tab already names the file.
+* At the top is the files bar: a box for each file open (tick it to put it
+  in the tree and the charts, drag it to change the order, × to close it),
+  *Add Files* after them, and the toggle at its right end. The site's header
+  is not there: the editor's own tab already names the file.
 * **After an update**, reload the window: the extension offers *Reload
   Window* when it has installed one (or *Developer: Reload Window*). A view
   opened by the old copy, still running, says so at its top rather than half
@@ -104,7 +106,7 @@ become HDF5 files only once the page has written them out.
 |---|---|
 | `hdf5Browser.readLazily` | `auto` (the default: 256 MB and up), `always`, or `never` (read whole, up to 1 GB) |
 | `hdf5Browser.addToOpenBrowser` | `true` (the default): a file dropped on a browser, or opened into its group, goes into it; `false`: a browser of its own |
-| `hdf5Browser.theme` | `auto` (the default: VS Code's theme), `light` or `dark`; the header's toggle sets it |
+| `hdf5Browser.theme` | `auto` (the default: VS Code's theme), `light` or `dark`; the files bar's toggle sets it |
 | `hdf5Browser.updates` | `install` (the default), `notify` or `off`: what a new version on kvotab.se leads to (see *Updates*) |
 
 Data compressed with lzf, blosc, blosc2, bzip2, lz4, zstd, zfp, bitshuffle,

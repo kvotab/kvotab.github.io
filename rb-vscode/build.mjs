@@ -13,12 +13,16 @@
      * every script and stylesheet is served from the extension, the CDN ones
        from copies that must match the hashes rb.html pins (the page keeps its
        integrity attributes, so the browser checks them again);
-     * the three inline scripts become files, since the webview's policy runs
-       no inline script: the Excel flag as it is; the header as the file
-       toolbar alone (no logo, no page name, no navigation, footer or map) with
-       a light/dark toggle; the theme one is dropped, because early.js themes;
-     * the URL, Google Drive and Sample Data buttons go, and so does the
-       welcome text that names them; the tip on the tree's menu says it saves
+     * of the three inline scripts, the Excel flag becomes a file, since the
+       webview's policy runs no inline script; the theme one is dropped,
+       because early.js themes; and so is the header one, which draws only
+       the site's header, navigation, footer and map;
+     * the page is in rb.css's full window (no site header or footer), and its
+       files bar is the webview's: no kvot mark and no full window button,
+       Add Files for the Open menu, whose other ways (a URL, Google Drive, the
+       sample data, this extension's download) are the site's, and a
+       light/dark toggle for the site's switch. The welcome text that names
+       them changes with them; the tip on the tree's menu says it saves
        (there is no User Interface for statsmodels here to send to);
      * the workers the page starts are bundled as source, which is how
        webview/early.js starts them.
@@ -58,14 +62,27 @@ const EXTRA = [
     integrity: 'sha384-AVanQsMzkodQFWEOGoE6PzX1XzHnUG4IbSjwE8Om6l1Lckxmx9NMKL1JP6wue6by' }
 ];
 
-/* The welcome panel's first step names the URL button; here it names the Explorer. */
-const WELCOME_LOAD = '<li><strong>Load files</strong> — drag &amp; drop <code>.h5</code> / <code>.hdf5</code> / <code>.mat</code> files onto the page, click <em>Add Files</em>, or use <em>URL</em> to fetch from a remote server.<span class="rb-drive-only"> <em>Google Drive</em> opens files from your Drive (see <a href="privacy.html#google-drive">Privacy</a>).</span></li>';
+/* The welcome panel's first step names the Open menu; here it names the Explorer. */
+const WELCOME_LOAD = '<li><strong>Load files</strong> — drag &amp; drop <code>.h5</code> / <code>.hdf5</code> / <code>.mat</code> files onto the page, or choose <em>Open</em> above: files on this computer, a file from a URL, or the sample data.<span class="rb-drive-only"> <em>Google Drive</em> there opens files from your Drive (see <a href="privacy.html#google-drive">Privacy</a>).</span></li>';
 const WELCOME_LOAD_VSCODE = '<li><strong>Load files</strong> — open an <code>.h5</code> / <code>.hdf5</code> file from the Explorer, or click <em>Add Files</em>. To compare files, select them in the Explorer and choose <em>Open Together in Data Browser</em>.</li>';
 
 /* The tree's menu sends the selection to the User Interface for statsmodels on the
    site (rb-smui.js); here, where there is none, it only saves. */
 const WELCOME_TREE = '<li>Right-click in the tree to send the selection to the <strong>User Interface for statsmodels</strong> for statistics, or to save it as an HDF5 file; values are drawn from its distributions, 1,000 or as many as you choose.</li>';
 const WELCOME_TREE_VSCODE = '<li>Right-click in the tree to <strong>save the selection</strong> as an HDF5 file; values are drawn from its distributions, 1,000 or as many as you choose.</li>';
+
+/* The full window hides the site's header and footer, which the webview has not got. */
+const WELCOME_FULL = '<li><strong>Full window</strong> — the four corners at the bar\'s right end hide the site\'s header and footer; the kvot mark then goes to the home page, and the light/dark switch is beside the corners.</li>';
+
+/* The files bar in the webview: Add Files for the site's Open menu, and the
+   extension's light/dark toggle (early.js switches) for the site's switch. */
+const ADD_FILES = '<button type="button" class="rb-open-btn rb-vscode-add" data-on-click="openFilePicker">Add Files</button>';
+const THEME_TOGGLE = '<button type="button" class="rb-theme-toggle" data-on-click="vscode:toggleTheme" title="Switch between light and dark" aria-label="Switch between light and dark"><span class="rb-ico" aria-hidden="true"></span></button>';
+const FILES_HINT = '<span class="rb-files-hint">No files open: drop them on the page, or</span>';
+const FILES_HINT_VSCODE = '<span class="rb-files-hint">No files open: open one from the Explorer, or</span>';
+
+/* What the header script must be, and all it may be, to be dropped: the site's chrome. */
+const SITE_CHROME = ["KVOT.renderHeader('Data Browser')", "KVOT.renderNav('rb.html')", 'KVOT.renderFooter()', "KVOT.initMap('kvotmap')"];
 
 const CDN = /^https:\/\/(cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com|cdn\.plot\.ly)\//;
 
@@ -93,6 +110,14 @@ function once(text, find, replace, what) {
   const n = text.split(find).length - 1;
   if (n !== 1) fail(`${what}: expected the text once, found it ${n} times. Has the page changed?`);
   return text.replace(find, () => replace);
+}
+
+/** The text from `start` up to `end` (kept), which must each be there once, replaced. */
+function between(text, start, end, replace, what) {
+  if (text.split(start).length !== 2 || text.split(end).length !== 2) fail(`${what}: its bounds are not there once each. Has the page changed?`);
+  const a = text.indexOf(start), b = text.indexOf(end);
+  if (b < a) fail(`${what}: its bounds are out of order`);
+  return text.slice(0, a) + replace + text.slice(b);
 }
 
 function attr(tag, name) {
@@ -172,36 +197,17 @@ async function main() {
     fail(`rb.html has ${inline.length} inline scripts; expected exactly the Excel flag, the theme and the header.`);
   }
 
-  // The header as it is, less what belongs to the site.
-  // The extension's own download (VS Code) is no use inside it, either, and
-  // Google's sign-in, for Google Drive, takes only a page at the site's address.
-  const siteButtons = /\n[ \t]*<button[^>]*data-on-click="(openUrlDialog|openGoogleDrive|openSampleDataDialog|openVscodeDialog)"[\s\S]*?<\/button>/g;
-  const found = (header[0].body.match(siteButtons) || []).length;
-  if (found !== 4) fail(`expected the URL, Google Drive, Sample Data and VS Code buttons in the header, found ${found}`);
-  let headerJs = header[0].body.replace(siteButtons, '');
-  for (const drop of ["KVOT.renderNav('rb.html');", 'KVOT.renderFooter();', "KVOT.initMap('kvotmap');"]) {
-    headerJs = once(headerJs, drop, '', `the header script's ${drop}`);
+  // The header script draws the site's header, navigation, footer and map,
+  // none of which the webview has: it goes, once it is checked to do nothing
+  // else, so that nothing added to it later is dropped unseen.
+  const headerCalls = header[0].body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+    .split(';').map(s => s.trim()).filter(Boolean);
+  if (JSON.stringify(headerCalls) !== JSON.stringify(SITE_CHROME)) {
+    fail(`rb.html's header script does more than draw the site's header, navigation, footer and map: ${headerCalls.join('; ')}`);
   }
-  // The light/dark toggle, right of Add Files: the site has one in its footer,
-  // which is not built in (webview/early.js does the switching).
-  const addFiles = '<button class="add-file-btn" data-on-click="openFilePicker">Add Files</button>';
-  headerJs = once(headerJs, addFiles, `${addFiles}
-        <button class="rb-theme-toggle" data-on-click="vscode:toggleTheme" title="Switch between light and dark" aria-label="Switch between light and dark"><span class="rb-ico" aria-hidden="true"></span></button>`,
-  'the Add Files button in the header script');
-  // The header is the file toolbar alone, without the logo and the page's
-  // name: VS Code's editor tab names the file already, and the file tabs get
-  // the width. rb-vscode.css lays it out.
-  headerJs = once(headerJs, "KVOT.renderHeader('Data Browser', fileToolbar);", `{
-      const header = document.querySelector('header');
-      header.classList.add('rb-vscode-header');
-      header.innerHTML = fileToolbar;
-    }`, 'the header script\'s KVOT.renderHeader');
 
   const generated = {
-    'rb-vscode/xlsx-flag.js': `/* Generated by build.mjs from rb.html's inline script. */\n${xlsxFlag[0].body.trim()}\n`,
-    'rb-vscode/header.js': '/* Generated by build.mjs from rb.html\'s inline script: the file toolbar alone, without the '
-      + 'site\'s logo, name, navigation, footer, map, URL, Google Drive, Sample Data and VS Code buttons, and with a light/dark toggle. */\n'
-      + `'use strict';\n${headerJs.trim()}\n`
+    'rb-vscode/xlsx-flag.js': `/* Generated by build.mjs from rb.html's inline script. */\n${xlsxFlag[0].body.trim()}\n`
   };
 
   const vendored = [];      // { url, file }
@@ -215,7 +221,7 @@ async function main() {
     } else if (s === xlsxFlag[0]) {
       replacement = '<script src="{{MEDIA}}/rb-vscode/xlsx-flag.js"></script>';
     } else if (s === header[0]) {
-      replacement = '<script src="{{MEDIA}}/rb-vscode/header.js"></script>';
+      replacement = '';
     } else if (CDN.test(s.src)) {
       if (!s.integrity) fail(`${s.src} is loaded from a CDN without an integrity pin`);
       vendored.push({ url: s.src, integrity: s.integrity });
@@ -261,11 +267,22 @@ async function main() {
     '  <link rel="stylesheet" href="{{MEDIA}}/rb-vscode/rb-vscode.css">',
     '</head>'
   ].join('\n'));
-  page = page.replace(/<html lang="en">/, '<html lang="en" data-theme="{{THEME}}" data-theme-default="{{THEME}}">');
+  // In rb.css's full window from the start: the page without the site's header and footer.
+  page = page.replace(/<html lang="en">/, '<html lang="en" class="rb-full" data-theme="{{THEME}}" data-theme-default="{{THEME}}">');
   if (!page.includes('data-theme="{{THEME}}"')) fail('rb.html\'s <html lang="en"> tag has changed');
 
   page = once(page, '<div id="kvotmap"></div>', '', 'the site map element');
   page = once(page, '<footer></footer>', '', 'the footer element');
+  page = once(page, '<header></header>', '', 'the header element');
+  // The files bar, the webview's way.
+  page = once(page, '<a class="rb-homelink rb-fullonly" href="./index.html" title="kvot ab: the home page"><img src="./resources/images/kvot-logotype.svg" alt="kvot ab: the home page" width="20" height="20"></a>', '',
+    'the kvot mark in the files bar');
+  page = between(page, '<button type="button" class="rb-fullbtn"', '\n    </div>\n  </div>\n\n  <div class="container">', '', 'the full window button');
+  page = once(page, '<button type="button" class="theme-toggle rb-fullonly" data-on-click="kvot:toggleTheme" title="Switch to dark mode" aria-label="Switch to dark mode">🌙</button>',
+    THEME_TOGGLE, 'the light/dark switch in the files bar');
+  page = between(page, '<div class="rb-open">', '<div class="rb-bar-end">', `${ADD_FILES}\n    `, 'the Open menu');
+  page = once(page, FILES_HINT, FILES_HINT_VSCODE, 'the files bar\'s hint');
+  page = once(page, WELCOME_FULL, '', 'the welcome panel\'s tip on the full window in rb.html');
   page = once(page, WELCOME_LOAD, WELCOME_LOAD_VSCODE, 'the welcome panel\'s first step in rb.html');
   page = once(page, WELCOME_TREE, WELCOME_TREE_VSCODE, 'the welcome panel\'s tip on the tree\'s menu in rb.html');
   page = once(page, '</body>', '  <script src="{{MEDIA}}/rb-vscode/late.js"></script>\n</body>', 'the end of the body');
@@ -285,6 +302,7 @@ async function main() {
     if (rel === 'resources/js/rb-state.js') {
       let text = once(bytes.toString('utf8'), WELCOME_LOAD, WELCOME_LOAD_VSCODE, 'the welcome panel\'s first step in rb-state.js');
       text = once(text, WELCOME_TREE, WELCOME_TREE_VSCODE, 'the welcome panel\'s tip on the tree\'s menu in rb-state.js');
+      text = once(text, WELCOME_FULL, '', 'the welcome panel\'s tip on the full window in rb-state.js');
       bytes = Buffer.from(text);
     }
     write(path.join(MEDIA, rel), bytes);

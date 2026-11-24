@@ -32,6 +32,8 @@ registerActions({
   copyPythonCode:         () => copyPythonCode(),
   downloadPythonCode:     () => downloadPythonCode(),
   cancelTreeRefresh:      () => cancelTreeRefresh(),
+  // The page without the site's header and footer (rb-tabs.js).
+  toggleFullWindow:       () => toggleFullWindow(),
 
   /* ── Chart series and overlays ────────────────────────────────────────── */
   toggleDynamicLegend:     () => toggleDynamicLegend(),

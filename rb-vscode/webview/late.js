@@ -128,7 +128,7 @@
     if (uris.length) host.post('drop', { uris });
   }, true);
 
-  // The light/dark toggle build.mjs puts in the header (early.js switches).
+  // The light/dark toggle build.mjs puts in the files bar (early.js switches).
   registerActions({ 'vscode:toggleTheme': () => host.toggleTheme() });
 
   document.addEventListener('DOMContentLoaded', () => host.post('ready', { build: host.config.build }));

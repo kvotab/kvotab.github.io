@@ -72,9 +72,9 @@ README names differ (`load.two.files/lazy` and the two `memfs` counts).
 Opening whole and lazily, past 2 GiB, compressed both ways, empty, dropped
 into the page; Save through VS Code (CSV, Excel, the Python button's script,
 presets, the tree's selection as HDF5, which is all the tree's menu
-offers here); Add Files; the preset dialog; the header
-(no logo or name, every tab standing on its line, Add Files and the toggle at
-the right, measured in px); VS Code's theme, and the light/dark toggle, kept in
+offers here); Add Files; the preset dialog; the files bar
+(no site header, footer or kvot mark, the boxes from its left, Add Files after
+them and the toggle at its right end, measured in px); VS Code's theme, and the light/dark toggle, kept in
 `hdf5Browser.theme` and followed by every view; Open Together, same-named
 files from two folders, a file rewritten on disk; the channel refusing
 what the page was not given; Ecolego assessments (read whole, the runs asked

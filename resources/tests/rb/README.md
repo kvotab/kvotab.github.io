@@ -141,7 +141,29 @@ test says nothing about what happens to be in `resources/data` when it runs.
 
     python3 test-sample.py
 
-`test-tabs.py` covers the file tabs and the tooltip hanging off them. A tab's
+`test-bar.py` covers the files bar above the panels, which replaced the tabs
+and buttons that hung from the site's header on 2026-11-24. A file open is a
+box: its tick puts it in the tree and the charts (a click on the tick, the
+name, or the box's edge, Space on the tick), its number is its place among
+the ticked ones (1 is drawn with full lines in a chart of several files), Alt
+with an arrow moves it, and so does a drag, whose end is played by moving the
+box and calling the end SortableJS was given (SortableJS drags with the
+browser's own drag and drop, which CDP's mouse does not start); Delete or ×
+closes it and the keyboard goes to the next box, the one before, or Open.
+Open is a menu (a popover) of the ways in: under its button, the first way
+focused, ↓ to the next, shut by Escape, a click elsewhere or a way chosen. At
+the right end, ∅ ∩ ∪ for two files ticked or more, and the full window: no
+site header or footer, the kvot mark going home and the light/dark switch
+beside the button, kept in `kvot.rb.full` and put on by the page's head
+before the first paint (a probe records the page when the parser inserts
+rb-tabs.js, before the page's script runs). With sixteen files the boxes wrap,
+and the kvot mark, Open and the right end stay on the first row. Last, a
+phone: the boxes scroll sideways with Open and the button in sight. Clicks and keys are CDP's.
+
+    python3 test-bar.py
+
+`test-tabs.py` covers the file tabs and the tooltip hanging off them (the
+files bar's boxes now, which keep the tabs' class names). A tab's
 tooltip is a div on the body, shown on the tab's `mouseenter` and hidden on its
 `mouseleave` — and a tab that is *removed* never gets a `mouseleave`, so
 closing a file left its tooltip on the screen. Hiding it when the strip is
@@ -441,8 +463,8 @@ along the way, answers the question by replacing `rbAskConfirm`.
 
     python3 test-ask.py
 
-`test-extension.py` covers the VS Code button, which hands out the HDF5
-Browser extension. `rb-vscode/release.mjs` puts the package in
+`test-extension.py` covers *VS Code extension…* in the files bar's Open menu,
+which hands out the HDF5 Browser extension. `rb-vscode/release.mjs` puts the package in
 `rb-vscode/dist/hdf5-browser.vsix` with `latest.json` beside it, and the
 dialog reads that note each time it opens: with none it says nothing is
 published and offers no Download; with one it gives the version, size, date

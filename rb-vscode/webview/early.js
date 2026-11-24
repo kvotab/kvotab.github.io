@@ -19,7 +19,7 @@
      dialog. The page revokes its blob URL straight after the click, so the
      Blob is taken hold of when the URL is made.
    * The theme is VS Code's, followed as it changes, unless the reader has
-     chosen light or dark with the header's toggle.
+     chosen light or dark with the files bar's toggle.
    * prompt(), confirm() and alert() show nothing in a webview; they say so
      in the log instead of failing silently.
 
@@ -312,7 +312,7 @@
 
   /*
     The theme the page is in: 'auto' follows VS Code's; 'light' and 'dark' are
-    the reader's own choice, made with the header's toggle and kept by the
+    the reader's own choice, made with the files bar's toggle and kept by the
     extension in the hdf5Browser.theme setting, so that every view and every
     later session has it.
   */
@@ -347,7 +347,7 @@
   }
 
   /**
-   * The header's toggle: the other theme. Choosing the one VS Code is in is
+   * The files bar's toggle: the other theme. Choosing the one VS Code is in is
    * going back to following it, so that is 'auto' again, not a fixed choice.
    */
   function toggleTheme() {
@@ -388,7 +388,7 @@
     },
     log,
     config,
-    /** Switch between light and dark (the header's toggle). */
+    /** Switch between light and dark (the files bar's toggle). */
     toggleTheme
   });
 })();

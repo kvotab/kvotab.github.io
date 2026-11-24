@@ -13,62 +13,21 @@
   color: inherit;
 }
 
-/* ── the header: the file toolbar alone ─────────────────────────────────
-   build.mjs leaves out the logo and the page's name, so the header is one
-   column and the tabs have its width, with Add Files and the light/dark
-   toggle at its right end.
-
-   A tab must stand on the header's bottom line, or it stops looking like a
-   tab. On the site it does by luck: the page's name, set at 24px, makes the
-   header row 32.8px, and the strip is stretched to that and nudged down 3px
-   onto the line. Here VS Code's 13px body font shrank the name and left the
-   tabs 3px short; without the name nothing props the row up at all. So the
-   strip is taken down through the header's bottom padding (6px) to the line
-   itself, and everything in it stands on its bottom edge. The strip's own
-   scrollbar, when there are more tabs than fit, then sits on the line under
-   them, as it does on the site. */
-header.rb-vscode-header {
-  grid-template-columns: 1fr;
-}
-
-header.rb-vscode-header .tabs-container {
-  margin-left: 0;
-  top: 0;
-  align-self: stretch;
-  margin-bottom: -6px;
+/* ── the files bar ──────────────────────────────────────────────────────
+   build.mjs takes the site's header, footer and map away and puts the page
+   in rb.css's full window (:root.rb-full), so the files bar is at the top.
+   It leaves out the bar's kvot mark and full window button, and puts Add
+   Files in place of the Open menu, at the Open button's place after the
+   boxes: a button of its own, so without the menu's arrow. */
+.rb-vscode-add::after {
+  display: none;
 }
 
 /* ── the light/dark toggle ───────────────────────────────────────────────
-   Shaped like Add Files, as a tab on the line, in the header's own colour:
-   the header is dark in both themes. The icon is a mask, as rb's others are,
-   so it takes that colour; a sun to go light, a moon to go dark. */
-.rb-theme-toggle {
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 22.4px;
-  padding: 0;
-  border: 1px solid var(--color-kvot-accent);
-  border-bottom: none;
-  border-radius: 4px 4px 0 0;
-  background: rgba(255, 255, 255, 0.1);
-  color: var(--header-text);
-  cursor: pointer;
-  box-sizing: border-box;
-  transition: background 0.2s;
-}
-
-.rb-theme-toggle:hover {
-  background: rgba(255, 255, 255, 0.2);
-}
-
-.rb-theme-toggle:focus-visible {
-  outline: 2px solid var(--color-kvot-accent);
-  outline-offset: 1px;
-}
-
+   At the bar's right end, as the site's switch is in its full window: rb.css
+   draws it as the bar's other buttons there (.rb-bar-end > button). The
+   icon is a mask, as rb's others are, so it takes the button's colour; a sun
+   to go light, a moon to go dark. */
 .rb-theme-toggle .rb-ico {
   width: 15px;
   height: 15px;

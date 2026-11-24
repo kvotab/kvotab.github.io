@@ -105,7 +105,7 @@ const INFO_PANEL_DEFAULT_MESSAGE = `
   <div class="welcome-section">
     <h4>Getting Started</h4>
     <ol>
-      <li><strong>Load files</strong> — drag &amp; drop <code>.h5</code> / <code>.hdf5</code> / <code>.mat</code> files onto the page, click <em>Add Files</em>, or use <em>URL</em> to fetch from a remote server.<span class="rb-drive-only"> <em>Google Drive</em> opens files from your Drive (see <a href="privacy.html#google-drive">Privacy</a>).</span></li>
+      <li><strong>Load files</strong> — drag &amp; drop <code>.h5</code> / <code>.hdf5</code> / <code>.mat</code> files onto the page, or choose <em>Open</em> above: files on this computer, a file from a URL, or the sample data.<span class="rb-drive-only"> <em>Google Drive</em> there opens files from your Drive (see <a href="privacy.html#google-drive">Privacy</a>).</span></li>
       <li><strong>Browse</strong> — expand groups in the tree on the left to explore the file structure.</li>
       <li><strong>Select</strong> — click a dataset to view its attributes and chart.</li>
     </ol>
@@ -116,8 +116,10 @@ const INFO_PANEL_DEFAULT_MESSAGE = `
     <ul>
       <li><kbd>Ctrl</kbd>-click (<kbd>⌘</kbd> on Mac) datasets to <strong>compare multiple</strong> in one chart.</li>
       <li><kbd>Ctrl</kbd>-click groups that draw a chart of their own to draw them together, <strong>a panel each</strong>, or in one chart with <strong>Same chart</strong>.</li>
-      <li>Use the <strong>search bar</strong> to filter the tree — supports <code>*</code> wildcards and <code>/</code> full-path search.</li>
-      <li>Load <strong>multiple files</strong> and use the ∩ (intersect) or ∪ (union) toggle to combine trees.</li>
+      <li>Use the <strong>search bar</strong> to filter the tree — supports <code>*</code> wildcards and <code>/</code> full-path search. A term no name holds is tried on full paths, where a <code>*</code> stands for slashes too: <code>Kd*Po</code> finds <code>Kd/…/Po</code>.</li>
+      <li>Each <strong>file open</strong> is a box in the bar at the top: tick it to put it in the tree and the charts, drag it to change the order, × to close it. In a chart of several files the first ticked, numbered 1, is drawn with full lines and the others thinner.</li>
+      <li>With <strong>several files</strong> ticked, ∅ ∩ ∪ at the bar's right end show a tree for each file, only the paths they all have (∩), or all their paths together (∪).</li>
+      <li><strong>Full window</strong> — the four corners at the bar's right end hide the site's header and footer; the kvot mark then goes to the home page, and the light/dark switch is beside the corners.</li>
       <li>An <strong>Ecolego assessment</strong> (<code>.eas</code>) opens too: each run it keeps opens as a file of its own.</li>
       <li>A <strong>MATLAB MAT-file</strong> (<code>.mat</code>) opens too, in any format MATLAB saves (<code>-v4</code>, <code>-v6</code>, <code>-v7</code> and <code>-v7.3</code>): each variable is a dataset or a group in the tree, its class and size as MATLAB gives them. A cell array's elements are <code>{1}</code>, <code>{2}</code>, …, but a cell of numbers and text, as from a spreadsheet, is one table, and so is a struct array's field.</li>
       <li>A <strong>MATLAB figure</strong> (<code>.fig</code>) opens too, as the tree of its objects — axes, lines, texts, controls — each a group of the objects it holds and of its properties. Select the file, the figure or an object in it to see the figure drawn as MATLAB shows it, that object set apart; click an object in the drawing to select it in the tree.</li>
@@ -137,6 +139,7 @@ const INFO_PANEL_DEFAULT_MESSAGE = `
       <li><strong>Scale selectors</strong> — switch axes between linear and log scales, and give an axis's unit a prefix: <em>k</em> shows Bq as kBq, the values divided by 1000.</li>
       <li><strong>Show Total</strong> — for radionuclide groups, overlay a summed trace.</li>
       <li><strong>Show Ratio</strong> — when two files are loaded, display max-value ratios per isotope.</li>
+      <li><strong>Show Max</strong> — append maximum trace value to each legend entry (disabled when Show Ratio is active).</li>
       <li><strong>Preset views</strong> — choose one in the list by the chart. The gear beside it opens the axis presets window: the chart's axes, to set by hand, and the saved presets, to use, edit, update or delete. Drag it aside by its title bar while you work on the chart.</li>
     </ul>
   </div>

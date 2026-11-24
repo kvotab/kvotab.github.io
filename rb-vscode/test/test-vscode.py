@@ -9,9 +9,10 @@ the site. This covers what is the extension's own:
     into the page, which the page's own worker reads;
   * the webview frame: workers, the CDN copies, the policy (nothing blocked,
     nothing logged), VS Code's theme followed as it changes;
-  * the header: the file toolbar alone, every tab standing on its line, Add
-    Files and the light/dark toggle at the right; the toggle's choice kept in
-    hdf5Browser.theme, followed by every view, and undone by toggling back;
+  * the files bar: no site header above it, the files' boxes from its left,
+    Add Files after them and the light/dark toggle at its right end; the
+    toggle's choice kept in hdf5Browser.theme, followed by every view, and
+    undone by toggling back;
   * what needs VS Code's dialogs: Save (CSV, Excel, presets, the tree's
     selection as HDF5, the only thing its right-click menu offers here) and
     Add Files; and the preset name, asked in the page since prompt() shows
@@ -52,20 +53,19 @@ sys.path.insert(0, os.path.join(HERE, '..', '..', 'resources', 'tests', 'rb'))
 from eas_fixtures import TIMES, expected, old_e5, runs_e6  # noqa: E402
 GROUP = '/biosphere/vault_A/mire/total'
 
-# Where the header's parts stand, in px: every tab-like thing on its bottom line.
-HEADER = """(() => {
-  const h = document.querySelector('header');
-  const line = h.getBoundingClientRect().bottom - parseFloat(getComputedStyle(h).borderBottomWidth);
-  const inner = h.getBoundingClientRect().right - parseFloat(getComputedStyle(h).paddingRight);
+# Where the files bar's parts stand, in px: no site header above it, the first
+# box at its left, Add Files after the boxes, the light/dark toggle at its right end.
+BAR = """(() => {
+  const el = document.getElementById('rbBar'), bar = el.getBoundingClientRect();
+  const inner = bar.right - parseFloat(getComputedStyle(el).paddingRight);
   const box = sel => document.querySelector(sel).getBoundingClientRect();
   return {
-    logo: !!h.querySelector('.logo, svg'), title: !!h.querySelector('.title'),
-    tab: +(line - box('.file-tab').bottom).toFixed(1),
-    add: +(line - box('.add-file-btn').bottom).toFixed(1),
-    toggle: +(line - box('.rb-theme-toggle').bottom).toFixed(1),
-    toggleInset: +(inner - box('.rb-theme-toggle').right).toFixed(1),
-    addToToggle: +(box('.rb-theme-toggle').left - box('.add-file-btn').right).toFixed(1),
-    tabStart: +(box('.file-tab').left - h.getBoundingClientRect().left).toFixed(1)
+    site: ['body > header', 'body > footer', '#kvotmap', '#rbBar .rb-homelink', '#rbFull', '#rbOpenMenu']
+      .filter(s => document.querySelector(s)),
+    top: +bar.top.toFixed(1),
+    boxStart: +(box('.file-tab').left - bar.left).toFixed(1),
+    addAfterBoxes: +(box('.rb-vscode-add').left - box('#fileTabs').right).toFixed(1),
+    toggleInset: +(inner - box('.rb-theme-toggle').right).toFixed(1)
   };
 })()"""
 
@@ -141,11 +141,11 @@ async def main():
         check('a small file opens, read whole', st['opened'], [{'name': 'sample-a.h5', 'mode': 'whole'}])
         page = await vs.page()
         s = await page.ev("""(() => ({
-          buttons: [...document.querySelectorAll('header button')].map(b => b.textContent.trim()).filter(Boolean),
+          buttons: [...document.querySelectorAll('#rbBar button')].map(b => b.textContent.trim()).filter(Boolean),
           theme: document.documentElement.getAttribute('data-theme'),
           workers: Object.keys(window.KVOT_VSCODE_WORKER_SOURCES).sort()
         }))()""")
-        check('the header has Add Files and no URL, Sample Data or VS Code (the site\'s download of this extension)',
+        check('the files bar has Add Files and no URL, Sample Data or VS Code (the site\'s download of this extension)',
               'Add Files' in s['buttons'] and not any('URL' in b or 'Sample' in b or 'VS Code' in b for b in s['buttons']))
         check('the page is drawn in VS Code\'s theme (dark)', s['theme'], 'dark')
         await page.ev("(async () => { await expandAndLoadPath('sample-a.h5', %s); findTreeItem(%s, { extra: '.group' }).click();"
@@ -242,13 +242,12 @@ async def main():
         vs.command('setting', section='workbench', key='colorTheme', value='Default Dark Modern')
         await wait_for(page, "document.documentElement.getAttribute('data-theme')", 'dark')
 
-        # --- the header: the file toolbar alone, on its line -----------------
-        h = await page.ev(HEADER)
-        check('the header has no logo and no page name', (h['logo'], h['title']), (False, False))
-        check('  so the first tab starts at its left edge', h['tabStart'] <= 8)
-        check('the file tabs stand on the header\'s line, with no gap', abs(h['tab']) <= 0.5)
-        check('  and Add Files and the light/dark toggle do too', (abs(h['add']) <= 0.5, abs(h['toggle']) <= 0.5), (True, True))
-        check('the toggle is at the right end, Add Files just before it', (h['toggleInset'] <= 1, 0 <= h['addToToggle'] <= 8), (True, True))
+        # --- the files bar: at the top, with none of the site's chrome --------
+        h = await page.ev(BAR)
+        check('no site header, footer or map, and no kvot mark, full window or Open menu in the bar', h['site'], [])
+        check('  so the files bar is at the top, the first box at its left', (h['top'] <= 1, h['boxStart'] <= 17), (True, True))
+        check('Add Files just after the boxes, the light/dark toggle at the bar\'s right end',
+              (0 <= h['addAfterBoxes'] <= 12, h['toggleInset'] <= 1), (True, True))
 
         # --- the light/dark toggle: kept in the setting ----------------------
         await page.ev("document.querySelector('.rb-theme-toggle').click(); true")
@@ -265,7 +264,7 @@ async def main():
         # --- Add Files: VS Code's open dialog, answered by the test ---------
         vs.command('nextPick', paths=[fixture('sample-b.h5')])
         m = vs.mark()
-        await page.ev("document.querySelector('.add-file-btn').click(); true")
+        await page.ev("document.querySelector('.rb-vscode-add').click(); true")
         st = await opened(vs, m, 'the added file')
         check('Add Files adds the chosen file to this view', (st['why'], [f['name'] for f in st['opened']]), ('added', ['sample-b.h5']))
         check('  next to the first', await page.ev("fileOrder.slice()"), ['sample-a.h5', 'sample-b.h5'])
@@ -404,7 +403,7 @@ async def main():
 
         vs.command('nextPick', paths=[two])
         m = vs.mark()
-        await page.ev("document.querySelector('.add-file-btn').click(); true")
+        await page.ev("document.querySelector('.rb-vscode-add').click(); true")
         check('Add Files takes an assessment too, and one of two runs asks which in the page',
               await wait_for(page, "!!document.querySelector('.rb-ask')", True, 60), True)
         await page.ev("""(() => { document.querySelector('.rb-ask .rb-ask-all input').click();

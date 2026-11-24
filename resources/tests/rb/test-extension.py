@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""The VS Code button: the dialog that hands out the Data Browser extension.
+"""VS Code extension… in the files bar's Open menu: the dialog that hands out
+the Data Browser extension.
 
 rb-vscode/release.mjs puts the latest package in rb-vscode/dist, as
 hdf5-browser.vsix, with latest.json saying which version it is. The dialog
@@ -96,7 +97,7 @@ STATE = """(() => {
 
 async def opened(page, body):
     await page.ev(STUB % json.dumps(body))
-    await page.ev("(async () => { closeVscodeDialog(); document.querySelector('header [data-on-click=openVscodeDialog]').click();"
+    await page.ev("(async () => { closeVscodeDialog(); document.querySelector('#rbOpenMenu [data-on-click=openVscodeDialog]').click();"
                   " await new Promise(r => setTimeout(r, 400)); })()")
     return await page.ev(STATE)
 
@@ -106,8 +107,8 @@ async def main():
     async with websockets.connect(ver['webSocketDebuggerUrl'], max_size=64 * 1024 * 1024) as bws:
         tid, page = await open_page(bws, settle=7)
         try:
-            check('the header has a VS Code button', await page.ev(
-                "(document.querySelector('header [data-on-click=openVscodeDialog]') || {}).textContent || ''"), ' VS Code')
+            check('the Open menu has the VS Code extension', await page.ev(
+                "(document.querySelector('#rbOpenMenu [data-on-click=openVscodeDialog]') || {}).textContent || ''"), 'VS Code extension…')
 
             s = await opened(page, None)
             check('with nothing published, the dialog says so', (s['open'], s['release']),
@@ -132,7 +133,7 @@ async def main():
 
             await page.ev("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); true")
             check('Escape closes the dialog', await page.ev(STATE + ".open"), False)
-            await page.ev("(async () => { document.querySelector('header [data-on-click=openVscodeDialog]').click(); await new Promise(r => setTimeout(r, 300));"
+            await page.ev("(async () => { document.querySelector('#rbOpenMenu [data-on-click=openVscodeDialog]').click(); await new Promise(r => setTimeout(r, 300));"
                           " const d = document.getElementById('vscodeDialog'); d.dispatchEvent(new MouseEvent('click', { bubbles: true })); })()")
             check('  and so does a click beside it', await page.ev(STATE + ".open"), False)
 
