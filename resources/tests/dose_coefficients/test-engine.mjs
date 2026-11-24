@@ -242,6 +242,8 @@ if (!SYSTEM || SYSTEM === '103') {
     ['103', { nuclide: 'Pb-198', route: 'injection' }, 7300, 4.1394e-11],
     // lanthanum formed on barium's bone surfaces is on its own (Publication 137 para 354; 2.8 % low at 3 months otherwise)
     ['103', { nuclide: 'Ba-140', route: 'injection' }, 100, 3.1742e-8],
+    // iodine formed from tellurium: one compartment for inorganic iodide in other tissue (Publication 137 para 135; 3.7 % high otherwise)
+    ['103', { nuclide: 'Te-134', route: 'injection' }, 7300, 6.6631e-11],
     ['103', { nuclide: 'Ra-226', route: 'ingestion', form: 'all' }, 7300, 1.2646e-7],
     ['60', { nuclide: 'Po-210', route: 'ingestion' }, 7300, 1.206e-6],
   ];
