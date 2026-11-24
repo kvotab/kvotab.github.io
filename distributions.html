@@ -22,12 +22,14 @@
         var t = localStorage.getItem('kvot-theme');
         if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
         document.documentElement.setAttribute('data-theme', t);
+        // the full window (the button at the tabs' right end): no site header or footer, from the first paint
+        if (localStorage.getItem('kvot.distributions.full') === '1') document.documentElement.classList.add('ds-full');
       } catch (e) { /* storage unavailable — site.js will apply the default */ }
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/distributions.css?v=20261124">
+  <link rel="stylesheet" href="./resources/css/distributions.css?v=20261124b">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
 </head>
@@ -69,14 +71,27 @@
 
       <!-- ===================== the work area ===================== -->
       <main class="ds-main">
-        <nav class="ds-tabs" role="tablist" aria-label="Views">
-          <button type="button" role="tab" class="active" data-tab="chart" data-on-click="ds:tab">Chart</button>
-          <button type="button" role="tab" data-tab="stats" data-on-click="ds:tab">Statistics</button>
-          <button type="button" role="tab" data-tab="sample" data-on-click="ds:tab">Sample</button>
-          <button type="button" role="tab" data-tab="fit" data-on-click="ds:tab">Fit to data</button>
-          <button type="button" role="tab" data-tab="calc" data-on-click="ds:tab">Calculate</button>
-          <button type="button" role="tab" data-tab="help" data-on-click="ds:tab">Help</button>
-        </nav>
+        <!-- In the full window (the button at the right end) the kvot mark goes to the home page
+             and the site's light/dark switch stands beside the button (site.js keeps its icon and
+             title). The two buttons are outside the tablist, which holds only the tabs. -->
+        <div class="ds-tabbar">
+          <a class="ds-homelink ds-fullonly" href="./index.html" title="kvot ab: the home page"><img src="./resources/images/kvot-logotype.svg" alt="kvot ab: the home page" width="20" height="20"></a>
+          <nav class="ds-tabs" role="tablist" aria-label="Views">
+            <button type="button" role="tab" class="active" data-tab="chart" data-on-click="ds:tab">Chart</button>
+            <button type="button" role="tab" data-tab="stats" data-on-click="ds:tab">Statistics</button>
+            <button type="button" role="tab" data-tab="sample" data-on-click="ds:tab">Sample</button>
+            <button type="button" role="tab" data-tab="fit" data-on-click="ds:tab">Fit to data</button>
+            <button type="button" role="tab" data-tab="calc" data-on-click="ds:tab">Calculate</button>
+            <button type="button" role="tab" data-tab="help" data-on-click="ds:tab">Help</button>
+          </nav>
+          <span class="ds-tabend">
+            <button type="button" class="theme-toggle ds-fullonly" data-on-click="kvot:toggleTheme" title="Switch to dark mode" aria-label="Switch to dark mode">🌙</button>
+            <button type="button" class="ds-fullbtn" id="dsFull" data-on-click="ds:full" aria-pressed="false" aria-label="Full window" title="Full window: the page without the site's header and footer">
+              <!-- four corners: out to the full window, or in again (the stylesheet shows the one that fits) -->
+              <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path class="ds-full-out" d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/><path class="ds-full-in" d="M6 2v4H2M10 2v4h4M14 10h-4v4M2 10h4v4"/></svg>
+            </button>
+          </span>
+        </div>
 
         <!-- ---- Chart ---- -->
         <section class="ds-pane" id="pane-chart" role="tabpanel">
@@ -310,7 +325,9 @@
           <p>This page defines probability distributions, draws them together, lists their summary statistics,
             samples them, fits them to data and calculates with them. Everything is computed in the browser; nothing you enter
             leaves it. The distributions, the data and the settings are kept in this browser's storage, so they are
-            there on your next visit; <a href="#" data-on-click="ds:reset">start again</a> clears them.</p>
+            there on your next visit; <a href="#" data-on-click="ds:reset">start again</a> clears them. The four corners at
+            the right end of the tabs give the page the full window, without the site's header and footer; the kvot mark
+            at the left of the tabs then goes to the home page, and the light/dark switch stands beside the corners.</p>
           <ul class="ds-toc" id="dsHelpToc">
             <li><a href="#help-dists" data-on-click="ds:helpLink">The distributions</a></li>
             <li><a href="#help-params" data-on-click="ds:helpLink">Parameterisations</a></li>
@@ -651,7 +668,7 @@
       distributions/*.js        the distributions, the fits and the calculations (see their headers)
       kvot-info                 the (i) next to each setting and its panel
   -->
-  <script src="./resources/js/kvot-info.js?v=20261004"></script>
-  <script type="module" src="./resources/js/distributions/ui.js?v=20261004"></script>
+  <script src="./resources/js/kvot-info.js?v=20261004a"></script>
+  <script type="module" src="./resources/js/distributions/ui.js?v=20261124"></script>
 </body>
 </html>

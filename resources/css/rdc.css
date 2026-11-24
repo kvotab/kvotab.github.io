@@ -260,18 +260,15 @@
 
   .inputdiv and #rnsettings went with it. No page has used either.
 */
+/* The search, at the start of the bar under the header (.rdc-databar): a
+   field of the bar's, as wide as a name and its suggestions want. */
 #search-input{
-	background-color:rgba(255, 255, 255, 0.05);
-	border-color:var(--color-kvot-bright);
-	color:var(--color-kvot-bright);
-}
-#search-input:focus{
-	outline:none;
-	background-color:var(--color-kvot-primary);
+	flex:0 1 13rem;
+	width:13rem;
 }
 #search-input::placeholder{
-	color:var(--color-kvot-bright);
-	opacity:.5;
+	color:var(--text-muted);
+	opacity:1;
 }
 #search-input:focus::placeholder{
 	opacity:0;
@@ -280,7 +277,9 @@
   position: fixed;
 	top: calc(var(--header-height) + var(--rdc-bar-h));
 	left: var(--rdc-tree-w);
-	height: calc(100vh - 74px - var(--rdc-bar-h));
+	/* the header (43px) and the footer (31px) were written here as 74px; in the
+	   full window they are 0 */
+	height: calc(100vh - var(--header-height) - var(--footer-height) - var(--rdc-bar-h));
 	width: calc(100vw - var(--rdc-tree-w));
 	z-index:2;
 	background-color: var(--bg-primary, #ffffff);
@@ -407,7 +406,7 @@ header {
 nav {
 	top: calc(var(--header-height) + var(--rdc-bar-h));
 	left:0px;
-	bottom: 32px;
+	bottom: calc(var(--footer-height) + 1px);
 	position: fixed;
 	padding: 0px;
 	display: flex;
@@ -561,6 +560,92 @@ body.tree-collapsed nav {
 	text-align: right;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+/* The page's buttons, at the bar's right end: the chain as a PNG, the help,
+   and the full window's switches. */
+.databar-end {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	gap: 2px;
+	margin-left: auto;
+}
+.databar-end > button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 30px;
+	height: 30px;
+	padding: 0 6px;
+	border: 0;
+	border-radius: 7px;
+	background: none;
+	color: var(--text-secondary);
+	cursor: pointer;
+}
+.databar-end > button:hover {
+	background: var(--bg-secondary);
+	color: var(--text-primary);
+}
+.databar-end > button:focus-visible {
+	outline: 2px solid var(--color-kvot-bright);
+	outline-offset: -2px;
+}
+.databar-end > .theme-toggle {
+	font-size: 14px;
+	line-height: 1;
+}
+.databar-end > .theme-toggle:hover {
+	transform: none;
+}
+.databar-end svg {
+	display: block;
+}
+/* Only a phone's bar breaks its line here (NARROW SCREENS). */
+.databar-break {
+	display: none;
+}
+.rdc-homelink {
+	flex: none;
+	align-items: center;
+}
+.rdc-homelink img {
+	display: block;
+	width: 20px;
+	height: 20px;
+}
+
+/*
+  The full window (the four corners at the bar's right end): the page without
+  the site's header and footer. There the kvot mark at the bar's left goes to
+  the home page and the site's light/dark switch stands beside the button;
+  otherwise they are the header's and the footer's own. The page's head sets
+  the class before the first paint when it was left on. Everything under the
+  bar is placed from --header-height and --footer-height, so it follows.
+*/
+:root.rdc-full {
+	--header-height: 0px;
+	--footer-height: 0px;
+}
+:root.rdc-full body > header,
+:root.rdc-full body > footer,
+:root.rdc-full body > .nav-toggle,
+:root.rdc-full body > #menu,
+:root.rdc-full #kvotmap {
+	display: none;
+}
+.rdc-databar .rdc-fullonly {
+	display: none;
+}
+:root.rdc-full .rdc-databar .rdc-fullonly {
+	display: inline-flex;
+}
+.rdc-fullbtn .rdc-full-in,
+:root.rdc-full .rdc-fullbtn .rdc-full-out {
+	display: none;
+}
+:root.rdc-full .rdc-fullbtn .rdc-full-in {
+	display: inline;
 }
 
 /* ENSDF files dragged over the page: where they can go. */
@@ -865,7 +950,7 @@ th {
        allows" means exactly that. */
     box-sizing: border-box;
     border: 5px solid;
-    top: calc(68px + var(--rdc-bar-h));
+    top: calc(var(--header-height) + 25px + var(--rdc-bar-h));
     /* Anchor the middle to the middle: the old calc() centred a 400px box
        while this one measures 530 with its border and padding. */
     left: 50%;
@@ -885,7 +970,7 @@ th {
      below the node menu (300) and the page header (10000). */
   z-index: 8;
   /* Clear of the footer as well as the top of the window. */
-  max-height: calc(100dvh - 68px - var(--rdc-bar-h) - var(--footer-height) - 10px);
+  max-height: calc(100dvh - var(--header-height) - 25px - var(--rdc-bar-h) - var(--footer-height) - 10px);
 }
 #info.show {
   opacity:1;
@@ -1284,9 +1369,6 @@ th {
     way to undo that afterwards — the page stays zoomed once the field is left.
     Sixteen pixels is the whole fix.
   */
-  header input {
-    font-size: 16px;
-  }
   .databar-control {
     height: 36px;
     font-size: 16px;
@@ -1331,6 +1413,25 @@ th {
      something is read: the menu names the database in use. */
   .rdc-databar .databar-label {
     display: none;
+  }
+  /* The first line: the search, and the page's buttons at its end; then the
+     database, and the chain settings. */
+  .rdc-homelink {
+    order: -3;
+  }
+  #search-input {
+    flex: 1 1 0;
+    width: auto;
+    order: -2;
+  }
+  .databar-end {
+    order: -1;
+  }
+  .databar-break {
+    display: block;
+    flex-basis: 100%;
+    height: 0;
+    order: -1;
   }
   .databar-db {
     flex: 1 1 0;

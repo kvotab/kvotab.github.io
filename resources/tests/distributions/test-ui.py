@@ -731,6 +731,68 @@ async def run(p):
     check('in the dark steps of the palette', await p.ev("document.getElementById('dsPlotTop').data.find((t) => t.showlegend !== false).line.color"), '#3987e5')
     await p.shot('dark')
 
+    # ---- the full window -----------------------------------------------------------------------------------------------------
+    # The four corners at the right end of the tabs: the page without the site's header and footer, the kvot mark at the
+    # tabs' left going home and the light/dark switch beside the button; kept in kvot.distributions.full, and put on by the
+    # page's head before the first paint.
+    full = """JSON.stringify((() => { const b = document.getElementById('dsFull'), c = document.querySelector('.content').getBoundingClientRect(),
+      shown = (q) => getComputedStyle(document.querySelector(q)).display !== 'none';
+      return { on: document.documentElement.classList.contains('ds-full'),
+        header: getComputedStyle(document.querySelector('body > header')).display, footer: getComputedStyle(document.querySelector('body > footer')).display,
+        mark: shown('.ds-tabbar .ds-homelink'), theme: shown('.ds-tabbar .theme-toggle'),
+        corners: [...b.querySelectorAll('path')].map((q) => getComputedStyle(q).display), pressed: b.getAttribute('aria-pressed'),
+        key: localStorage.getItem('kvot.distributions.full'), top: Math.round(c.top), fills: Math.round(c.bottom) === innerHeight,
+        inTablist: !!document.querySelector('.ds-tabs #dsFull, .ds-tabs .theme-toggle, .ds-tabs .ds-homelink') }; })())"""
+    await p.ev("localStorage.removeItem('kvot.distributions.full')")
+    await p.load(theme='light')
+    s = json.loads(await p.ev(full))
+    check('the page starts with the site\'s header and footer, the mark and the switch hidden',
+          (s['on'], s['header'], s['footer'], s['mark'], s['theme'], s['corners'], s['pressed']), (False, 'grid', 'block', False, False, ['inline', 'none'], 'false'))
+    check('  the buttons are outside the tablist, which holds only the tabs', s['inTablist'], False)
+    await p.ev("document.getElementById('dsFull').click()")
+    await asyncio.sleep(0.6)
+    s = json.loads(await p.ev(full))
+    check('the four corners make the full window: no header or footer, the page from the top of the window to its foot',
+          (s['on'], s['header'], s['footer'], s['top'], s['fills'], s['pressed'], s['key']), (True, 'none', 'none', 0, True, 'true', '1'))
+    check('  the kvot mark at the left of the tabs, the light/dark switch beside the button, which points in',
+          (s['mark'], s['theme'], s['corners']), (True, True, ['none', 'inline']))
+    check('  the mark goes home', await p.ev("document.querySelector('.ds-tabbar .ds-homelink').getAttribute('href')"), './index.html')
+    await p.ev("document.querySelector('.ds-tabbar .theme-toggle').click()")
+    await asyncio.sleep(0.3)
+    check('  the switch switches light and dark', await p.ev("document.documentElement.getAttribute('data-theme')"), 'dark')
+    await p.ev("document.querySelector('.ds-tabbar .theme-toggle').click()")
+    await asyncio.sleep(0.3)
+    # the next visit, in the full window before the page's script runs (the parser runs a microtask checkpoint before it
+    # inserts a script, so this record is made while ui.js has not run: the button is not marked pressed yet)
+    probe = """new MutationObserver((records, observer) => {
+      if (window.dsEarly || !document.querySelector('script[type=module][src*="distributions/ui.js"]')) return;
+      const h = document.querySelector('body > header'), b = document.getElementById('dsFull');
+      window.dsEarly = { full: document.documentElement.classList.contains('ds-full'), header: h ? getComputedStyle(h).display : null,
+        top: Math.round(document.querySelector('.content').getBoundingClientRect().top),
+        corners: [...b.querySelectorAll('path')].map((q) => getComputedStyle(q).display), pressed: b.getAttribute('aria-pressed') };
+      observer.disconnect();
+    }).observe(document, { childList: true, subtree: true });"""
+    await p.on_new_document("try{localStorage.setItem('kvot-theme','light')}catch(e){};" + probe)
+    await p.call('Page.navigate', {'url': URL})
+    await p.until("document.readyState === 'complete' && !!document.querySelector('#dsList .ds-item') && !!document.getElementById('dsPlotTop').data", 40)
+    await asyncio.sleep(0.4)
+    check('the next visit is in the full window before the page\'s script runs: no header while it loads',
+          await p.ev('window.dsEarly || null'), {'full': True, 'header': 'none', 'top': 0, 'corners': ['none', 'inline'], 'pressed': 'false'})
+    check('  and once it has run, its button is pressed', json.loads(await p.ev(full))['pressed'], 'true')
+    await p.size(390, 664, mobile=True)
+    await asyncio.sleep(0.6)
+    check('phone, full window: the mark at the left of the bar, the buttons at its right, the tabs between, nothing sideways',
+          await p.ev("""(() => { const r = (q) => document.querySelector(q).getBoundingClientRect(), bar = r('.ds-tabbar'), end = r('.ds-tabend'),
+            mark = r('.ds-homelink'), tabs = r('.ds-tabs');
+            return [Math.round(end.right) <= innerWidth, mark.right <= tabs.left + 0.5, end.left >= tabs.right - 0.5,
+              document.documentElement.scrollWidth <= innerWidth + 1]; })()"""), [True, True, True, True])
+    await p.size(1440, 900)
+    await p.ev("document.getElementById('dsFull').click()")
+    await asyncio.sleep(0.4)
+    s = json.loads(await p.ev(full))
+    check('the button again: the header and footer are back, and remembered so', (s['on'], s['header'], s['footer'], s['key']), (False, 'grid', 'block', '0'))
+    await p.ev("localStorage.removeItem('kvot.distributions.full')")
+
     # ---- a phone ------------------------------------------------------------------------------------------------------------
     await p.size(390, 664, mobile=True)
     await p.load(theme='light')

@@ -522,6 +522,34 @@ number typed after takes the mark off; a time horizon of 2,5e3 years ends the
 chart at 2500 years, and one that is no number is refused and leaves the chart
 as it was. 18 checks; the page before the change fails 11 of them.
 
+## test-chrome-rdc-bar.py
+
+rdc.html's bar under the header: the search, the page's buttons, and the full
+window.
+
+    SITE_HTTP_PORT=8765 SITE_CDP_PORT=9222 python3 test-chrome-rdc-bar.py
+
+The search for a radionuclide stood in the site's header, and the page's two
+buttons, the chain as a PNG and the help, in its footer, where a full window,
+which hides both, would have taken them with it. They are in the bar under
+the header (#databar), the search at its start and the buttons at its right
+end with the full window's four corners. The test checks that the search is
+the bar's first field, out of the header, and chooses Cs-137 and draws its
+chain; that the header holds the page's name alone and the footer none of the
+page's buttons; that the help opens and names the buttons. Then the full
+window: no header or footer, the bar at the top and the graph and the element
+list under it to the window's foot (both had the header and the footer written
+in as 74px and 32px, and stopped 74px short), cytoscape's own size following
+its box, the kvot mark going home and the light/dark switch beside the button,
+a nuclide's menu with the whole height under the bar (a hidden footer measures
+0, which left the menu 120px at the top), kept in `kvot.rdc.full` and put on by
+the page's head before the first paint (a probe records the page when the
+parser inserts rdc.js). Last, a phone: the search and the buttons on the bar's
+first line and the database under them, in 16px, nothing wider than the
+screen. 24 checks. With the search in the bar, test-chrome-rdc-ensdf.py lets a
+phone's bar take three lines (140px): the search and the buttons, the
+database, and with ENSDF the chain settings.
+
 ## test-chrome-sl-idle.py
 
 Whether the SL boards stop calling the network when nobody is looking.

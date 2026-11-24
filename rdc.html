@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width,initial-scale=1"/>
     <link rel="stylesheet" href="https://code.jquery.com/ui/1.13.2/themes/base/jquery-ui.css" integrity="sha384-vIQIPaHJRqkO8xhnLxSZ0rHF6LyiWXbLF3grsa9pv9yDFyOPGrE1teHOuRNMJoZs" crossorigin="anonymous">
     <link href="./vendors/css/jstree/style.min.css?v=20260911" rel="stylesheet" />
-    <link href="./resources/css/rdc.css?v=20261031" rel="stylesheet" />
+    <link href="./resources/css/rdc.css?v=20261124" rel="stylesheet" />
   <script>
     // Set the theme before first paint so dark-mode visitors get no white flash.
     (function () {
@@ -13,6 +13,8 @@
         var t = localStorage.getItem('kvot-theme');
         if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
         document.documentElement.setAttribute('data-theme', t);
+        // the full window (the button at the bar's right end): no site header or footer, from the first paint
+        if (localStorage.getItem('kvot.rdc.full') === '1') document.documentElement.classList.add('rdc-full');
       } catch (e) { /* storage unavailable — site.js will apply the default */ }
     })();
   </script>
@@ -58,8 +60,7 @@
     <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
 <style>
 .visually-hidden{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
-.footer-icon-button{display:inline-flex;align-items:center;justify-content:center;padding:2px;margin:0 2px;border:0;background:transparent;color:inherit;cursor:pointer;vertical-align:middle}
-.footer-icon-button:focus-visible,.help-close-button:focus-visible{outline:2px solid currentColor;outline-offset:2px}
+.help-close-button:focus-visible{outline:2px solid currentColor;outline-offset:2px}
 .help-dialog{box-sizing:border-box;width:min(900px,90vw);max-width:min(900px,90vw);height:auto;max-height:85vh;margin:auto;padding:0;border:0;overflow:hidden;background:transparent;color:inherit}
 .help-dialog[open]{display:block}.help-dialog::backdrop{background:rgba(0,0,0,.55)}
 .help-dialog .modal-content{box-sizing:border-box;width:100%;max-height:85vh;margin:0;overflow:auto}.help-close-button{float:right;border:0;background:transparent;font-size:1.8rem;cursor:pointer}
@@ -158,10 +159,16 @@ html[data-theme="dark"] .rdc-chart-window .ui-dialog-titlebar-close{border-color
 
 <div class="content">
 
-    <!-- The data the chains are drawn from: ICRP 107, built in, or a release
+    <!-- Under the header, across the page: the search for a radionuclide;
+         the data the chains are drawn from, ICRP 107, built in, or a release
          of ENSDF (ensdf-sources.js), with the chain settings only ENSDF
-         needs. Under the header, across the page. -->
-    <div class="rdc-databar" id="databar" role="group" aria-label="Decay data">
+         needs; and at the right end the page's buttons: the chain as a PNG,
+         the help, and the full window, the page without the site's header
+         and footer, where the kvot mark goes to the home page and the site's
+         light/dark switch stands beside the button. -->
+    <div class="rdc-databar" id="databar" role="group" aria-label="Search and decay data">
+      <a class="rdc-homelink rdc-fullonly" href="./index.html" title="kvot ab: the home page"><img src="./resources/images/kvot-logotype.svg" alt="kvot ab: the home page" width="20" height="20"></a>
+      <input id="search-input" class="search-input databar-control" type="text" placeholder="Search radionuclide..." autocomplete="off" aria-label="Search for a radionuclide"/>
       <label class="databar-label" for="dbSelect">Database</label>
       <select id="dbSelect" class="databar-control databar-db" aria-label="Database" title="Where the decay chains come from"></select>
       <button type="button" id="dbOpen" class="tree-tool databar-btn" title="Open an ENSDF release zip, or ENSDF text files, from your computer. Nothing is uploaded.">Open ENSDF&#8230;</button>
@@ -172,6 +179,17 @@ html[data-theme="dark"] .rdc-chart-window .ui-dialog-titlebar-close{border-color
         <select id="chainLife" class="databar-control" aria-label="Shortest half-life to draw in the chain" title="A member of the chain, nuclide or isomer, that lives less than this is left out, and the arrows go straight on to where it decays. The nuclide the chain starts from stays, and so do stable ones"></select>
       </span>
       <span class="databar-status" id="dbStatus" role="status" aria-live="polite"></span>
+      <span class="databar-end">
+        <button type="button" id="print-decay-chain" class="databar-icon" title="Download the decay chain as a PNG picture" aria-label="Download decay chain as PNG"><svg aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M2.5 8a.5.5 0 1 0 0-1 .5.5 0 0 0 0 1z"/><path d="M5 1a2 2 0 0 0-2 2v2H2a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h1v1a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-1h1a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-1V3a2 2 0 0 0-2-2H5zM4 3a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2H4V3zm1 5a2 2 0 0 0-2 2v1H2a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1v-1a2 2 0 0 0-2-2H5zm7 2v3a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1z"/></svg></button>
+        <button type="button" id="myBtn" class="databar-icon" title="Help" aria-label="Open help"><svg aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" width="17" height="17" fill="currentColor" viewBox="0 0 512 512"><path d="M464 256A208 208 0 1 0 48 256a208 208 0 1 0 416 0zM0 256a256 256 0 1 1 512 0A256 256 0 1 1 0 256zm169.8-90.7c7.9-22.3 29.1-37.3 52.8-37.3h58.3c34.9 0 63.1 28.3 63.1 63.1c0 22.6-12.1 43.5-31.7 54.8L280 264.4c-.2 13-10.9 23.6-24 23.6c-13.3 0-24-10.7-24-24V250.5c0-8.6 4.6-16.5 12.1-20.8l44.3-25.4c4.7-2.7 7.6-7.7 7.6-13.1c0-8.4-6.8-15.1-15.1-15.1H222.6c-3.4 0-6.4 2.1-7.5 5.3l-.4 1.2c-4.4 12.5-18.2 19-30.6 14.6s-19-18.2-14.6-30.6l.4-1.2zM224 352a32 32 0 1 1 64 0 32 32 0 1 1 -64 0z"/></svg></button>
+        <button type="button" class="theme-toggle rdc-fullonly" data-on-click="kvot:toggleTheme" title="Switch to dark mode" aria-label="Switch to dark mode">🌙</button>
+        <button type="button" class="rdc-fullbtn" id="rdcFull" aria-pressed="false" aria-label="Full window" title="Full window: the page without the site's header and footer">
+          <!-- four corners: out to the full window, or in again (the stylesheet shows the one that fits) -->
+          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path class="rdc-full-out" d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/><path class="rdc-full-in" d="M6 2v4H2M10 2v4h4M14 10h-4v4M2 10h4v4"/></svg>
+        </button>
+      </span>
+      <!-- on a phone, the end of the bar's first line: the search and the buttons on it, the database under them -->
+      <span class="databar-break" aria-hidden="true"></span>
       <input type="file" id="dbFile" multiple hidden>
     </div>
     <div class="rdc-drop" aria-hidden="true">Drop ENSDF files to open them</div>
@@ -198,6 +216,8 @@ html[data-theme="dark"] .rdc-chart-window .ui-dialog-titlebar-close{border-color
             <h3 id="help-dialog-title">Radionuclide Decay Chains</h3>
             <p>
                 This webpage serves as a comprehensive tool for generating illustrations depicting radionuclide decay chains as defined in the <a href="https://www.icrp.org/publication.asp?id=ICRP%20Publication%20107" target="_blank" rel="noopener noreferrer" title="ICRP, 2008.">ICRP 2008</a>-database, or in a release of the Evaluated Nuclear Structure Data File (ENSDF) chosen under <b>Database</b> above the chain. Additionally, it offers the functionality to compute and visualize the temporal progression of radionuclide decay and ingrowth based on user-defined initial conditions. Users can access radionuclide-specific settings by right-clicking a radionuclide in the chart, or by tapping one on a touch screen.
+            </p><p>
+                The bar under the header holds the search, which finds a radionuclide by its name, and the database the chains come from. At its right end, the picture saves the chain drawn as a PNG file, the question mark opens this help, and the four corners give the page the full window, without the site's header and footer: the kvot mark at the left of the bar then goes to the home page, and the light/dark switch stands beside the corners.
             </p><p>
                 The time evolution of radionuclide-specific characteristics can be displayed in a range of units including activity (measured in Becquerels, Bq), quantity (measured in moles), radiotoxicity upon ingestion (measured in Sieverts, Sv), external radiotoxicity (measured in Sv/(s m3)), and energy emission rate (measured in megaelectronvolts per second, MeV/s). Furthermore, users can view the total energy emission rate or analyze it separately according to alpha emissions, electron emissions (including beta emissions), or photon emissions.
             </p><p>
@@ -397,15 +417,41 @@ html[data-theme="dark"] .rdc-chart-window .ui-dialog-titlebar-close{border-color
 <script src="./resources/js/rdc.js?v=20261007"></script>
 <script>
 // ── Shared components ────────────────────────────────────────────────────────
-KVOT.renderHeader('Radionuclide Decay Chains <a href="https://www.icrp.org/publication.asp?id=ICRP%20Publication%20107" style="font-size: 0.5em;">ICRP Publication 107</a>',
-    '<input id="search-input" class="search-input" type="text" placeholder="Search radionuclide..." autocomplete="off"/>');
+// The search and the page's buttons (the chain as a PNG, the help) are in the
+// bar under the header (#databar), so the full window, which hides the
+// header and the footer, keeps them.
+KVOT.renderHeader('Radionuclide Decay Chains <a href="https://www.icrp.org/publication.asp?id=ICRP%20Publication%20107" style="font-size: 0.5em;">ICRP Publication 107</a>');
 KVOT.renderNav('rdc.html');
 
-var extraFooterIcons = ' | ' +
-    '<button type="button" id="print-decay-chain" class="footer-icon-button" aria-label="Download decay chain as PNG"><svg aria-hidden="true" focusable="false" class="smallsvg" xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="white" viewBox="0 0 16 16"><title>print decay chain</title><path d="M2.5 8a.5.5 0 1 0 0-1 .5.5 0 0 0 0 1z"/><path d="M5 1a2 2 0 0 0-2 2v2H2a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h1v1a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-1h1a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-1V3a2 2 0 0 0-2-2H5zM4 3a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2H4V3zm1 5a2 2 0 0 0-2 2v1H2a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1v-1a2 2 0 0 0-2-2H5zm7 2v3a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1z"/></svg></button>' +
-    '<button type="button" id="myBtn" class="footer-icon-button" aria-label="Open help"><svg aria-hidden="true" focusable="false" class="smallsvg" xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="white" viewBox="0 0 512 512"><path d="M464 256A208 208 0 1 0 48 256a208 208 0 1 0 416 0zM0 256a256 256 0 1 1 512 0A256 256 0 1 1 0 256zm169.8-90.7c7.9-22.3 29.1-37.3 52.8-37.3h58.3c34.9 0 63.1 28.3 63.1 63.1c0 22.6-12.1 43.5-31.7 54.8L280 264.4c-.2 13-10.9 23.6-24 23.6c-13.3 0-24-10.7-24-24V250.5c0-8.6 4.6-16.5 12.1-20.8l44.3-25.4c4.7-2.7 7.6-7.7 7.6-13.1c0-8.4-6.8-15.1-15.1-15.1H222.6c-3.4 0-6.4 2.1-7.5 5.3l-.4 1.2c-4.4 12.5-18.2 19-30.6 14.6s-19-18.2-14.6-30.6l.4-1.2zM224 352a32 32 0 1 1 64 0 32 32 0 1 1 -64 0z"/></svg></button>';
-KVOT.renderFooter(extraFooterIcons);
+KVOT.renderFooter();
 KVOT.initMap('kvotmap');
+
+// ── The full window ──────────────────────────────────────────────────────────
+/* The page without the site's header and footer (rdc.css :root.rdc-full), by
+   the four corners at the right end of the bar; kept for the next visit, which
+   the page's head puts in it before the first paint. The graph is told its box
+   has changed, and the window's resize event tells the rest: the chart, its
+   window, the zoom floor, the menu. */
+var FULL_KEY = 'kvot.rdc.full';
+function setFullWindow(on) {
+    document.documentElement.classList.toggle('rdc-full', !!on);
+    try { localStorage.setItem(FULL_KEY, on ? '1' : '0'); } catch (e) { /* storage unavailable: for this visit only */ }
+    fullWindowState();
+    if (typeof CY !== 'undefined' && CY && typeof CY.resize === 'function') { CY.resize(); relaxZoomFloor(); }
+    window.dispatchEvent(new Event('resize'));
+}
+function fullWindowState() {
+    var on = document.documentElement.classList.contains('rdc-full');
+    var button = document.getElementById('rdcFull');
+    if (!button) return;
+    button.setAttribute('aria-pressed', String(on));
+    button.setAttribute('aria-label', on ? 'Leave the full window' : 'Full window');
+    button.title = on ? "Show the site's header and footer again" : "Full window: the page without the site's header and footer";
+}
+document.getElementById('rdcFull').addEventListener('click', function () {
+    setFullWindow(!document.documentElement.classList.contains('rdc-full'));
+});
+fullWindowState();
 function showUserError(message,error){var x=document.getElementById('rdc-status');x.textContent=message;x.hidden=false;if(error)console.error(message,error);}
 function clearUserError(){var x=document.getElementById('rdc-status');x.textContent='';x.hidden=true;}
 
@@ -1384,7 +1430,8 @@ function positionNodeMenu(x, y) {
     var footer = document.querySelector('footer');
     var bar = document.getElementById('databar');
     var topLimit = Math.max(header ? header.getBoundingClientRect().bottom : 0, bar ? bar.getBoundingClientRect().bottom : 0) + margin;
-    var bottomLimit = (footer ? footer.getBoundingClientRect().top : window.innerHeight) - margin;
+    /* In the full window the footer is hidden, and a hidden one measures 0. */
+    var bottomLimit = (footer && footer.getClientRects().length ? footer.getBoundingClientRect().top : window.innerHeight) - margin;
 
     NODE_MENU.style.maxHeight = Math.max(120, bottomLimit - topLimit) + 'px';
     var menu = NODE_MENU.getBoundingClientRect();

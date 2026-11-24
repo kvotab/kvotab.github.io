@@ -1302,7 +1302,40 @@ export function addFromPanel(make) {
   return addDist(d);
 }
 
+/* ---------------------------------------------------------------------
+   The full window
+   --------------------------------------------------------------------- */
+/* The page without the site's header and footer (distributions.css
+   :root.ds-full), by the button at the right end of the tab bar; kept for the
+   next visit, which the page's head puts in it before the first paint. */
+const FULL_KEY = 'kvot.distributions.full';
+
+function setFull(on) {
+  document.documentElement.classList.toggle('ds-full', !!on);
+  try { localStorage.setItem(FULL_KEY, on ? '1' : '0'); } catch (e) { /* storage unavailable: for this visit only */ }
+  fullState();
+  // The charts follow the window and not their box.
+  resizeCharts();
+}
+
+function fullState() {
+  const on = document.documentElement.classList.contains('ds-full');
+  const b = $('dsFull');
+  if (!b) return;
+  b.setAttribute('aria-pressed', String(on));
+  b.setAttribute('aria-label', on ? 'Leave the full window' : 'Full window');
+  b.title = on ? 'Show the site\'s header and footer again' : 'Full window: the page without the site\'s header and footer';
+}
+
+function resizeCharts() {
+  for (const id of ['dsPlotTop', 'dsPlotBottom', 'dsFitPlot']) {
+    const div = $(id);
+    if (div && div.data && !div.hidden && div.offsetParent) Plotly.Plots.resize(div);
+  }
+}
+
 registerActions({
+  'ds:full': () => setFull(!document.documentElement.classList.contains('ds-full')),
   'ds:tab': (ev, b) => { state.tab = b.dataset.tab; renderPane(); saveSoon(); },
   'ds:select': (ev, b) => { if (state.active !== b.dataset.id) { state.active = b.dataset.id; refresh({ editor: true }); } },
   'ds:toggleVisible': (ev, b) => { const d = distById(b.dataset.id); if (d) { d.visible = !d.visible; refresh(); } },
@@ -1549,12 +1582,8 @@ function boot() {
   app.fitPanel = fitPanel;
   if (fresh) status('What this browser had kept for the page could not be read; the page started again.', 'error');
   document.documentElement.addEventListener('kvot-theme-change', () => { renderList(); renderPane(); });
-  window.addEventListener('resize', () => {
-    for (const id of ['dsPlotTop', 'dsPlotBottom', 'dsFitPlot']) {
-      const div = $(id);
-      if (div && div.data && !div.hidden && div.offsetParent) Plotly.Plots.resize(div);
-    }
-  });
+  window.addEventListener('resize', resizeCharts);
+  fullState();
 }
 
 boot();

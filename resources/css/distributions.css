@@ -193,15 +193,27 @@ details.ds-sub[open] > summary.ds-sub-title::before { transform: rotate(90deg); 
 
 /* ---- the work area -------------------------------------------------------------- */
 .ds-main { display: flex; flex-direction: column; min-width: 0; height: 100%; overflow: hidden; margin-left: -8px; padding-left: 8px; }
+/* The bar: the tabs scroll sideways when they do not fit; the buttons at its
+   end stay put. */
+.ds-tabbar {
+  display: flex;
+  align-items: stretch;
+  flex: 0 0 auto;
+  margin-left: -8px;
+  padding-left: 8px;
+  background: linear-gradient(var(--border-color), var(--border-color)) left bottom / 100% 1px no-repeat, var(--bg-secondary);
+}
 .ds-tabs {
   display: flex;
   gap: 2px;
-  margin-left: -8px;
-  padding: 6px 10px 0 18px;
-  background: linear-gradient(var(--border-color), var(--border-color)) left bottom / 100% 1px no-repeat, var(--bg-secondary);
-  flex: 0 0 auto;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 10px 0;
   overflow-x: auto;
   overflow-y: hidden;
+  /* a tab cut off where the buttons begin fades out (only its padding when all fit) */
+  -webkit-mask-image: linear-gradient(to left, transparent, #000 14px);
+  mask-image: linear-gradient(to left, transparent, #000 14px);
 }
 .ds-tabs button {
   padding: 6px 12px;
@@ -217,6 +229,26 @@ details.ds-sub[open] > summary.ds-sub-title::before { transform: rotate(90deg); 
 .ds-tabs button:hover { color: var(--text-primary); }
 .ds-tabs button.active { background: var(--bg-primary); color: var(--text-primary); border-color: var(--border-color); font-weight: 600; }
 .ds-tabs button:focus-visible { outline: 2px solid var(--accent-line); outline-offset: -2px; }
+.ds-tabend { display: flex; flex: none; align-items: center; gap: 2px; padding: 3px 8px 1px 2px; }
+.ds-tabend > button { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; height: 26px; padding: 0 6px; border: 0; border-radius: 5px; background: none; color: var(--text-secondary); cursor: pointer; }
+.ds-tabend > button:hover { background: var(--bg-primary); color: var(--text-primary); }
+.ds-tabend > button:focus-visible { outline: 2px solid var(--accent-line); outline-offset: -2px; }
+.ds-tabend > .theme-toggle { font-size: 14px; line-height: 1; }
+.ds-tabend > .theme-toggle:hover { transform: none; }
+.ds-homelink { flex: none; align-items: center; padding: 3px 2px 1px 6px; }
+.ds-homelink img { display: block; width: 20px; height: 20px; }
+
+/* The full window (the button at the right end of the tab bar): the page
+   without the site's header and footer. There the kvot mark at the left of
+   the bar goes to the home page and the site's theme switch is beside the
+   button; otherwise they are the header's and the footer's own. The page's
+   head sets the class before the first paint when it was left on. */
+:root.ds-full { --header-height: 0px; --footer-height: 0px; }
+:root.ds-full body > header, :root.ds-full body > footer, :root.ds-full body > .nav-toggle, :root.ds-full body > #menu { display: none; }
+.ds-tabbar .ds-fullonly { display: none; }
+:root.ds-full .ds-tabbar .ds-fullonly { display: inline-flex; }
+.ds-fullbtn .ds-full-in, :root.ds-full .ds-fullbtn .ds-full-out { display: none; }
+:root.ds-full .ds-fullbtn .ds-full-in { display: inline; }
 .ds-pane { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 10px 16px 28px; background: var(--bg-primary); }
 .ds-pane[hidden] { display: none; }
 .ds-toolbar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin: 0 0 10px; font-size: 12px; color: var(--text-secondary); }
@@ -359,7 +391,7 @@ details.ds-sub[open] > summary.ds-sub-title::before { transform: rotate(90deg); 
   .ds-side-scroll { overflow: visible; }
   .ds-resize { display: none; }
   .ds-main { margin-left: 0; padding-left: 0; height: auto; min-height: 70vh; overflow: visible; }
-  .ds-tabs { margin-left: 0; padding-left: 10px; }
+  .ds-tabbar { margin-left: 0; padding-left: 0; }
   .ds-pane { padding: 10px 10px 24px; overflow: visible; }
   .ds-plot { height: 330px; }
   .ds-plot.small { height: 250px; }

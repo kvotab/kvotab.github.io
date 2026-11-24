@@ -457,7 +457,9 @@ async def main():
                 font: getComputedStyle(document.getElementById('dbSelect')).fontSize,
                 font2: getComputedStyle(document.getElementById('chainLife')).fontSize,
                 wide: document.documentElement.scrollWidth, w: innerWidth }; })())""", session))
-            check(phone['bar'] <= 100, 'on a phone the bar takes two lines at most: %r px' % (phone['bar'],))
+            # Three lines: the search and the page's buttons (test-chrome-rdc-bar.py),
+            # the database, and with ENSDF the chain settings.
+            check(phone['bar'] <= 140, 'on a phone the bar takes three lines at most: %r px' % (phone['bar'],))
             check(phone['font'] == '16px' and phone['font2'] == '16px', 'its menus are 16 px, which iOS does not zoom into: %r' % (phone,))
             check(phone['wide'] <= phone['w'], 'nothing is wider than the screen: %r' % (phone,))
             check(abs(phone['cyTop'] - phone['barBottom']) < 1.5 and phone['show'] >= phone['barBottom'],
