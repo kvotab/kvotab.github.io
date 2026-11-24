@@ -4,8 +4,10 @@
    A textarea over a <pre> that shows the same text in colour, beside a
    gutter of line numbers. The textarea keeps the browser's own editing,
    selection and undo (changes made by keys go through insertText, so undo
-   still takes them back). Lines never wrap; the frame scrolls both ways, the
-   gutter staying at its left edge, and the coloured text sets its size.
+   still takes them back; one too big for insertText goes in at once and the
+   Editor keeps its undo, see BIG). Lines never wrap; the frame scrolls both
+   ways, the gutter staying at its left edge, and the coloured text sets its
+   size.
 
        const ed = new PL.Editor({ value, readOnly, language });
        ed.el                 the element to place
@@ -28,6 +30,24 @@
   const L = () => PL.lang;
 
   const UNIT = '    ';
+  /* insertText takes time as the lines it puts in times the lines of the
+     text (Chrome: some 0.9 µs a pair; commenting out a thousand lines of a
+     file of two thousand took two seconds, a file of 200,000 hours). An edit
+     past BIG, a tenth of a second, goes in at once (setRangeText) and the
+     Editor keeps its undo: Ctrl/⌘+Z takes it back when the text is as the
+     edit left it, Shift+Ctrl/⌘+Z puts it in again. The browser's own steps
+     from before it no longer apply to the new text (Chrome passes over them),
+     so the typing between two such edits is kept as one step of its own. */
+  const BIG = 100000;
+  const KEEP = 100;          // steps of that undo, at most,
+  const KEEP_CHARS = 5e7;    // and the characters of text they hold
+
+  /** The line breaks in s. */
+  function breaks(s) {
+    let n = 0;
+    for (let i = s.indexOf('\n'); i >= 0; i = s.indexOf('\n', i + 1)) n++;
+    return n;
+  }
 
   class Editor extends Emitter {
     constructor({ value = '', readOnly = false, language = 'matlab', label = 'Code' } = {}) {
@@ -48,10 +68,21 @@
       this.el = el('div', { class: `ple lang-${language}` }, this.inner);
       this.el._editor = this;
       this.ta.value = value;
+      this._hist = { base: this.ta.value, undo: [], redo: [] };
       this.readOnly = readOnly;
       this._raf = 0;
       this._lines = 1;
-      this.ta.addEventListener('input', () => { this._draw(); this.emit('change', this.value); });
+      this.ta.addEventListener('input', (ev) => {
+        // an edit of the browser's own (typing, a paste, insertText) leaves nothing for the Editor's redo
+        if (ev.inputType && !ev.inputType.startsWith('history')) this._hist.redo.length = 0;
+        this._draw();
+        this.emit('change', this.value);
+      });
+      // the browser's undo and redo from its Edit menu (the keys come to _key first) on a step the Editor keeps
+      this.ta.addEventListener('beforeinput', (ev) => {
+        const dir = ev.inputType === 'historyUndo' ? -1 : ev.inputType === 'historyRedo' ? 1 : 0;
+        if (dir && this._history(dir)) ev.preventDefault();
+      });
       this.ta.addEventListener('keydown', (ev) => this._key(ev));
       this.ta.addEventListener('keyup', () => this._cursor());
       this.ta.addEventListener('click', () => this._cursor());
@@ -80,7 +111,7 @@
     }
 
     get value() { return this.ta.value; }
-    set value(v) { this.ta.value = String(v ?? ''); this._draw(true); }
+    set value(v) { this.ta.value = String(v ?? ''); this._hist = { base: this.ta.value, undo: [], redo: [] }; this._draw(true); }
     get readOnly() { return this.ta.readOnly; }
     set readOnly(on) { this.ta.readOnly = !!on; this.el.classList.toggle('is-readonly', !!on); }
     focus() { this.ta.focus({ preventScroll: true }); }
@@ -214,17 +245,91 @@
       this._cursor();
     }
 
-    /* Replace a range by text the way typing would (undo keeps it). */
+    /* Replace a range by text the way typing would (undo takes it back): only
+       the part that changes, through insertText, or past BIG at once. The
+       caret ends after the text either way. */
     replaceRange(start, end, text) {
       const ta = this.ta;
+      const v = ta.value;
+      const sel = [ta.selectionStart, ta.selectionEnd];
+      const n = Math.min(end - start, text.length);
+      let p = 0;
+      while (p < n && v.charCodeAt(start + p) === text.charCodeAt(p)) p++;
+      let q = 0;
+      while (q < n - p && v.charCodeAt(end - 1 - q) === text.charCodeAt(text.length - 1 - q)) q++;
+      const caret = start + text.length;
       ta.focus({ preventScroll: true });
-      ta.setSelectionRange(start, end);
-      let ok = false;
-      try { ok = document.execCommand('insertText', false, text); } catch (e) { ok = false; }
-      if (!ok) {
-        ta.setRangeText(text, start, end, 'end');
-        ta.dispatchEvent(new Event('input', { bubbles: true }));
+      if (p === end - start && p === text.length) { ta.setSelectionRange(caret, caret); return; }
+      const a = start + p;
+      const b = end - q;
+      const mid = text.slice(p, text.length - q);
+      const nl = breaks(mid);
+      if (nl >= 2 && nl * (breaks(v) + 1) > BIG) this._bigEdit(a, b, mid, sel);
+      else {
+        ta.setSelectionRange(a, b);
+        let ok = false;
+        try { ok = document.execCommand('insertText', false, mid); } catch (e) { ok = false; }
+        if (!ok) this._bigEdit(a, b, mid, sel);
       }
+      ta.setSelectionRange(caret, caret);
+    }
+
+    /* An edit put in at once, its undo kept here (see BIG); sel is the
+       selection to give back with the text before it. The typing since the
+       last step kept here becomes a step too: the browser's steps for it no
+       longer apply once the text is set. */
+    _bigEdit(start, end, text, sel) {
+      const ta = this.ta;
+      const h = this._hist;
+      const last = h.undo.length ? h.undo[h.undo.length - 1].after : h.base;
+      let was = ta.value;
+      if (was === last) was = last;   // the same text held once
+      else this._keep({ before: last, after: was, selBefore: null, selAfter: null });
+      ta.setRangeText(text, start, end, 'end');
+      this._keep({ before: was, after: ta.value, selBefore: sel, selAfter: null });
+      h.redo.length = 0;
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
+    _keep(step) {
+      const h = this._hist;
+      h.undo.push(step);
+      let chars = h.base.length;
+      for (const s of h.undo) chars += s.after.length;
+      while (h.undo.length > KEEP || (h.undo.length > 1 && chars > KEEP_CHARS)) {
+        chars -= h.base.length;
+        h.base = h.undo.shift().after;
+      }
+    }
+
+    /* Undo (dir -1) or redo (1) a step kept here when the text is where that
+       step left it; false leaves it to the browser's own. */
+    _history(dir) {
+      const h = this._hist;
+      const ta = this.ta;
+      const v = ta.value;
+      const from = dir < 0 ? h.undo : h.redo;
+      const step = from[from.length - 1];
+      if (!step || v !== (dir < 0 ? step.after : step.before)) return false;
+      if (dir < 0) step.selAfter = [ta.selectionStart, ta.selectionEnd];
+      from.pop();
+      (dir < 0 ? h.redo : h.undo).push(step);
+      const to = dir < 0 ? step.before : step.after;
+      let sel = dir < 0 ? step.selBefore : step.selAfter;
+      if (!sel) {
+        // typing taken back: the caret where the texts part, as the browser's undo leaves it
+        let k = 0;
+        const m = Math.min(v.length, to.length);
+        while (k < m && v.charCodeAt(k) === to.charCodeAt(k)) k++;
+        sel = [k, k];
+      }
+      ta.focus({ preventScroll: true });
+      ta.setRangeText(to, 0, v.length, 'start');
+      ta.setSelectionRange(Math.min(sel[0], to.length), Math.min(sel[1], to.length));
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      this.revealLine(this.cursorLine(), false);
+      this._cursor();
+      return true;
     }
 
     /* The lines the selection touches: [first, last] 0-based and their offsets. */
@@ -283,6 +388,15 @@
       if (this.readOnly) return;
       const mod = PL.util.mod(ev);
       const ta = this.ta;
+      // undo and redo: a step the Editor keeps (see BIG) here, any other the browser's
+      if (mod && !ev.altKey && (ev.key === 'z' || ev.key === 'Z')) {
+        if (this._history(ev.shiftKey ? 1 : -1)) ev.preventDefault();
+        return;
+      }
+      if (!PL.util.isMac && ev.ctrlKey && !ev.altKey && !ev.shiftKey && (ev.key === 'y' || ev.key === 'Y')) {
+        if (this._history(1)) ev.preventDefault();
+        return;
+      }
       if (ev.key === 'Tab' && !mod && !ev.altKey) {
         ev.preventDefault();
         const s = ta.selectionStart;

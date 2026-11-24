@@ -17,9 +17,15 @@ lines, it failed so, and each check here did:
   200,000 items (the window never showed);
 - listdlg of 200,000 items (no dialog), and uigetfile on a folder of
   130,000 files (an empty list);
-- the Editor commenting out a file of 200,000 lines (the text written as
-  the Editor writes it when insertText is refused: through insertText,
-  which keeps undo, that many lines take hours).
+- the Editor commenting out a file of 200,000 lines.
+
+The Editor's edit took hours through insertText, which keeps an edit for
+the browser's undo but takes time as the lines it puts in times the lines
+there are. Such an edit now goes in at once, and the Editor keeps its undo:
+Ctrl/⌘+Z and Shift+Ctrl/⌘+Z take it back and put it in again, the typing
+between two such edits is one step of its own, and the browser's Edit menu
+takes it back too. A small edit still goes through insertText, the
+browser's own undo taking it back.
 
 And a bar picked in the property editor's tree: its outline asked the
 heights, a typed array, for concat.
@@ -171,18 +177,74 @@ async def dialogs(page):
     await command(page, "pyrun(\"import shutil; shutil.rmtree('/tmp/big')\")")
 
 
+ED = 'PL.app.current.editor'
+# insertText calls counted, the call itself made: an expression run with the spy in place
+SPY = ("(() => {{ const e = {ed}; window._ins = 0; const ex = document.execCommand; "
+       "document.execCommand = function (c, ...r) {{ if (c === 'insertText') _ins++; return ex.call(document, c, ...r); }}; "
+       "try {{ {body} }} finally {{ document.execCommand = ex; }} }})()")
+# which of the texts kept in the page the Editor holds
+WHICH = (f"(() => {{ const v = {ED}.value; return v === _orig ? 'original' : v === _c1 ? 'commented' : v === _typed ? 'typed' "
+         ": v === _u2 ? 'uncommented' : 'other'; })()")
+
+
+async def zkey(page, redo=False):
+    """Ctrl/⌘+Z (with Shift: redo) as a keyboard gives it, the browser's own undo or redo behind it."""
+    mods = (4 if await page.ev('PL.util.isMac') else 2) | (8 if redo else 0)
+    for kind in ('rawKeyDown', 'keyUp'):
+        await page.call('Input.dispatchKeyEvent', {'type': kind, 'key': 'Z' if redo else 'z', 'code': 'KeyZ', 'windowsVirtualKeyCode': 90, 'modifiers': mods,
+                                                   'commands': ['redo' if redo else 'undo'] if kind == 'rawKeyDown' else []}, session=page.sid)
+    await asyncio.sleep(0.05)
+
+
 async def editor(page):
+    await page.call('Emulation.setFocusEmulationEnabled', {'enabled': True}, session=page.sid)
     await command(page, "cd /home/user; fid = fopen('bigcomment.m', 'w'); fprintf(fid, 'x = %d;\\n', 1:200000); fclose(fid); edit bigcomment.m")
-    await until(page, "PL.app.current && PL.app.current.key === '/home/user/bigcomment.m' && PL.app.current.editor.value.length > 1000000", 30)
+    await until(page, f"PL.app.current && PL.app.current.key === '/home/user/bigcomment.m' && {ED}.value.length > 1000000", 30)
     stack(page)
-    # The Editor writes a change through execCommand's insertText, which keeps it for undo but takes
-    # time that grows as the square of the lines (seconds for 3,000, hours for 200,000): here it
-    # declines, and the Editor writes the text as it does when insertText is refused.
-    got = await page.ev("(() => { let out = null; const ex = document.execCommand; document.execCommand = () => false; "
-                        "try { PL.app.withEditor((e) => { e.ta.setSelectionRange(0, e.ta.value.length); e.commentLines(true); "
-                        "const L = e.ta.value.split('\\n'); out = [L[0], L[L.length - 2], L.length]; }); } finally { document.execCommand = ex; } return out; })()",
-                        timeout=120)
-    check('the Editor comments out a file of 200,000 lines', (got, stack(page)), (['% x = 1;', '% x = 200000;', 200001], []))
+    # insertText, which keeps an edit for the browser's undo, takes time as the lines it puts in times
+    # the lines there are (hours for these): an edit so big goes in at once, the Editor keeping its undo
+    got = await page.ev(SPY.format(ed=ED, body="window._orig = e.value; e.ta.setSelectionRange(0, e.value.length); const t0 = performance.now(); "
+                                                "e.commentLines(true); window._ms = performance.now() - t0; window._c1 = e.value; "
+                                                "const L = e.value.split('\\n'); return [L[0], L[L.length - 2], L.length, _ins];"), timeout=120)
+    print(f"     (commented out in {await page.ev('Math.round(_ms)')} ms)")
+    check('the Editor comments out a file of 200,000 lines, at once (no insertText)', (got, stack(page)), (['% x = 1;', '% x = 200000;', 200001, 0], []))
+    await zkey(page)
+    st = await page.ev(f"[{WHICH}, {ED}.ta.selectionStart, {ED}.ta.selectionEnd === _orig.length]")
+    check('Ctrl/⌘+Z takes it back: the file as it was, its lines selected again', st, ['original', 0, True])
+    await zkey(page, redo=True)
+    check('Shift+Ctrl/⌘+Z puts it in again', await page.ev(WHICH), 'commented')
+
+    # typed at the end, then all of it uncommented: undo takes back that edit, the typing as one step
+    # (the browser's own steps for it no longer apply), the first edit, then nothing; redo puts each back
+    await page.ev(f"(() => {{ const e = {ED}; e.focus(); e.ta.setSelectionRange(e.value.length, e.value.length); return 1; }})()")
+    for text in ('abc', 'def'):
+        await page.call('Input.insertText', {'text': text}, session=page.sid)
+    await page.ev(f"(() => {{ const e = {ED}; window._typed = e.value; e.ta.setSelectionRange(0, e.value.length); e.commentLines(false); "
+                  "window._u2 = e.value; return 1; })()")
+    states = []
+    for _ in range(4):
+        await zkey(page)
+        states.append(await page.ev(WHICH))
+        if len(states) == 2:
+            states.append(await page.ev(f'{ED}.ta.selectionStart === _c1.length'))
+    check('typing between two such edits: Ctrl/⌘+Z takes back the second edit, the typing as one step (the caret where it began), the first edit, then nothing',
+          (states, stack(page)), (['typed', 'commented', True, 'original', 'original'], []))
+    states = []
+    for _ in range(3):
+        await zkey(page, redo=True)
+        states.append(await page.ev(WHICH))
+    check('and Shift+Ctrl/⌘+Z puts each back', states, ['commented', 'typed', 'uncommented'])
+    # the browser's Edit menu sends beforeinput with no key
+    st = await page.ev(f"(() => {{ const ev = new InputEvent('beforeinput', {{ inputType: 'historyUndo', cancelable: true, bubbles: true }}); "
+                       f"{ED}.ta.dispatchEvent(ev); return [ev.defaultPrevented, {WHICH}]; }})()")
+    check("the browser's Edit menu's Undo on such an edit (beforeinput, no key)", st, [True, 'typed'])
+
+    # a small edit is the browser's: through insertText, and its own undo takes it back
+    small = 'a = 1;\nb = 2;\nc = 3;\n'
+    got = await page.ev(SPY.format(ed=ED, body=f"e.value = {json.dumps(small)}; e.ta.setSelectionRange(0, e.value.length); e.commentLines(true); return [e.value, _ins];"))
+    await zkey(page)
+    check("a small edit goes through insertText, and the browser's own undo takes it back", (got, await page.ev(f'{ED}.value')),
+          (['% a = 1;\n% b = 2;\n% c = 3;\n', 1], small))
     await page.ev("PL.app.fileRemoved('/home/user/bigcomment.m'); 1")
     await command(page, 'delete bigcomment.m')
 
