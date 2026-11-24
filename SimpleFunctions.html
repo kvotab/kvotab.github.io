@@ -27,7 +27,9 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
-  <link rel="stylesheet" href="./resources/css/simplefunctions.css?v=20261031">
+  <link rel="stylesheet" href="./resources/css/kvot-fullwin.css?v=20261124">
+  <script src="./resources/js/kvot-fullwin.js?v=20261124"></script>
+  <link rel="stylesheet" href="./resources/css/simplefunctions.css?v=20261124">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
 </head>
@@ -159,16 +161,20 @@
 
       <!-- ========================= the work area ======================== -->
       <main class="sf-main">
-        <div class="sf-tabs" role="tablist">
-          <button type="button" class="active" data-tab="summary" data-on-click="sf:tab">Summary</button>
-          <button type="button" data-tab="water" data-on-click="sf:tab">One water</button>
-          <button type="button" data-tab="dist" data-on-click="sf:tab">Distributions</button>
-          <button type="button" data-tab="sens" data-on-click="sf:tab">Sensitivity</button>
-          <button type="button" data-tab="sweep" data-on-click="sf:tab">Sweep</button>
-          <button type="button" data-tab="compare" data-on-click="sf:tab">Compare</button>
-          <button type="button" data-tab="data" data-on-click="sf:tab">Data</button>
-          <button type="button" data-tab="samples" data-on-click="sf:tab">Samples</button>
-          <button type="button" data-tab="help" data-on-click="sf:tab">Help</button>
+        <div class="sf-tabbar">
+          <span class="kvot-fullwin-home"></span>
+          <div class="sf-tabs" role="tablist">
+            <button type="button" class="active" data-tab="summary" data-on-click="sf:tab">Summary</button>
+            <button type="button" data-tab="water" data-on-click="sf:tab">One water</button>
+            <button type="button" data-tab="dist" data-on-click="sf:tab">Distributions</button>
+            <button type="button" data-tab="sens" data-on-click="sf:tab">Sensitivity</button>
+            <button type="button" data-tab="sweep" data-on-click="sf:tab">Sweep</button>
+            <button type="button" data-tab="compare" data-on-click="sf:tab">Compare</button>
+            <button type="button" data-tab="data" data-on-click="sf:tab">Data</button>
+            <button type="button" data-tab="samples" data-on-click="sf:tab">Samples</button>
+            <button type="button" data-tab="help" data-on-click="sf:tab">Help</button>
+          </div>
+          <span class="kvot-fullwin"></span>
         </div>
 
         <!-- ---- summary ---- -->
@@ -293,6 +299,9 @@
             Excel workbook sampled with @Risk (SKBdoc 1282962), and in the PSAR: the equilibrium constants are sampled within their uncertainties and the groundwater is drawn from a table
             of compositions, which gives a distribution of solubilities per element for the transport calculations.
             This page is that calculation. Nothing is uploaded: the files you open stay in the browser.</p>
+          <p>The four corners at the right end of the tabs give the page the full window, without the site's
+            header and footer; the kvot mark at the left of the tabs then goes to the home page, and the
+            light/dark switch stands beside the corners.</p>
 
           <h3 id="help-how">How a solubility is calculated</h3>
           <h4>1. Activity corrections</h4>

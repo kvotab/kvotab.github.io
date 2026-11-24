@@ -14,6 +14,8 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
+  <link rel="stylesheet" href="./resources/css/kvot-fullwin.css?v=20261124">
+  <script src="./resources/js/kvot-fullwin.js?v=20261124"></script>
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
   <title>karaoke – kvot ab</title>
@@ -27,12 +29,15 @@
   <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
   <meta name="twitter:card" content="summary">
   <style>
+    /* Between the site's header and footer, or the whole window in the full
+       window (kvot-fullwin.css sets both heights to 0 there). */
     .karaoke-wrap {
       position: absolute;
-      top: 43px;
+      top: var(--header-height);
       left: 0;
       width: 100%;
-      height: calc(100vh - 74px);
+      height: calc(100vh - var(--header-height) - var(--footer-height));
+      height: calc(100dvh - var(--header-height) - var(--footer-height));
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -140,13 +145,30 @@
       margin-bottom: 2px;
     }
 
-    .edit-toggle {
+    /* The top right corner: the full window's buttons and Edit Mode. */
+    .karaoke-corner {
       position: fixed;
       right: 10px;
-      top: 52px;
+      top: calc(var(--header-height) + 9px);
       z-index: 25;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .karaoke-corner > .kvot-fullwin > button {
+      height: 31px;
       border: 1px solid var(--border-color);
-      background: var(--surface-bg, #111);
+      background: var(--bg-surface);
+      color: var(--text-primary, #f0f0f0);
+    }
+    .karaoke-corner > .kvot-fullwin > button:hover {
+      background: var(--bg-surface);
+      filter: brightness(1.08);
+    }
+
+    .edit-toggle {
+      border: 1px solid var(--border-color);
+      background: var(--bg-surface);
       color: var(--text-primary, #f0f0f0);
       border-radius: 6px;
       padding: 6px 10px;
@@ -157,13 +179,13 @@
     .edit-panel {
       position: fixed;
       right: 10px;
-      top: 88px;
+      top: calc(var(--header-height) + 45px);
       z-index: 25;
       width: min(92vw, 520px);
-      max-height: calc(100vh - 100px);
+      max-height: calc(100vh - var(--header-height) - 57px);
       overflow: auto;
       border: 1px solid var(--border-color);
-      background: var(--surface-bg, #111);
+      background: var(--bg-surface);
       color: var(--text-primary, #f0f0f0);
       border-radius: 8px;
       padding: 10px;
@@ -290,7 +312,10 @@
 <body>
   <header></header>
 
-  <button id="edit-toggle" class="edit-toggle" type="button">Edit Mode</button>
+  <div class="karaoke-corner">
+    <span class="kvot-fullwin"></span>
+    <button id="edit-toggle" class="edit-toggle" type="button">Edit Mode</button>
+  </div>
   <div id="edit-panel" class="edit-panel" aria-hidden="true">
     <h3>Karaoke Edit Mode</h3>
     <div class="edit-meta">

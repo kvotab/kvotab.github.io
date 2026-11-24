@@ -27,8 +27,10 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
+  <link rel="stylesheet" href="./resources/css/kvot-fullwin.css?v=20261124">
+  <script src="./resources/js/kvot-fullwin.js?v=20261124"></script>
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/erosion_corrosion.css?v=20261031">
+  <link rel="stylesheet" href="./resources/css/erosion_corrosion.css?v=20261124">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
 </head>
@@ -139,14 +141,18 @@
 
       <!-- ========================= the work area ======================== -->
       <main class="ec-main">
-        <div class="ec-tabs" role="tablist">
-          <button type="button" class="active" data-tab="summary" data-on-click="ec:tab">Summary</button>
-          <button type="button" data-tab="failures" data-on-click="ec:tab">Failure times</button>
-          <button type="button" data-tab="histogram" data-on-click="ec:tab">Failure histogram</button>
-          <button type="button" data-tab="time" data-on-click="ec:tab">Against time</button>
-          <button type="button" data-tab="distributions" data-on-click="ec:tab">Distributions</button>
-          <button type="button" data-tab="holes" data-on-click="ec:tab">Deposition holes</button>
-          <button type="button" data-tab="help" data-on-click="ec:tab">Help</button>
+        <div class="ec-tabbar">
+          <span class="kvot-fullwin-home"></span>
+          <div class="ec-tabs" role="tablist">
+            <button type="button" class="active" data-tab="summary" data-on-click="ec:tab">Summary</button>
+            <button type="button" data-tab="failures" data-on-click="ec:tab">Failure times</button>
+            <button type="button" data-tab="histogram" data-on-click="ec:tab">Failure histogram</button>
+            <button type="button" data-tab="time" data-on-click="ec:tab">Against time</button>
+            <button type="button" data-tab="distributions" data-on-click="ec:tab">Distributions</button>
+            <button type="button" data-tab="holes" data-on-click="ec:tab">Deposition holes</button>
+            <button type="button" data-tab="help" data-on-click="ec:tab">Help</button>
+          </div>
+          <span class="kvot-fullwin"></span>
         </div>
 
         <!-- ---- summary ---- -->
@@ -327,6 +333,9 @@
             the key outputs of the workbook’s <em>Info</em> sheet, the distribution plots of its five
             plot sheets, and a histogram of the failure times with the canisters and the sulphide values
             behind them.</p>
+          <p>The four corners at the right end of the tabs give the page the full window, without the site’s
+            header and footer; the kvot mark at the left of the tabs then goes to the home page, and the
+            light/dark switch stands beside the corners.</p>
 
           <h3 id="help-holes">What happens to each hole</h3>
           <h4 id="help-rejection">1. Rejection</h4>
@@ -537,7 +546,7 @@
   <script src="./resources/js/ec-hsdata.js?v=20261123"></script>
   <script src="./resources/js/ec-hydro.js?v=20260926"></script>
   <script src="./resources/js/xlsxwrite.js?v=20260902"></script>
-  <script src="./resources/js/kvot-info.js?v=20261004"></script>
+  <script src="./resources/js/kvot-info.js?v=20261004a"></script>
   <script src="./resources/js/ec-ui.js?v=20261019"></script>
 </body>
 </html>

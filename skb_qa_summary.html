@@ -25,8 +25,10 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
+  <link rel="stylesheet" href="./resources/css/kvot-fullwin.css?v=20261124">
+  <script src="./resources/js/kvot-fullwin.js?v=20261124"></script>
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/skb-qa-summary.css?v=20261119">
+  <link rel="stylesheet" href="./resources/css/skb-qa-summary.css?v=20261124">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
 </head>
@@ -36,9 +38,10 @@
 <main><div id="app" class="qc">
   <div class="qc-head">
     <div>
-      <h1 class="qc-title">QC summary <span class="kvot-info-slot" data-info-key="page"></span></h1>
+      <h1 class="qc-title"><span class="kvot-fullwin-home"></span>QC summary <span class="kvot-info-slot" data-info-key="page"></span></h1>
       <p class="qc-lead">How far the QC review of the input data has come: the review columns of the source workbooks, what each input set uses of them, and the calculation cases that read the sets.</p>
     </div>
+    <span class="kvot-fullwin"></span>
   </div>
 
   <section id="dropzone" role="button" tabindex="0" aria-label="Add workbooks, exports, TOML files or folders">

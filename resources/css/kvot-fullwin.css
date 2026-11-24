@@ -1,0 +1,89 @@
+/* ==========================================================================
+   THE FULL WINDOW, FOR A TOOL PAGE (kvot-fullwin.js)
+
+   The page without the site's header and footer. kvot.css lays .content
+   out from --header-height and --footer-height, so 0 for both is all such a
+   page needs; a page laid out otherwise says so in its own stylesheet,
+   under :root.kvot-full.
+   ========================================================================== */
+:root.kvot-full {
+  --header-height: 0px;
+  --footer-height: 0px;
+}
+:root.kvot-full body > header,
+:root.kvot-full body > footer,
+:root.kvot-full body > .nav-toggle,
+:root.kvot-full body > #menu,
+:root.kvot-full #kvotmap {
+  display: none;
+}
+
+/* The page's places for them: the kvot mark, the light/dark switch, the four corners. */
+.kvot-fullwin,
+.kvot-fullwin-home {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}
+.kvot-fullwin:empty {
+  display: none;
+}
+.kvot-fullwin > button[type] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 28px;
+  height: 28px;
+  margin: 0;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-secondary);
+  font: 14px/1 var(--font-sans);
+  cursor: pointer;
+}
+.kvot-fullwin > button[type]:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  transform: none;
+}
+.kvot-fullwin > button[type]:focus-visible,
+.kvot-fullwin-mark:focus-visible {
+  outline: 2px solid var(--accent-line);
+  outline-offset: -2px;
+}
+.kvot-fullwin-mark {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 4px 0 2px;
+  border-radius: 6px;
+}
+.kvot-fullwin-mark img {
+  display: block;
+  width: 20px;
+  height: 20px;
+}
+/* The mark and the switch are the header's and the footer's, but in the full
+   window; the mark's own place goes with it (in a bar with gaps, an empty
+   place would still take one). Written to outweigh the button rule above
+   and a page's own rules for its bar. */
+:root:not(.kvot-full) .kvot-fullwin .kvot-fullonly,
+:root:not(.kvot-full) .kvot-fullwin-home {
+  display: none;
+}
+.kvot-fullbtn .kvot-full-in,
+:root.kvot-full .kvot-fullbtn .kvot-full-out {
+  display: none;
+}
+:root.kvot-full .kvot-fullbtn .kvot-full-in {
+  display: inline;
+}
+@media print {
+  .kvot-fullwin,
+  .kvot-fullwin-home {
+    display: none;
+  }
+}

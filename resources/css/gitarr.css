@@ -111,15 +111,33 @@ body.gt-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior:
 .gt-iconbtn:hover, .gt-top-end > .theme-toggle:hover { color: var(--text-primary); border-color: var(--accent-line); transform: none; }
 .gt-iconbtn:focus-visible, .gt-top-end > .theme-toggle:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
 
+/* The full window (the four corners at the bar's end, kvot-fullwin.js): the
+   page as a phone shows it, without the site's header and footer, the kvot
+   mark leading the bar and the theme switch in it. */
+.gt-top-end > .kvot-fullwin > button {
+  width: 40px; height: 40px; padding: 0;
+  border: 1px solid var(--border-color); border-radius: 8px; background: transparent;
+}
+.gt-top-end > .kvot-fullwin > button:hover { color: var(--text-primary); border-color: var(--accent-line); background: transparent; }
+.gt-top-end > .kvot-fullwin > button:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
+:root.kvot-full .gt-brand { display: flex; }
+/* beside four buttons in the narrow column the name would be cut short: the
+   window's tab carries it (a phone has the width for it, below) */
+:root.kvot-full .gt-title { display: none; }
+:root.kvot-full .gt-top-end > .theme-toggle { display: inline-flex; }
+
 /* A phone never shows the site's header and footer: a narrow screen, or a
    touch screen turned on its side, where height is what is short. kvot.css
-   places .content by these two heights, so zero is all it takes. */
+   places .content by these two heights, so zero is all it takes. A phone
+   has the full window always, so no button for it. */
 @media (max-width: 680px), (max-height: 500px) and (pointer: coarse) {
   :root { --header-height: 0px; --footer-height: 0px; }
   body.gt-body > header, body.gt-body > footer, body.gt-body > .nav-toggle,
   body.gt-body > #menu, body.gt-body > #kvotmap { display: none; }
   .gt-brand { display: flex; }
   .gt-top-end > .theme-toggle { display: inline-flex; }
+  .gt-top-end > .kvot-fullwin { display: none; }
+  :root.kvot-full .gt-title { display: block; }
 }
 
 /* ── The headstock ────────────────────────────────────────────────────── */

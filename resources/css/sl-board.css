@@ -11,6 +11,11 @@
    mistake once made the site header 402px on a 390px phone. */
 .sl-wrap { box-sizing: border-box; width: 100%; max-width: 760px; margin: auto; padding: 0 20px; }
 .sl-intro { margin: 0 0 16px; color: var(--text-muted); font-size: .85rem; line-height: 1.5; }
+/* The intro and, at its right, the full window's buttons (kvot-fullwin.js): the
+   board without the site's header and footer, as on a phone. */
+.sl-top { display: flex; align-items: flex-start; gap: 16px; margin: 0 0 16px; }
+.sl-top > .sl-intro { flex: 1 1 auto; margin: 0; }
+.sl-top > .kvot-fullwin { margin: -4px -6px 0 auto; }
 .sl-intro a { color: var(--link-color); }
 
 .sl-board { border: 1px solid var(--border-color); border-radius: 14px; background: var(--bg-secondary); overflow: hidden; }
@@ -337,7 +342,7 @@
     board allowed to shrink below its content would hide the bottom of it
     rather than scroll.
   */
-  .sl-intro { display: none; }
+  .sl-intro, .sl-top { display: none; }
   /*
     The site chrome goes too. On a phone this page is a departure board and
     nothing else, and 43px of header plus 31px of footer is a tenth of the

@@ -33,6 +33,11 @@
 .vz-main { grid-area: main; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; min-height: 0; }
 
 .vz-h { font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--text-secondary); margin: 0 0 8px; }
+/* The column's first line: its heading and, at its right, the full window's
+   buttons (kvot-fullwin.js); in the full window the kvot mark, home, before it. */
+.vz-head { display: flex; align-items: center; gap: 4px; min-height: 28px; margin: -6px -8px 2px 0; }
+.vz-head > .vz-h { flex: 1 1 auto; margin: 0; }
+.vz-head > .kvot-fullwin-home { margin-left: -4px; }
 .vz-lead { margin: 0 0 10px; color: var(--text-secondary); line-height: 1.45; }
 kbd {
   font-family: var(--font-mono); font-size: 12px;

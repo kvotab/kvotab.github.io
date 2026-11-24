@@ -186,18 +186,34 @@
   margin-left: -8px;
   padding-left: 8px;
 }
+/* The bar: the tabs scroll sideways when they do not fit; the full window's
+   buttons at its end stay put (kvot-fullwin.css), and in the full window
+   the kvot mark goes home from its start. */
+.f31-tabbar {
+  display: flex;
+  align-items: stretch;
+  flex: 0 0 auto;
+  margin-left: -8px;
+  padding-left: 8px;
+  /* the line under the tabs is drawn inside the bar, so that the active tab
+     covers it without reaching out of the row (which made it scroll) */
+  background: linear-gradient(var(--border-color), var(--border-color)) left bottom / 100% 1px no-repeat, var(--bg-secondary);
+}
 .f31-tabs {
   display: flex;
   gap: 2px;
-  margin-left: -8px;
-  padding: 6px 10px 0 18px;
-  /* the line under the tabs is drawn inside the row, so that the active tab
-     covers it without reaching out of the row (which made it scroll) */
-  background: linear-gradient(var(--border-color), var(--border-color)) left bottom / 100% 1px no-repeat, var(--bg-secondary);
-  flex: 0 0 auto;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 10px 0;
   overflow-x: auto;
   overflow-y: hidden;
+  /* a tab cut off where the buttons begin fades out (only its padding when all fit) */
+  -webkit-mask-image: linear-gradient(to left, transparent, #000 14px);
+  mask-image: linear-gradient(to left, transparent, #000 14px);
 }
+.f31-tabbar > .kvot-fullwin, .f31-tabbar > .kvot-fullwin-home { padding: 3px 0 1px; }
+.f31-tabbar > .kvot-fullwin { padding-right: 8px; }
+.f31-tabbar > .kvot-fullwin > button:hover { background: var(--bg-primary); }
 .f31-tabs button {
   padding: 6px 12px;
   border: 1px solid transparent;
@@ -350,7 +366,7 @@
   .f31-side { height: auto; max-height: 50vh; border-right: 0; border-bottom: 1px solid var(--border-color); }
   .f31-resize { display: none; }
   .f31-main { margin-left: 0; padding-left: 0; }
-  .f31-tabs { margin-left: 0; padding-left: 10px; }
+  .f31-tabbar { margin-left: 0; padding-left: 0; }
   .plot { height: 360px; }
 }
 

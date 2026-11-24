@@ -15,6 +15,8 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
+  <link rel="stylesheet" href="./resources/css/kvot-fullwin.css?v=20261124">
+  <script src="./resources/js/kvot-fullwin.js?v=20261124"></script>
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
@@ -69,7 +71,10 @@
        two above the panels keep the 17px that a section heading's border and
        padding put between its (i) and the edge, so the column of (i)s lines
        up down the page. */
-    #dist-bar > .kvot-info-slot { margin-left:auto;margin-right:17px; }
+    /* The full window's buttons (kvot-fullwin.js) go before it, and the two
+       wrap together, so the (i) keeps its place at the line's end; in the
+       full window the kvot mark, home, is at the line's start. */
+    #dist-bar > .dist-bar-end { display:flex;align-items:center;gap:8px;margin-left:auto;margin-right:17px; }
     .metric-line { display:flex;align-items:flex-start;gap:8px; }
     .metric-line > #tabs-header { flex:1 1 auto;min-width:0; }
     .metric-line > .kvot-info-slot { margin:7px 17px 0 0; }
@@ -288,7 +293,7 @@
       #tabs-header a{padding:5px 10px;font-size:.8rem}
       details summary.eq-summary{padding:10px 12px;font-size:.85rem}
       /* In line with the headings' (i)s, which move in with their padding. */
-      #dist-bar > .kvot-info-slot{margin-right:13px}
+      #dist-bar > .dist-bar-end{margin-right:13px}
       .metric-line > .kvot-info-slot{margin-right:13px}
       /* At two columns "excess kurtosis" leaves so little room that the number
          beside it breaks between digits. */
@@ -310,10 +315,11 @@
 
       <div id="tabs">
         <div id="dist-bar">
+          <span class="kvot-fullwin-home"></span>
           <span class="dist-bar-label">Distributions</span>
           <ul id="dist-tabs" aria-label="Distributions"></ul>
           <button type="button" id="dist-add" data-on-click="addDistribution">+ add</button>
-          <span class="kvot-info-slot" data-info-key="set:dists"></span>
+          <span class="dist-bar-end"><span class="kvot-fullwin"></span><span class="kvot-info-slot" data-info-key="set:dists"></span></span>
         </div>
 
         <div id="combined-tabs-header">
@@ -570,7 +576,7 @@
   <script src="./resources/js/kvot-actions.js?v=20260902"></script>
   <script src="./resources/js/kvot-icons.js?v=20260902"></script>
   <script src="./resources/js/site.js?v=20261119b"></script>
-  <script src="./resources/js/kvot-info.js?v=20261004"></script>
+  <script src="./resources/js/kvot-info.js?v=20261004a"></script>
   <script src="./resources/js/logn-info.js?v=20260930"></script>
   <script>
     KVOT.renderHeader('Lognormal Conversions');

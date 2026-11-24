@@ -21,6 +21,8 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
+  <link rel="stylesheet" href="./resources/css/kvot-fullwin.css?v=20261124">
+  <script src="./resources/js/kvot-fullwin.js?v=20261124"></script>
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
   <style>
@@ -128,6 +130,9 @@
     .btn-info:hover { background: rgba(128,128,128,0.15); color: var(--text-primary); }
     .btn-info.active { color: var(--color-kvot-bright); }
     .btn-info svg { width: 18px; height: 18px; fill: currentColor; }
+
+    /* The full window's buttons (kvot-fullwin.js), at the top right. */
+    .proj-top { display: flex; justify-content: flex-end; margin: -14px 0 2px; }
 
     /* two-column: controls left, map right */
     .proj-columns {
@@ -562,6 +567,8 @@
   <main class="content" id="main-content" tabindex="-1">
     <div class="proj-container">
 
+      <div class="proj-top"><span class="kvot-fullwin"></span></div>
+
       <div class="proj-columns">
 
         <!-- ── Left: conversion panels ──────────────────────────── -->
@@ -888,7 +895,7 @@
       </div>
 
     </div><!-- /proj-container -->
-  </div>
+  </main>
 
   <div id="kvotmap"></div>
 

@@ -237,8 +237,10 @@ async def main():
                   True)
 
             # --- the tooltips are gone -----------------------------------------
+            # (Not the full window's buttons at the bar's end, kvot-fullwin.js:
+            # their title names an icon, as the footer's own switch has one.)
             check('the only titles left are on the dot of a distribution tab, which has no text',
-                  await page.ev("[...document.querySelectorAll('#logn [title]')].map(e => e.className)"),
+                  await page.ev("[...document.querySelectorAll('#logn [title]')].filter(e => !e.closest('.kvot-fullwin, .kvot-fullwin-home')).map(e => e.className)"),
                   ['dist-swatch'])
             check('a metric field keeps its name without the tooltip',
                   await page.ev("document.querySelector('#metric1-content [data-field=\"mu\"]').getAttribute('aria-label')"),

@@ -26,7 +26,9 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
-  <link rel="stylesheet" href="./resources/css/farf31.css?v=20261031">
+  <link rel="stylesheet" href="./resources/css/kvot-fullwin.css?v=20261124">
+  <script src="./resources/js/kvot-fullwin.js?v=20261124"></script>
+  <link rel="stylesheet" href="./resources/css/farf31.css?v=20261124">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
 </head>
@@ -213,13 +215,17 @@
 
       <!-- ========================= the work area ======================== -->
       <main class="f31-main">
-        <div class="f31-tabs" role="tablist">
-          <button type="button" class="active" data-tab="release" data-on-click="f31:tab">Release</button>
-          <button type="button" data-tab="responses" data-on-click="f31:tab">Unit responses</button>
-          <button type="button" data-tab="table" data-on-click="f31:tab">Table</button>
-          <button type="button" data-tab="summary" data-on-click="f31:tab">Summary</button>
-          <button type="button" data-tab="input" data-on-click="f31:tab">Input</button>
-          <button type="button" data-tab="help" data-on-click="f31:tab">Help</button>
+        <div class="f31-tabbar">
+          <span class="kvot-fullwin-home"></span>
+          <div class="f31-tabs" role="tablist">
+            <button type="button" class="active" data-tab="release" data-on-click="f31:tab">Release</button>
+            <button type="button" data-tab="responses" data-on-click="f31:tab">Unit responses</button>
+            <button type="button" data-tab="table" data-on-click="f31:tab">Table</button>
+            <button type="button" data-tab="summary" data-on-click="f31:tab">Summary</button>
+            <button type="button" data-tab="input" data-on-click="f31:tab">Input</button>
+            <button type="button" data-tab="help" data-on-click="f31:tab">Help</button>
+          </div>
+          <span class="kvot-fullwin"></span>
         </div>
 
         <!-- ---- release ---- -->
@@ -330,6 +336,9 @@
           <h2>FARF31: radionuclide migration along a stream tube</h2>
           <p>This page calculates what SKB’s far-field code FARF31 calculates: the release of radionuclides from a stream tube in fractured rock, given the release into it. Water carries the nuclides along the tube with dispersion; they diffuse into the stagnant pore water of the rock matrix beside the flowing water, to a finite depth, and sorb there; and they decay, parents into daughters. The model is that of Norman and Kjellbert (SKB TR 90-01), with the element-specific diffusivities added for SR 97, as summarised in SKB R-04-51.</p>
           <p>The page implements the model as published in TR 90-01 and R-04-51, with numerical methods of its own (see <a href="#help-differences">how the page differs</a>), and adds sorption on the fracture surfaces as an option. Everything runs in your browser: the files you open or drop are read there and are not sent anywhere.</p>
+          <p>The four corners at the right end of the tabs give the page the full window, without the site’s
+            header and footer; the kvot mark at the left of the tabs then goes to the home page, and the
+            light/dark switch stands beside the corners.</p>
 
           <h3 id="help-model">The model</h3>
           <p>Assumptions (TR 90-01, chapters 2–3): stationary flow; transversal dispersion neglected; the longitudinal dispersion and the exchange between flowing and stagnant water replaced by averages over the tube’s cross-section, and constant along the tube; diffusion into the matrix one-dimensional, perpendicular to the flow, to a depth <i>x</i><sub>0</sub>; linear, reversible, instantaneous sorption in the matrix, and, as an option of the page, on the fracture surfaces (FARF31 has none there); decay chains without branches. The distance along the tube is measured as accumulated water travel time ζ, 0 ≤ ζ ≤ <i>t</i><sub>w</sub>, so the tube is described by <i>t</i><sub>w</sub> and a Peclet number rather than by lengths and velocities.</p>

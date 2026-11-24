@@ -26,8 +26,10 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
+  <link rel="stylesheet" href="./resources/css/kvot-fullwin.css?v=20261124">
+  <script src="./resources/js/kvot-fullwin.js?v=20261124"></script>
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/zoterify.css?v=20261031">
+  <link rel="stylesheet" href="./resources/css/zoterify.css?v=20261124">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
 </head>
@@ -156,12 +158,16 @@
 
       <!-- ========================= the work area ======================== -->
       <main class="zf-main">
-        <div class="zf-tabs" role="tablist">
-          <button type="button" class="active" data-tab="review" data-on-click="zf:tab">To review</button>
-          <button type="button" data-tab="linked" data-on-click="zf:tab">Resolved</button>
-          <button type="button" data-tab="all" data-on-click="zf:tab">All citations</button>
-          <button type="button" data-tab="refs" data-on-click="zf:tab">Reference list</button>
-          <button type="button" data-tab="help" data-on-click="zf:tab">Help</button>
+        <div class="zf-tabbar">
+          <span class="kvot-fullwin-home"></span>
+          <div class="zf-tabs" role="tablist">
+            <button type="button" class="active" data-tab="review" data-on-click="zf:tab">To review</button>
+            <button type="button" data-tab="linked" data-on-click="zf:tab">Resolved</button>
+            <button type="button" data-tab="all" data-on-click="zf:tab">All citations</button>
+            <button type="button" data-tab="refs" data-on-click="zf:tab">Reference list</button>
+            <button type="button" data-tab="help" data-on-click="zf:tab">Help</button>
+          </div>
+          <span class="kvot-fullwin"></span>
         </div>
 
         <section class="zf-pane" data-pane="review">
@@ -215,6 +221,9 @@
             inserted, both by the author you name. Everything else — formatting, comments, images, other
             people’s tracked changes — is left as it was. Nothing is uploaded: the document and the database
             are read by this page, in your browser.</p>
+          <p>The four corners at the right end of the tabs give the page the full window, without the site’s
+            header and footer; the kvot mark at the left of the tabs then goes to the home page, and the
+            light/dark switch stands beside the corners.</p>
 
           <h3 id="help-working">Working through a document</h3>
           <ol>
@@ -342,7 +351,7 @@
   <script src="./resources/js/zoterify-match.js?v=20260923a"></script>
   <script src="./resources/js/zoterify-zotero.js?v=20260923"></script>
   <script src="./resources/js/zoterify-docx.js?v=20260923b"></script>
-  <script src="./resources/js/kvot-info.js?v=20261004"></script>
+  <script src="./resources/js/kvot-info.js?v=20261004a"></script>
   <script src="./resources/js/zoterify-ui.js?v=20260926"></script>
 </body>
 </html>

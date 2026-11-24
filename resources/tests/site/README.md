@@ -550,6 +550,34 @@ screen. 24 checks. With the search in the bar, test-chrome-rdc-ensdf.py lets a
 phone's bar take three lines (140px): the search and the buttons, the
 database, and with ENSDF the chain settings.
 
+## test-chrome-full-window.py
+
+The full window on the seventeen pages that have it from the shared
+resources/js/kvot-fullwin.js and resources/css/kvot-fullwin.css: FARF31,
+SimpleFunctions, erosion_corrosion, zoterify, gitarr, piano, karaoke, logn,
+arsredovisning, inkomstdeklaration, proj, skb_qa_summary, skbref, solna,
+uppsala, svensk_text and vectorize.
+
+    SITE_HTTP_PORT=8765 SITE_CDP_PORT=9222 python3 test-chrome-full-window.py
+    SITE_HTTP_PORT=8765 SITE_CDP_PORT=9222 FW_PAGES=gitarr,proj python3 test-chrome-full-window.py
+
+Chrome needs --mute-audio: gitarr, piano and karaoke can make sounds. For each
+page: at first the header and footer, the button in the page's own bar, not
+pressed, with neither the kvot mark nor the light/dark switch beside it. The
+button: no header or footer, the page's box (`.content`, karaoke's
+`.karaoke-wrap`) from the window's top to its foot, one kvot mark (gitarr's
+and piano's own), the mark going home and the switch beside the button, the
+switch switching, the button pressed and saying so in the page's language, a
+window resize event, nothing wider than the window, and `kvot.full.<page>`
+kept. The next visit: in the full window before the body is read, and each
+place for the buttons filled by the next mutation after the parser puts it in
+(the probe is an observer made before the page's own; with the page's
+observer switched off, so that the places are filled at DOMContentLoaded, it
+fails). The button again: the header and footer back, `kvot.full.<page>` 0.
+A phone: the button on the screen, or none on the pages that never show the
+site's header and footer on a phone (gitarr, piano, the SL boards). Nothing
+raised anywhere.
+
 ## test-chrome-sl-idle.py
 
 Whether the SL boards stop calling the network when nobody is looking.

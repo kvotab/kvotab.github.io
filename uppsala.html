@@ -33,7 +33,9 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
-  <link rel="stylesheet" href="./resources/css/sl-board.css?v=20261031">
+  <link rel="stylesheet" href="./resources/css/kvot-fullwin.css?v=20261124">
+  <script src="./resources/js/kvot-fullwin.js?v=20261124"></script>
+  <link rel="stylesheet" href="./resources/css/sl-board.css?v=20261124">
   <!-- The page's own mark, in the kvot mark's language (see sl-icon.svg): a
        departure sign on a post. The 32 px PNG comes first, for a browser that
        will not take an SVG (Safari before version 26); Chrome and Firefox take
@@ -49,14 +51,17 @@
 <header></header>
 <div class="content">
 <main><div class="sl-wrap">
-  <p class="sl-intro">
-    The next SL commuter trains (pendeltåg line 40) leaving <b>Uppsala C</b> southbound. Every
-    southbound line-40 train calls at Solna, and each departure shows the time it is expected
-    there. The board refreshes itself and the minutes count down between refreshes. The line
-    below shows every SL train between Uppsala and Upplands Väsby: above the rail those heading
-    south, below it those arriving at Uppsala &ndash; the next train to leave is usually one of
-    them.
-  </p>
+  <div class="sl-top">
+    <p class="sl-intro">
+      The next SL commuter trains (pendeltåg line 40) leaving <b>Uppsala C</b> southbound. Every
+      southbound line-40 train calls at Solna, and each departure shows the time it is expected
+      there. The board refreshes itself and the minutes count down between refreshes. The line
+      below shows every SL train between Uppsala and Upplands Väsby: above the rail those heading
+      south, below it those arriving at Uppsala &ndash; the next train to leave is usually one of
+      them.
+    </p>
+    <span class="kvot-fullwin"></span>
+  </div>
   <div id="board"></div>
   <p class="sl-other">Going the other way? <a href="./solna.html">Solna → Uppsala</a></p>
 </div></main></div>

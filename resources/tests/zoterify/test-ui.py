@@ -434,7 +434,10 @@ async def check_info(page):
     check('no (i) slot is inside a <summary>', audit.get('inSummary'), [])
     check('nor any other control inside a <summary>', await page.ev(NO_CONTROL_IN_SUMMARY), '')
     check('each heading\'s (i) is centred on its line, at its end', await page.ev(HEADING_I_OFF % '.kvot-info-sec'), '')
-    check('no tooltip is left on the tool: the (i) holds that text', await page.ev("document.querySelectorAll('#zf [title]').length"), 0)
+    # (Not the full window's buttons at the tabs' ends, kvot-fullwin.js: their
+    # title names an icon, as the footer's own switch has one.)
+    check('no tooltip is left on the tool: the (i) holds that text',
+          await page.ev("[...document.querySelectorAll('#zf [title]')].filter(e => !e.closest('.kvot-fullwin, .kvot-fullwin-home')).length"), 0)
 
     sections = "JSON.stringify([...document.querySelectorAll('details.zf-sec')].map(d => d.open))"
     folded = await page.ev(sections)

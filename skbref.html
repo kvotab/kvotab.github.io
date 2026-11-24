@@ -14,6 +14,8 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
+  <link rel="stylesheet" href="./resources/css/kvot-fullwin.css?v=20261124">
+  <script src="./resources/js/kvot-fullwin.js?v=20261124"></script>
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
   <title>SKB Reference Checker — kvot ab</title>
@@ -26,7 +28,7 @@
   <meta property="og:url" content="https://kvotab.se/skbref.html">
   <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
   <meta name="twitter:card" content="summary">
-  <link rel="stylesheet" href="./resources/css/skbref.css?v=20261031">
+  <link rel="stylesheet" href="./resources/css/skbref.css?v=20261124">
 </head>
 <body>
   <header></header>
@@ -34,6 +36,7 @@
     <div id="app">
       <button id="reset-btn" title="Analyse another document">↩ New document</button>
       <div id="style-actions">
+        <span class="kvot-fullwin-home"></span>
         <details id="citation-styles">
           <summary>Citation styles</summary>
           <div class="settings-panel">
@@ -63,6 +66,7 @@
             </div>
           </div>
         </details>
+        <span class="kvot-fullwin"></span>
       </div>
       <div id="dropzone" role="region" aria-label="Upload Word or PDF document">
         <input type="file" id="file-input" accept=".docx,.pdf">

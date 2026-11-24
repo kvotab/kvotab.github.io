@@ -94,6 +94,19 @@ body.pn-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior:
 .pn-title { margin: 0; font-family: var(--font-sans); font-weight: 500; font-size: 1.3rem; line-height: 1.1; white-space: nowrap; }
 .pn-top-end { display: flex; gap: 8px; margin-left: auto; }
 
+/* The full window (the four corners at the bar's end, kvot-fullwin.js): the
+   page as a phone shows it, without the site's header and footer, the kvot
+   mark and the title leading the bar and the theme switch in it. */
+.pn-top-end > .kvot-fullwin > button {
+  width: 40px; height: 40px; padding: 0;
+  border: 1px solid var(--border-color); border-radius: 8px; background: transparent;
+}
+.pn-top-end > .kvot-fullwin > button:hover { color: var(--text-primary); border-color: var(--accent-line); background: transparent; }
+.pn-top-end > .kvot-fullwin > button:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
+:root.kvot-full .pn-brand { display: flex; }
+:root.kvot-full .pn-top-end > .theme-toggle { display: inline-flex; }
+:root.kvot-full .pn-toast { top: 12px; }
+
 .pn-iconbtn, .pn-top-end > .theme-toggle {
   display: inline-flex;
   align-items: center;
@@ -737,6 +750,8 @@ body.pn-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior:
   .pn-brand { display: flex; }
   .pn-top-end > .theme-toggle { display: inline-flex; }
   .pn-toast { top: 12px; }
+  /* a phone has the full window always, so no button for it */
+  .pn-top-end > .kvot-fullwin { display: none; }
 }
 
 @media (max-width: 680px) {

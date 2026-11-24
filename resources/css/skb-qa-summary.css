@@ -59,6 +59,10 @@ main { min-height: calc(100vh - var(--header-height) - var(--footer-height)); pa
 .qc-head { display: flex; align-items: flex-start; gap: 12px; margin: 0 0 16px; }
 .qc-title { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 1.35rem; font-weight: 600; }
 .qc-lead { max-width: 62rem; margin: 4px 0 0; color: var(--text-secondary); font-size: .9rem; line-height: 1.45; }
+/* The full window's buttons (kvot-fullwin.js) at the right; in the full window
+   the kvot mark, home, before the title. */
+.qc-head > .kvot-fullwin { margin: -2px -6px 0 auto; }
+.qc-title > .kvot-fullwin-home { margin-right: -2px; }
 
 /* ---- Buttons -------------------------------------------------------------- */
 .qc .btn {

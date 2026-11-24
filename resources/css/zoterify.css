@@ -186,20 +186,35 @@
   margin-left: -8px;
   padding-left: 8px;
 }
-/* The line under the tabs is an inset shadow, inside the strip, so the
-   active tab's background covers it without reaching out of the strip: a
-   tab hanging 1px below it made the strip scroll, and show a scrollbar. */
+/* The bar: the tabs scroll sideways when they do not fit; the full window's
+   buttons at its end stay put (kvot-fullwin.css), and in the full window
+   the kvot mark goes home from its start. */
+.zf-tabbar {
+  display: flex;
+  align-items: stretch;
+  flex: 0 0 auto;
+  margin-left: -8px;
+  padding-left: 8px;
+  /* the line under the tabs is an inset shadow, inside the bar, so the
+     active tab's background covers it without reaching out of the bar */
+  box-shadow: inset 0 -1px 0 var(--border-color);
+  background: var(--bg-secondary);
+}
 .zf-tabs {
   display: flex;
   gap: 2px;
-  margin-left: -8px;
-  padding: 6px 10px 0 18px;
-  box-shadow: inset 0 -1px 0 var(--border-color);
-  background: var(--bg-secondary);
-  flex: 0 0 auto;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 10px 0;
   overflow-x: auto;
   overflow-y: hidden;
+  /* a tab cut off where the buttons begin fades out (only its padding when all fit) */
+  -webkit-mask-image: linear-gradient(to left, transparent, #000 14px);
+  mask-image: linear-gradient(to left, transparent, #000 14px);
 }
+.zf-tabbar > .kvot-fullwin, .zf-tabbar > .kvot-fullwin-home { padding: 3px 0 1px; }
+.zf-tabbar > .kvot-fullwin { padding-right: 8px; }
+.zf-tabbar > .kvot-fullwin > button:hover { background: var(--bg-primary); }
 .zf-tabs button {
   padding: 6px 12px;
   border: 1px solid transparent;
@@ -387,7 +402,7 @@
   .zf-side { height: auto; max-height: 55vh; border-right: 0; border-bottom: 1px solid var(--border-color); }
   .zf-resize { display: none; }
   .zf-main { margin-left: 0; padding-left: 0; }
-  .zf-tabs { margin-left: 0; padding-left: 10px; }
+  .zf-tabbar { margin-left: 0; padding-left: 0; }
   .zf-cands li { grid-template-columns: minmax(0, 1fr) auto; }
   .zf-cands li .zf-conf { grid-column: 1; }
 }

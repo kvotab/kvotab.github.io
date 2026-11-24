@@ -14,6 +14,8 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
+  <link rel="stylesheet" href="./resources/css/kvot-fullwin.css?v=20261124">
+  <script src="./resources/js/kvot-fullwin.js?v=20261124"></script>
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
   <title>Digital årsredovisning — kvot ab</title>
@@ -41,6 +43,9 @@
     #arsred p  { color:var(--text-secondary);line-height:1.6;margin:0 0 12px; }
     #arsred a  { color:var(--link-color); }
     .ar-lead { font-size:1rem; }
+    /* The full window's buttons (kvot-fullwin.js), at the top right, the
+       lead flowing round them. */
+    #arsred > .kvot-fullwin { float:right;margin:-4px -8px 8px 16px; }
 
     /* Steps */
     .ar-step { border:1px solid var(--border-color);border-radius:12px;background:var(--bg-secondary);
@@ -249,6 +254,7 @@
 <div class="content">
 <main id="arsred">
 
+  <span class="kvot-fullwin"></span>
   <p class="ar-lead">
     Bygg en K2-årsredovisning ur bokföringen och kontrollera iXBRL-handlingen innan den lämnar
     din dator. Allt läses i webbläsaren — den här sidan är statisk och har ingen server att
