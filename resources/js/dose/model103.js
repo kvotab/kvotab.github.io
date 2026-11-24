@@ -61,7 +61,7 @@
   spec.rules. resources/tests/dose_coefficients/README.md records what they
   gave.
 */
-import { buildChain } from './chain.js';
+import { buildChain, carriedMembers } from './chain.js';
 import { progenySpec, buildProgenyModel, unidentifiedRule, boneVolumeKind, BONE_TURNOVER, GAS_PROGENY } from './progeny103.js';
 
 export const F_A_MAX = 0.99; // fA of 1 makes the absorption rate infinite
@@ -137,6 +137,29 @@ export const OPTIONS103 = {
                           // member's rest of the body by the reference male's masses, for both sexes
                           // (dose103.js otherParts; needs ageStep); false = all of it spread by the
                           // masses of the sex whose dose it is
+  marrowNamed: true,      // a model with the marrow of trabecular and cortical bone names red and yellow
+                          // marrow with it: no marrow in its "Other" (below, where the members' named
+                          // regions are set, with what the annex and the printed coefficients show)
+  progenyBoneVolume: true, // a progeny model that progeny.json marks boneVolume names bone volume whether
+                          // or not the chain puts anything there (below: 210Po formed from 210Bi)
+  carried: true,          // the tissues a chain names are those of the members the published calculations
+                          // carry (chain.js carriedMembers), not of every member the cut-off keeps: 234U
+                          // formed from 238Pu, 230Th from 234U and 239Pu from 243Cm are followed here but
+                          // were left out there, and with their skin counted as named the adult female's
+                          // skin dose was 1.20 to 1.21 of the OIR Data Viewer's; false = every member's
+  nonexchAt: 'place',     // a progeny formed in a bone volume its model divides otherwise (radium or uranium
+                          // in thorium's, ICRP 137 paras 811-812) is "produced in non-exchangeable bone":
+                          // 'place' = it leaves at that part's rates and stays in the compartment it was
+                          // formed in, so that what it decays to is in that model's bone volume (actinium
+                          // and thorium formed from 228Ra in thorium's bone volume follow their own bone
+                          // volume, to marrow: the OIR Data Viewer's 232Th by injection has red marrow
+                          // 1.00 so, 0.95 otherwise); 'own' = it joins the progeny's own compartment
+  chainAdult: 'parent',   // the age from which a progeny's model has its adult rates: 'parent' = the adult
+                          // age of the element taken in, as the calculations have it (the annex of
+                          // Publication 158: niobium formed from 93Mo, molybdenum adult from 20 years and
+                          // niobium from 25: with niobium's own age the bone surface was 0.86 and red
+                          // marrow 0.94 of the annex's for intakes at 15 years and by adults, 1.00 with
+                          // molybdenum's); 'own' = its own element's
   ageStep: 365 / 40,      // days: the transfer rates and S are held over steps of this length from the
                           // intake on, each at its start, as in the calculation behind the published
                           // coefficients (solve.js has what was read off them); 0 = both continuous
@@ -283,6 +306,13 @@ export function assemble103(data, spec) {
     if (m.element) { m.kind = 'independent'; m.modelKey = 'default'; m.model = modelOf(m.element, 'default'); return; }
     m.kind = 'gas-progeny-fallback'; m.model = null;
   });
+  // A progeny's rates by age end at the adult age of the element taken in.
+  if (rules.chainAdult === 'parent') members.forEach((m, j) => {
+    if (j === 0 || !m.model || m.kind === 'mirror') return;
+    const a = m.model.ages;
+    if (a && a.length > 1 && a[a.length - 1] !== adultAge && adultAge > a[a.length - 2]) m.model = { ...m.model, ages: [...a.slice(0, -1), adultAge] };
+  });
+  for (const m of members) if (m.kind === 'mirror') m.model = members[m.of].model;
   for (const m of members) {
     m.named = new Set();
     if (m.model) for (const r of Object.values(m.model.compartments)) if (!SINKS.has(r) && r !== 'Other') m.named.add(r);
@@ -537,7 +567,15 @@ export function assemble103(data, spec) {
       // Bone volume not divided as X's model divides it: its non-exchangeable part.
       const cands = [...S.sys].filter(([, k]) => comps[k].region === src.region);
       const hit = cands.find(([n]) => boneVolumeKind(n) === 'nonexch') || cands.find(([n]) => boneVolumeKind(n) === 'volume');
-      if (hit) return hit[1];
+      if (hit && rules.nonexchAt !== 'place') return hit[1];
+      if (hit) {
+        // It leaves as from that part, and stays at the place it was formed
+        // in: what it decays to is in that model's bone volume, not in X's.
+        const k = add(j, `${src.name} (${members[src.member].name})`, src.region, 'shadow', { otherOf: src.otherOf ?? src.member, place });
+        S.shadow.set(key, k);
+        for (const t of transfers.filter((x) => x.from === hit[1])) tr(k, t.to, t.ages, t.rates, `${t.origin} (as from ${hit[0]})`, t.sink);
+        return k;
+      }
       rule = 'turnover';
     }
     const k = add(j, `${src.name} (${members[src.member].name})`, src.region, 'shadow', { otherOf: src.otherOf ?? src.member, place });
@@ -757,10 +795,32 @@ export function assemble103(data, spec) {
   // has no bone volume, and caesium formed in barium's is most of what would
   // otherwise be its "Other" (Ba-129 by injection: 9 % low at 3 months).
   for (const c of comps) if (c.region === 'T-bone-V' || c.region === 'C-bone-V') members[c.member].named.add(c.region);
+  // A progeny whose model as its parent's section gives it has bone volume
+  // (thallium, bismuth and polonium of lead's chains: paras 481, 483 and 484
+  // of Publication 137 say what becomes of each formed there) names it
+  // whether or not the chain puts anything there. 210Po formed from 210Bi,
+  // whose model has no bone volume: with the mineral bone in polonium's
+  // "Other", the tissues outside its named ones were 4.9 % below the annex
+  // of Publication 158 at 3 months, 5.7 % at 1 year, 6.9, 7.4 and 7.6 % at
+  // 5, 10 and 15 years and 7.7 % for adults -- the share of the mineral bone
+  // in the rest of the body at each age.
+  for (const m of members) if (m.spec?.boneVolume && rules.progenyBoneVolume !== false) { m.named.add('T-bone-V'); m.named.add('C-bone-V'); }
+  // A model with the marrow of trabecular and cortical bone has all the
+  // marrow there: red and yellow marrow are no part of its "Other". The
+  // ICRP's coefficients have it so. In the annex of Publication 158, 225Ra's
+  // tissues outside actinium's named ones were 1.3 % low at 3 months and
+  // 4.8 % for adults, as marrow's share of the mass grows, and 228Ra's 3 to
+  // 6 %; without marrow in "Other" they are 0.998-1.005. Of the Part 2
+  // draft's 113 printed values per age for Th, U, Np, Pu, Am and Cm, 98 to
+  // 106 of the page's round to them, 90 to 99 with marrow counted twice.
+  if (rules.marrowNamed !== false) for (const m of members) if (m.named.has('T-marrow') || m.named.has('C-marrow')) { m.named.add('R-marrow'); m.named.add('Y-marrow'); }
 
   // Descriptions for the page.
+  // The members the published calculations carry (chain.js): only their
+  // models' tissues count as named by the chain (dose103.js chainRegions).
+  const carried = rules.carried === false ? null : carriedMembers(index, members.map((m) => m.name));
   const memberInfo = members.map((m) => ({
-    name: m.name, el: m.el, lambda: m.lambda, T: m.T, kind: m.kind, of: m.of ?? null,
+    name: m.name, el: m.el, lambda: m.lambda, T: m.T, kind: m.kind, of: m.of ?? null, carried: !carried || carried.has(m.name),
     model: m.model ? (m.model.label || m.modelKey || 'default') : null, modelKey: m.modelKey ?? null, named: [...m.named],
     progeny: m.spec ? { set: m.spec.set, model: m.kind === 'spec' ? m.model : null, boneVolume: !!m.spec.boneVolume } : null,
   }));

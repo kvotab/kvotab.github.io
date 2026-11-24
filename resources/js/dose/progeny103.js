@@ -136,7 +136,6 @@ export function buildProgenyModel(spec, el, elements, modelOf) {
   const find = (a, b) => model.transfers.find(([x, y]) => x === a && y === b);
   const blood = () => spec.blood || model.entry;
   const inflow = (name) => { const t = find(blood(), name); return t ? full(t[2]) : new Array(n).fill(0); };
-  const toBlood = (name) => { const t = find(name, blood()); return t ? full(t[2]) : new Array(n).fill(0); };
   for (const op of spec.ops || []) {
     if (op.op === 'rename') {
       const region = op.region || model.compartments[op.name];
@@ -201,11 +200,14 @@ export function buildProgenyModel(spec, el, elements, modelOf) {
         else if (it.share != null) rin = sumOf(it.per || from).map((x) => x * it.share);
         else if (it.ofOutflow != null) rin = total(it.excluding || []).map((x) => x * it.ofOutflow);
         else throw new Error(`carve: ${it.name} has no inflow`);
-        const out = it.out === 'same' || it.out == null
-          ? (it.like ? toBlood(it.like) : toBlood(from[0]))
-          : full(Array.isArray(it.out) ? it.out : [it.out]);
+        // Out as the compartment it is taken from (or is like) goes out: at
+        // its rates and to where it goes (plutonium's ST1 returns to Blood 2,
+        // not to the Blood 1 that feeds it), or to blood at a given rate.
+        const outs = it.out === 'same' || it.out == null
+          ? model.transfers.filter(([x]) => x === (it.like || from[0])).map(([, y, r]) => [it.name, y, full(r)])
+          : [[it.name, B, full(Array.isArray(it.out) ? it.out : [it.out])]];
         model.compartments[it.name] = it.region;
-        model.transfers.push([B, it.name, rin], [it.name, B, out]);
+        model.transfers.push([B, it.name, rin], ...outs);
         rin.forEach((x, a) => { added[a] += x; });
       }
       for (const f of from) {

@@ -621,32 +621,156 @@ ICRP's own data and the annex has it: Ba-140's red marrow at 3 months comes
 from the 0.5 % of its La-140 that lanthanum's model carries into cortical
 marrow.
 
+Still open: the list at the end of the next section.
+
+## The adult against the OIR Data Viewer, and the chains (2026-11-24, later)
+
+A second reference for the ICRP 103 system, for adults: the OIR Data Viewer
+for Publications 134, 137 and 141 (ICRP's electronic annex for workers) has,
+for each of its 572 nuclides, an injection record with the effective dose and
+the equivalent doses to 30 organs of both sexes, as float32 (the annex's
+organ order: fA, 30 male, 30 female, e, after the label "Injection" in each
+IRData/*.ird file). Workers are adults on the same systemic models, and
+where a nuclide is in the annex too the viewer's values are the annex's
+adult values to four figures or more (261 nuclides; all but 32, which are
+the strontium isotopes with rubidium progeny, antimony, zirconium and a few
+more whose treatment for the public differs). So it is the annex's precision
+for the lanthanides, the actinides, thorium and uranium, of which the
+publications for the public print two-figure effective doses only. It stays
+out of the repository like the annex; the tools read a local copy.
+
+| adult, injection, 572 nuclides | before | after |
+| --- | --- | --- |
+| e more than 0.5 % off | 228 | 6 |
+| e more than 1 % off | 121 | 2 |
+| e more than 5 % off | 22 (up to 1.47) | 0 (1.023) |
+| organ doses more than 2 % off, of 32,032 | 8,677 | 245 |
+| organ doses more than 5 % off | 5,235 | 91 |
+
+The annex at the six ages: organ doses more than 5 % off 2,842 → 796 (of
+561,420; more than 2 % off 6,778 → 2,256), effective doses more than 1 % off
+30 → 19 (of 10,026). Printed two-figure coefficients: the page's value
+rounds to the printed one for 92.5 → 97.2 % of the reference file's 4,104
+and 97.3 → 97.6 % of the Part 3 draft's 1,146.
+
+What was found, each from a nuclide that was off, split by tissue and fitted
+to source regions as before:
+
+- **A lanthanide formed from another had lanthanum's model.** The
+  lanthanide set of progeny.json wrote its entries as "lanthanide:La", which
+  gives an element lanthanum's rules and lanthanum's model, liver 50 %.
+  Thulium from 167Yb had 41 % of its transformations in the liver; 148Tb,
+  whose 148Gd is an alpha emitter, was 1.46 in e and 6.9 in liver; 44
+  lanthanide nuclides were off by it. Each entry now has the rules and its own
+  model (Publication 141 para 86). All lanthanides but 129La agree.
+- **Gadolinium's adult liver rate.** The draft's Table 9.2 prints blood to
+  Liver 1 as 5.82 d⁻¹ for adults, europium's value, where its Table 9.1 and
+  Publication 141 give 15 %, 3.49 d⁻¹ (with 5.82 the outflow from blood is
+  35.6 d⁻¹, not 33.3). 148Gd's liver was 1.615, every gadolinium nuclide 3 to
+  11 % high in e; with 3.49 they agree, and 153Gd's printed values 34 → 36 of
+  36.
+- **Plutonium as a progeny: spleen and skin had no way out.** The added
+  compartments leave "as ST1 does", and plutonium's ST1 returns to Blood 2,
+  not to the Blood 1 that feeds it, which the code looked for: rate 0. 238Np's
+  spleen was 12.3 and its skin 10.5 times the viewer's (238Am, 238Cm, 242Cm,
+  242Am alike). progeny103.js now copies the outflows of the compartment the
+  added ones are taken from.
+- **Marrow.** A model with the marrow of trabecular and cortical bone has
+  all marrow there: red and yellow marrow are no part of its "Other"
+  (`OPTIONS103.marrowNamed`). 225Ra's tissues outside actinium's named ones
+  0.952–0.987 → 0.998–1.000 in the annex; 241Am, 244Cm, 237Np, 238Pu,
+  239Pu and 230Th had 7 to 13 of their printed values off each, now none
+  or one.
+- **Actinium as radium's progeny** takes 0.13 and 0.043 d⁻¹ to skin and
+  spleen (para 714's shares to two figures: the annex's 225Ra, spleen and
+  skin 0.93 → 1.00), and, formed in the pools of radium that itself grew
+  in, keeps its own pools as the other members of the set do (229Th: every
+  tissue of the rest 0.79, liver 1.065 → 1.000).
+- **Adult ages.** 25 years for actinium, protactinium, berkelium to
+  fermium, the lanthanides and aluminium (printed values at 15 years:
+  lanthanides 98 → 111 of 114, Bk–Fm 10 → 20 of 20; 227Ra exact). And a
+  progeny has its adult rates from the adult age of the element taken in
+  (`OPTIONS103.chainAdult`): niobium formed from 93Mo from 20 years (bone
+  surface 0.86 and red marrow 0.94 at 15 years and for adults → 1.00;
+  90Mo, 200Bi, 201Bi, 203Bi, 203Po follow).
+- **Gallium formed from zinc** takes half as much again to bone surfaces
+  before adulthood, the rule of zinc's own model and of gallium's in the
+  Part 3 draft (para 182): 72Zn's red marrow 0.94–0.96 and bone surface
+  0.89–0.93 in children → 0.98–1.02.
+- **Bone volume of a progeny model.** Thallium, bismuth and polonium as
+  progeny in lead's chains name bone volume whether or not the chain puts
+  anything there (`OPTIONS103.progenyBoneVolume`). 210Bi: the kinetics are
+  the same at every age, yet the tissues polonium does not name were 4.9 %
+  low at 3 months, 5.7, 6.9, 7.4, 7.6 % at 1 to 15 years and 7.7 % for
+  adults: the mineral bone's share of the rest of the body. With it out of
+  polonium's "Other", every tissue is 1.000–1.001 at every age (585 organ
+  doses more than 5 % off → 0).
+- **Radium formed in thorium's bone volume** is "produced in
+  non-exchangeable bone" (Publication 137 para 812): it leaves at that
+  part's rates but stays in thorium's compartment
+  (`OPTIONS103.nonexchAt`), so that the actinium and thorium it decays to
+  are in their own bone volume, which empties into marrow. 232Th: red
+  marrow 0.955 → 0.999, e 0.986 → 0.999; printed 15 → 29 of 30; 229Th 24 →
+  30 of 30. Radium that reaches its own non-exchangeable bone the usual
+  way is as before (228Ra, exact in the annex).
+- **Americium formed in plutonium's Liver 3** stays in the liver, in its
+  own Liver 2: with the marrow rule in, 241Pu's liver was 0.877 and its e
+  0.967 of the viewer's and 25 of its 48 printed values agreed; now 0.999,
+  1.000 and 48. Uranium formed there goes to blood (236Pu: 1.000 so, 1.14
+  kept). Plutonium's liver compartments keep the draft table's names, Liver
+  1 to 3: with Publication 141's (Liver 0 to 2) 241Pu fits too, but 234Pu's
+  liver is 0.51 and 242Cm, whose 238Pu forms in curium's Liver 1 and 2, 2 %
+  high.
+- **The actinides' own pools.** In the actinide, uranium and thorium sets,
+  as in the radium set: formed in the ST0–ST2 of another progeny, a member
+  takes its own pool of the same name; the chain parent's pools stay
+  foreign. 241Np (whose dose is the 241Am its 241Pu forms), 249Cm, 255Cf,
+  248mBk, 236mNp: muscle 0.46–0.78 → 1.00–1.01.
+- **Which members count.** The tissues a chain names are those of the
+  members the published calculations carry, not of every member the
+  cut-off keeps (`OPTIONS103.carried`, chain.js `carriedMembers`): a
+  thousandth of the chain's energy over 50 years, with the alpha energy
+  weighted by 20 or without. Read off the adult female's skin, which is
+  1.20 too high when a member that names skin is counted and was not there,
+  and 0.83 when it was there and is not counted. Not carried: 239Pu after
+  243Cm (0.0008 either way), 230Th after 234U, 234U after 238Pu, 248Cm
+  after 252Cf, 235mU after 239Pu (no energy). Carried: 237Np after 237U
+  (0.0045 weighted, 0.0002 not), 234U after 234Np, 148Gd after 152Dy,
+  245Cm after 249Cf (0.002), 207Tl and 209Pb at the end of alpha chains
+  (0.0008 and 0.0004 weighted, 0.014 and 0.007 not). No single measure
+  separates the two lists; the larger of the two shares does.
+- **Uranium takes the shares** of the rest of the body like every chain:
+  238U, 235U, 233U, 232U, 230U have the adult female's skin at 0.83–0.95
+  and her ovaries at 1.03–1.19 without, 1.00 with. The set did without
+  since the morning because the Part 2 draft's printed values fitted so;
+  what had spoilt them was 234U's 230Th, which is not carried. Printed
+  uranium now 238U 48 of 48 (47), 234U 48, 235U 46.
+
 Still open:
 
-- **Ra-227, Ra-228, Ra-225.** Actinium's and thorium's soft tissue: muscle
-  and the other tissues of the rest 3–13 % low, Ra-227's red marrow up to
-  13 % high with age. e within 1.5 %.
-- **Bi-210.** The tissues outside polonium's named ones are 5–7 % low at
-  every age in both sexes, everything polonium names exact; Bi-210m is
-  exact. Fitted, it is 1.7 % more of Po-210's transformations in polonium's
-  own "Other" (0.6 % at 3 months). Holding polonium in bismuth's soft tissue
-  with a half-time of 10 d instead of para 484's 7 d fits adults, not
-  children.
+- **Radon.** Rn-222 as a gas: e 0.977–1.007, by ingestion 0.987–1.018; 428
+  organ doses more than 5 % off, half of what is left in the annex. After
+  the gas is inhaled, 73 % of the chain's transformations are in fat, 8 %
+  in other tissue and 7 % in yellow marrow (adult). The tissues of the rest
+  are 3 % high at 3 months and 17–21 % for adults, red marrow and bone
+  surface 2 % low and 17–22 %, liver 0.85 by ingestion at every age, and at
+  15 years and for adults the female's stomach, thyroid, salivary glands,
+  spleen and skin part from the male's. No single shift between source
+  regions fits (rms 0.19 → 0.11 at best).
 - **Bi-214 and Pb-214 by ingestion and inhalation.** Testes 0.87–0.94 and
   ovaries 0.90–0.94; by injection 0.99–1.00.
-- **Radon.** Rn-222 by ingestion 1.018 at 3 months to 0.985 for adults, as a
-  gas 0.977 at 10 years; 428 organ doses more than 5 % off. Not looked at.
 - **3-month-olds of calcium, polonium and zinc.** Ca-41, Ca-45 and Ca-47
-  1.010–1.012 in every tissue but bone surface and muscle (strontium, barium
-  and radium are right, and the rates are Table 9.2's); Po-206 and Po-210
-  1.011–1.014 (its dose moves 2.6 % for a change of 0.2 to 0.15 in the fA of
-  what it secretes at 3 months); Zn-65 1.007 (it would fit with full
-  absorption taken as 0.984, where technetium needs 0.99).
-- **Te-118** (Sb-118, 3.6 min): bladder 1.10–1.19, colon and stomach
-  0.96–0.97, e 0.987 for adults.
-- **Mo-93** (Nb-93m): bone surface 0.86–0.87 and red marrow 0.94–0.95 at
-  15 years and for adults, right in children.
-- **Se-70** (As-70): spleen and pancreas 1.04–1.07; Se-72's fit only with
-  arsenic leaving them at 0.08 d⁻¹.
-- **Zn-72 in children**, **Pb-197m and Pb-195m** (a few tissues), **iodine
-  and tritium** (0.3 % and 0.15 % high at every age).
+  1.010–1.012 (strontium, barium and radium are right); Po-206 and Po-210
+  1.011–1.014; Zn-65 1.007.
+- **Te-118** (Sb-118, 3.6 min): bladder 1.10–1.19, e 0.987 for adults, in
+  the annex and in the viewer alike.
+- **Se-70** (As-70): spleen and pancreas 1.04–1.07; Se-72.
+- **Pb-197m and Pb-195m** (a few tissues; the annex and the viewer differ
+  there by 2 % and 0.6 %), **Nb-91**.
+- Against the viewer only: **129La** (bone surface 0.81; its 129Ba),
+  **240U** (liver 0.93), **235mU** (the female's skin 0.94: its 235U is of
+  the parent's element and has the parent's model here).
+- **Uranium's bone.** 238U, 235U and 233U: bone surface 0.97–0.98 and the
+  female's red marrow 0.98 with everything else at 1.002, where 234U and
+  236U are 1.002–1.003 throughout; every uranium value 0.2 % high.
+- **Iodine and tritium** (0.3 % and 0.15 % high at every age).

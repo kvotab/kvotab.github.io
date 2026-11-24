@@ -77,11 +77,14 @@ export const REMAINDER_103 = ['Adrenals', 'Extrathoracic region', 'Gallbladder',
 const partsOf = (name, sex) => (typeof TISSUES_103[name] === 'function' ? TISSUES_103[name](sex) : TISSUES_103[name]);
 
 /*
-  The source regions a chain's models name between them. A progeny model
-  marked boneVolume in progeny.json (thallium, bismuth and polonium in lead's
-  chains) has the bone volume compartments, whether or not this chain fills
-  them. Read off the InMoP annex (2026-11): 210mBi, whose one progeny 206Tl
-  names skin, spleen, red marrow and gonads, was in the adult female 16 %
+  The source regions a chain's models name between them: those of the
+  members the published calculations carry (model103.js `carried`, chain.js
+  carriedMembers). A progeny model marked boneVolume in progeny.json
+  (thallium, bismuth and polonium in lead's chains) names bone volume whether
+  or not this chain puts anything there, and a model with the marrow of
+  trabecular and cortical bone names red and yellow marrow with it (both in
+  model103.js). Read off the InMoP annex (2026-11): 210mBi, whose one progeny
+  206Tl names skin, spleen, red marrow and gonads, was in the adult female 16 %
   low in skin, 4.5 % high in spleen, 21 % high in ovaries and 2.4 % high in
   every tissue of the rest, and in the 10-year-old male 41 % low in testes;
   with the male's shares all of them are 1.000 at the six ages in both
@@ -91,11 +94,9 @@ const partsOf = (name, sex) => (typeof TISSUES_103[name] === 'function' ? TISSUE
 function chainRegions(sys) {
   const out = new Set();
   for (const m of sys.members) {
+    if (m.carried === false) continue;
     for (const r of m.named) out.add(r);
-    if (m.progeny?.boneVolume) { out.add('T-bone-V'); out.add('C-bone-V'); }
   }
-  // The marrow of trabecular and cortical bone (the models of radium's chains) is all marrow, red and yellow.
-  if (out.has('T-marrow') || out.has('C-marrow')) { out.add('R-marrow'); out.add('Y-marrow'); }
   return out;
 }
 

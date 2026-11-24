@@ -66,7 +66,7 @@ export function buildChain(index, parent, opt = {}) {
     dropped.push(...names.slice(opt.last));
     names = names.slice(0, opt.last);
   } else if (opt.cutoff !== 0) {
-    const keep = significantMembers(index, names, opt.cutoff ?? 1e-3, opt.horizonDays ?? 36525);
+    const keep = significantMembers(index, names, opt.cutoff ?? 1e-3, opt.horizonDays ?? 36525, opt.measure);
     for (const n of names) if (!keep.has(n)) dropped.push(n);
     names = names.filter((n) => keep.has(n));
   }
@@ -113,13 +113,34 @@ export function batemanTransformations(index, names, horizon) {
   });
 }
 
-function significantMembers(index, names, cutoff, horizon) {
+/**
+ * The members of a chain (names in chain order, the parent first) that the
+ * calculations behind the published coefficients carry: those that emit a
+ * thousandth of the chain's energy over 50 years, counted with the alpha
+ * energy weighted by 20 or without, and what leads to them. Read off the OIR
+ * Data Viewer (Publications 134, 137, 141) from the tissues whose dose shows
+ * that a member's model was there or was not: 239Pu after 243Cm is not
+ * (0.0008 of the energy either way), nor 230Th after 234U, 234U after 238Pu,
+ * 248Cm after 252Cf, or 235mU after 239Pu, which emits next to nothing;
+ * 237Np after 237U is (0.0045 weighted, 0.0002 not), 234U after 234Np, 148Gd
+ * after 152Dy, 245Cm after 249Cf (0.002), and so are 207Tl and 209Pb at the
+ * end of an alpha chain (0.0008 and 0.0004 weighted, 0.014 and 0.007 not).
+ */
+export function carriedMembers(index, names, cutoff = 1e-3, horizon = 18262.5) {
+  return significantMembers(index, names, cutoff, horizon, 'either');
+}
+
+function significantMembers(index, names, cutoff, horizon, measure) {
   const u = batemanTransformations(index, names, horizon);
+  const plain = names.map((n, i) => { const [a, e, p] = index[n].E; return u[i] * (a + e + p); });
+  const plainTotal = plain.reduce((s, x) => s + x, 0) || 1;
   const w = names.map((n, i) => {
     const [a, e, p] = index[n].E;
     return u[i] * (20 * a + e + p);
   });
   const total = w.reduce((s, x) => s + x, 0) || 1;
+  // 'either': by the energy with the alpha weighting or without.
+  if (measure === 'either') for (let i = 0; i < w.length; i++) w[i] = Math.max(w[i], plain[i] * total / plainTotal);
   // A member is kept when it, or anything below it, carries a share of the
   // energy: 228Ra emits next to nothing itself, but the 232Th chain's alpha
   // energy all comes through it.

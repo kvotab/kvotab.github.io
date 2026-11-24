@@ -43,8 +43,8 @@ const { parentModelName, f1FileName, recipe60, assemble60 } = await import(path.
 const { coefficients103, AGES_103 } = await import(path.join(JS, 'dose103.js'));
 const { emissionWeights, sAllRows, pchipSlopes, pchipEval, spectrumLines, MEV } = await import(path.join(JS, 'see103.js'));
 const { firstYearWeight, dcalWeight } = await import(path.join(JS, 'solve.js'));
-const { deposition103 } = await import(path.join(JS, 'model103.js'));
-const { buildChain } = await import(path.join(JS, 'chain.js'));
+const { deposition103, assemble103 } = await import(path.join(JS, 'model103.js'));
+const { buildChain, carriedMembers } = await import(path.join(JS, 'chain.js'));
 const { catalog60, catalog103 } = await import(path.join(JS, 'catalog.js'));
 const { detriment103, detriment60, nominalDetriment } = await import(path.join(JS, 'risk.js'));
 const { radonCoefficients, radonDoses } = await import(path.join(JS, 'radon.js'));
@@ -264,9 +264,56 @@ if (!SYSTEM || SYSTEM === '103') {
     ['103', { nuclide: 'Bi-210m', route: 'injection', rules: { otherShares: false } }, 7300, 4.3666e-7, 'Skin', 'F'],
     ['103', { nuclide: 'Bi-210m', route: 'injection' }, 3650, 1.1138e-6, 'Gonads'],
     ['103', { nuclide: 'Bi-210m', route: 'injection', rules: { otherShares: false } }, 3650, 6.5636e-7, 'Gonads'],
-    // chains headed by uranium do without the shares (progeny.json, the uranium set): the Part 2 draft's printed values
+    // uranium's chains take the shares as every chain does: the adult female's skin after 238U, whose 234Th names
+    // skin, has 0.83 of this without them. 234U's has none to take: its 230Th is not among the members the published
+    // calculations carry (chain.js carriedMembers), nor is 238Pu's 234U; counted, her skin would be 1.20 and 1.21 of these
     ['103', { nuclide: 'U-234', route: 'ingestion', form: 'soluble' }, 9125, 3.4690e-8],
-    ['103', { nuclide: 'U-234', route: 'ingestion', form: 'soluble', rules: { otherShares: true } }, 9125, 3.4476e-8],
+    ['103', { nuclide: 'U-238', route: 'injection' }, 7300, 1.7316e-6, 'Skin', 'F'],
+    ['103', { nuclide: 'U-238', route: 'injection', rules: { otherShares: false } }, 7300, 1.4406e-6, 'Skin', 'F'],
+    ['103', { nuclide: 'U-234', route: 'injection' }, 7300, 1.6326e-6, 'Skin', 'F'],
+    ['103', { nuclide: 'U-234', route: 'injection', rules: { carried: false } }, 7300, 1.9634e-6, 'Skin', 'F'],
+    ['103', { nuclide: 'Pu-238', route: 'injection' }, 7300, 2.6767e-5, 'Skin', 'F'],
+    ['103', { nuclide: 'Pu-238', route: 'injection', rules: { carried: false } }, 7300, 3.2436e-5, 'Skin', 'F'],
+    // a progeny's adult rates from the adult age of the element taken in (OPTIONS103.chainAdult): niobium formed
+    // from 93Mo from 20 years; from its own 25 the bone surface has 0.87 of this for adults and 0.86 at 15 years
+    ['103', { nuclide: 'Mo-93', route: 'injection' }, 7300, 4.0676e-10, 'Bone surface'],
+    ['103', { nuclide: 'Mo-93', route: 'injection', rules: { chainAdult: 'own' } }, 7300, 3.5464e-10, 'Bone surface'],
+    ['103', { nuclide: 'Mo-93', route: 'injection' }, 5475, 3.8712e-10, 'Bone surface'],
+    ['103', { nuclide: 'Mo-93', route: 'injection', rules: { chainAdult: 'own' } }, 5475, 3.3286e-10, 'Bone surface'],
+    // radium formed in thorium's bone volume leaves as from non-exchangeable bone and stays where it was formed
+    // (OPTIONS103.nonexchAt), so the 228Th it decays to is in thorium's bone volume and passes the marrow: joined
+    // to radium's own compartment, the red marrow has 0.955 of this
+    ['103', { nuclide: 'Th-232', route: 'injection' }, 7300, 3.6258e-4, 'Red marrow'],
+    ['103', { nuclide: 'Th-232', route: 'injection', rules: { nonexchAt: 'own' } }, 7300, 3.4623e-4, 'Red marrow'],
+    // polonium as a progeny names bone volume (OPTIONS103.progenyBoneVolume): with the mineral bone in its "Other",
+    // the muscle after 210Bi has 0.93 of this for adults and 0.95 at 3 months
+    ['103', { nuclide: 'Bi-210', route: 'injection' }, 7300, 2.5350e-9, 'Muscle'],
+    ['103', { nuclide: 'Bi-210', route: 'injection', rules: { progenyBoneVolume: false } }, 7300, 2.3603e-9, 'Muscle'],
+    ['103', { nuclide: 'Bi-210', route: 'injection' }, 100, 2.7903e-8, 'Muscle'],
+    ['103', { nuclide: 'Bi-210', route: 'injection', rules: { progenyBoneVolume: false } }, 100, 2.6510e-8, 'Muscle'],
+    // a model with trabecular and cortical marrow has no marrow in its "Other" (OPTIONS103.marrowNamed): counted
+    // twice, 241Am's e is 1.4 % higher and the muscle after 225Ra, whose 225Ac has such a model, 5 % lower
+    ['103', { nuclide: 'Am-241', route: 'injection' }, 7300, 1.1801e-4],
+    ['103', { nuclide: 'Am-241', route: 'injection', rules: { marrowNamed: false } }, 7300, 1.1969e-4],
+    ['103', { nuclide: 'Ra-225', route: 'injection' }, 7300, 7.0882e-9, 'Muscle'],
+    ['103', { nuclide: 'Ra-225', route: 'injection', rules: { marrowNamed: false } }, 7300, 6.7366e-9, 'Muscle'],
+    // progeny.json and elements.json as they stand: a lanthanide formed from another follows its own model (thulium
+    // from 167Yb: the liver had 3.2 times this with lanthanum's; 148Tb, whose 148Gd is an alpha emitter: e 1.46 times),
+    // gadolinium's adult liver takes 15 % (3.49 d-1), plutonium's added spleen leaves as its ST1 does, to Blood 2
+    // (238Np: 12 times this without a way out), gallium formed from zinc takes half as much again to bone surfaces
+    // before adulthood, actinium formed in the pools of radium that grew in keeps its own (229Th: muscle 0.79 of
+    // this otherwise), americium formed in plutonium's Liver 3 stays in the liver (241Pu: 0.88), and the actinides
+    // formed in another progeny's pools keep theirs (241Np: 0.57); actinium's skin and spleen as radium's progeny
+    ['103', { nuclide: 'Yb-167', route: 'injection' }, 7300, 2.5184e-12, 'Liver'],
+    ['103', { nuclide: 'Tb-148', route: 'injection' }, 7300, 8.9667e-11],
+    ['103', { nuclide: 'Gd-148', route: 'injection' }, 7300, 8.0939e-5, 'Liver'],
+    ['103', { nuclide: 'Np-238', route: 'injection' }, 7300, 1.2198e-9, 'Spleen'],
+    ['103', { nuclide: 'Zn-72', route: 'injection' }, 365, 1.1444e-8, 'Bone surface'],
+    ['103', { nuclide: 'Th-229', route: 'injection' }, 7300, 4.2619e-5, 'Muscle'],
+    ['103', { nuclide: 'Pu-241', route: 'injection' }, 7300, 1.4874e-5, 'Liver'],
+    ['103', { nuclide: 'Np-241', route: 'injection' }, 7300, 1.8710e-12, 'Muscle'],
+    ['103', { nuclide: 'Ra-225', route: 'injection' }, 7300, 2.1581e-8, 'Spleen'],
+    ['103', { nuclide: 'Ra-227', route: 'injection' }, 5475, 1.1357e-10, 'Skin'],
     // antimony formed in the gut takes the fA of its forms other than in food (OPTIONS103.giProgenyFA); with the
     // highest, the brain has 1.5 times this
     ['103', { nuclide: 'Sb-124n', route: 'ingestion', form: 'food' }, 7300, 5.3939e-14, 'Brain'],
@@ -285,6 +332,52 @@ if (!SYSTEM || SYSTEM === '103') {
     const how = spec.rules ? ` with ${JSON.stringify(spec.rules).replace(/"/g, '')}` : '';
     check(`pinned: ${sys} ${spec.nuclide} ${spec.route} ${spec.form || ''}${how} at ${age} d${tissue ? `, ${tissue} (${sex === 'F' ? 'female' : 'male'}),` : ''} is ${want.toExponential(3)}`, near(got, want, 0.002), got.toExponential(4));
   }
+}
+
+/* ---- ICRP 103 chains: the members that count, and the models progeny follow --------------- */
+// The members the published calculations carry (chain.js carriedMembers): a
+// thousandth of the chain's energy over 50 years, with the alpha weighting or
+// without. Only their models' tissues count as named by a chain.
+{
+  const carriedOf = (n) => carriedMembers(d103.index, buildChain(d103.index, n, { cutoff: 1e-4 }).members.map((m) => m.name));
+  const c = { cm243: carriedOf('Cm-243'), u234: carriedOf('U-234'), pu238: carriedOf('Pu-238'), pu239: carriedOf('Pu-239'), u233: carriedOf('U-233'), u237: carriedOf('U-237'), ac225: carriedOf('Ac-225'), ac227: carriedOf('Ac-227') };
+  check('carried members: 239Pu after 243Cm, 230Th after 234U, 234U after 238Pu and 235mU after 239Pu are not; 229Th after 233U, 237Np after 237U, 209Pb after 225Ac and 207Tl after 227Ac are',
+    !c.cm243.has('Pu-239') && !c.u234.has('Th-230') && !c.pu238.has('U-234') && !c.pu239.has('U-235m')
+    && c.u233.has('Th-229') && c.u237.has('Np-237') && c.ac225.has('Pb-209') && c.ac227.has('Tl-207'),
+    Object.entries(c).map(([k, v]) => `${k}: ${[...v].join(' ')}`).join(' | '));
+  // What a progeny's model is, as progeny.json and the element files give it.
+  const modelOf = async (parent, member) => {
+    await d103.prepare(parent);
+    const sys = assemble103(d103, { nuclide: parent, route: 'injection', cutoff: 1e-4, intakeAge: d103.elements[parent.split('-')[0]].adultAge || 7300 });
+    return sys.members.find((m) => m.name === member).progeny?.model;
+  };
+  const rate = (model, a, b) => { const t = model?.transfers.find(([x, y]) => x === a && y === b); return t ? t[2] : null; };
+  const tm = await modelOf('Yb-167', 'Tm-167');
+  check('thulium formed from 167Yb follows thulium\'s own model: blood to Liver 1 at 1.16 d-1 (lanthanum\'s is 11.6)',
+    near(rate(tm, 'Blood', 'Liver 1')?.at(-1), 1.16, 1e-6), JSON.stringify(rate(tm, 'Blood', 'Liver 1')));
+  const pu = await modelOf('Np-238', 'Pu-238');
+  check('plutonium as a progeny: the added spleen and skin leave as ST1 does, to Blood 2 at 0.00139 d-1',
+    near(rate(pu, 'Spleen', 'Blood 2')?.at(-1), 0.00139, 1e-6) && near(rate(pu, 'Skin', 'Blood 2')?.at(-1), 0.00139, 1e-6) && near(rate(pu, 'ST1', 'Blood 2')?.at(-1), 0.00139, 1e-6),
+    `${JSON.stringify(rate(pu, 'Spleen', 'Blood 2'))} ${JSON.stringify(rate(pu, 'Spleen', 'Blood 1'))}`);
+  const ga = await modelOf('Zn-72', 'Ga-72');
+  check('gallium formed from zinc: blood to the bone surfaces 0.75 d-1 before adulthood, 0.5 for adults, the total outflow 5 d-1 at every age',
+    ga.ages.length === 6 && near(rate(ga, 'Blood', 'Trab bone surf')[0], 0.75, 1e-9) && near(rate(ga, 'Blood', 'Trab bone surf')[5], 0.5, 1e-9)
+    && [0, 5].every((a) => near(ga.transfers.filter(([x]) => x === 'Blood').reduce((s, t) => s + t[2][a], 0), 5, 1e-9)),
+    JSON.stringify(rate(ga, 'Blood', 'Trab bone surf')));
+  const gd = d103.elements.Gd.systemic.default.transfers.find(([a, b]) => a === 'Blood' && b === 'Liver 1')[2];
+  const out = d103.elements.Gd.systemic.default.transfers.filter(([a]) => a === 'Blood').reduce((s, t) => s + t[2].at(-1), 0);
+  check('gadolinium: the adult\'s liver takes 15 % of what leaves the circulation (3.49 d-1), the outflow from blood 33.3 d-1 as for every lanthanide',
+    near(gd.at(-1), 3.49, 1e-9) && near(out, 33.27, 2e-3), `${gd.at(-1)} of ${out.toFixed(3)}`);
+  const adult25 = ['Ac', 'Pa', 'Bk', 'Cf', 'Es', 'Fm', 'La', 'Ce', 'Pr', 'Nd', 'Pm', 'Sm', 'Eu', 'Gd', 'Tb', 'Dy', 'Ho', 'Er', 'Tm', 'Yb', 'Lu', 'Al'];
+  check('adult rates from 25 years for actinium, protactinium, berkelium to fermium, the lanthanides and aluminium',
+    adult25.every((el) => d103.elements[el].adultAge === 9125 && Object.values(d103.elements[el].systemic).every((m) => m.ages.at(-1) === 9125)),
+    adult25.filter((el) => d103.elements[el].adultAge !== 9125).join(' '));
+  // A progeny's model has its adult rates from the adult age of the element taken in.
+  await d103.prepare('Mo-93');
+  const mo = assemble103(d103, { nuclide: 'Mo-93', route: 'injection', cutoff: 1e-4, intakeAge: 7300 });
+  const nbAges = mo.transfers.filter((t) => mo.comps[t.from].member === 1 && mo.comps[t.from].kind === 'sys' && t.ages.length === 6).map((t) => t.ages.at(-1));
+  check('niobium formed from 93Mo: its rates by age end at 20 years, molybdenum\'s adult age (its own is 25)',
+    nbAges.length > 0 && nbAges.every((a) => a === 7300) && d103.elements.Nb.adultAge === 9125, [...new Set(nbAges)].join(' '));
 }
 
 /* ---- Other in chains with independent kinetics (ICRP 60; ORNL/TM-2001/190, 9.3.1) ---------- */
