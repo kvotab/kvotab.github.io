@@ -156,13 +156,15 @@ const NAMED_LINE_STYLES = {
   'ing_cray': { color: 'rgb(138,92,240)', dash: 'solid' },     // Crayfish; charts #9664FF
   'ing_fish': { color: 'rgb(42,112,216)', dash: 'solid' },     // Fish; the charts have a blue a lake, #5A87E6 the first
 
-  // Exposed groups: the colours of the PSAR dose charts, where the drilled
-  // well is the garden plot's line drawn a little thicker.
+  // Exposed groups: the colours of the PSAR dose charts. There the drilled
+  // well is the garden plot's line drawn a little thicker, and the two could
+  // not be told apart; here the well keeps the thicker line in a deeper blue
+  // of its own, far from the garden plot's sky blue and seen on both themes.
   'drained_mire': { color: 'rgb(165,42,42)', dash: 'solid' },
   'forager': { color: 'rgb(147,197,114)', dash: 'solid' },
   'garden_plot': { color: 'rgb(0,191,255)', dash: 'solid' },
   'infield_outland': { color: 'rgb(255,204,0)', dash: 'solid' },
-  'drilled_well': { color: 'rgb(0,191,255)', dash: 'solid', width: 3 },
+  'drilled_well': { color: 'rgb(60,90,230)', dash: 'solid', width: 3 },  // charts: garden plot's #00BFFF
   'drained_mire_irrig': { color: 'rgb(165,42,42)', dash: 'dash' },
 
   // No color

@@ -143,7 +143,7 @@ export const NAMED_LINE_STYLES = {
 	'forager': { color: 'rgb(147,197,114)', dash: 'solid' },
 	'garden_plot': { color: 'rgb(0,191,255)', dash: 'solid' },
 	'infield_outland': { color: 'rgb(255,204,0)', dash: 'solid' },
-	'drilled_well': { color: 'rgb(0,191,255)', dash: 'solid', width: 3 },
+	'drilled_well': { color: 'rgb(60,90,230)', dash: 'solid', width: 3 },
 	'drained_mire_irrig': { color: 'rgb(165,42,42)', dash: 'dash' },
 
 	// No colour

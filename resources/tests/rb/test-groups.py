@@ -324,9 +324,9 @@ async def main():
                 ['ext', 'rgb(255,211,158)', 'solid', 2], ['ing_milk', 'rgb(154,154,154)', 'solid', 2],
                 ['ing_water', 'rgb(0,169,212)', 'solid', 2]])
             await page.ev("__click('/exposed')")
-            check('an Exposed groups group too; the drilled well is the garden plot\'s blue, thicker',
+            check('an Exposed groups group too; the drilled well is a deeper blue than the garden plot, thicker',
                   sorted(await page.ev(lines) or []),
-                  [['drilled_well', 'rgb(0,191,255)', 'solid', 3], ['garden_plot', 'rgb(0,191,255)', 'solid', 2]])
+                  [['drilled_well', 'rgb(60,90,230)', 'solid', 3], ['garden_plot', 'rgb(0,191,255)', 'solid', 2]])
 
             check('no console errors throughout', page.logs[:3], [])
         finally:
