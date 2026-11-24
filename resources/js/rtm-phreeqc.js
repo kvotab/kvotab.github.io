@@ -1529,6 +1529,18 @@
      Numbers as text
      ====================================================================== */
 
+  /**
+   * [least, greatest] of values, as Math.min and Math.max give them, by a
+   * loop: a run read at every stored time of every cell is a water a row, and
+   * so many spread into one call ran past the stack at some 125,000.
+   */
+  function extentOf(values) {
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const v of values) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    return [lo, hi];
+  }
+
   /** %g: `p` significant figures, trailing zeros dropped. */
   function fmtG(x, p) {
     if (!Number.isFinite(x)) return String(x);
@@ -7052,7 +7064,7 @@
       }
       redox = {
         electron,
-        pe: pes.length ? [Math.min(...pes), Math.max(...pes)] : null,
+        pe: pes.length ? extentOf(pes) : null,
         elements: [...together].sort(),
         gap: worst.by, worst: worst.label,
         t: worst.at ? worst.at.t : null, cell: worst.at ? worst.at.cell : null,
@@ -7320,13 +7332,13 @@
       if (best && best.si > 0) supersaturated.push({ phase: p, si: best.si, at: best.at });
     }
     supersaturated.sort((a, b) => b.si - a.si);
-    const range = (f) => [Math.min(...good.map(f)), Math.max(...good.map(f))];
+    const range = (f) => extentOf(good.map(f));
     const off = good.reduce((a, r) => (Math.abs(r.pq.cb) / Math.max(r.pq.mu, 1e-30)
       > Math.abs(a.pq.cb) / Math.max(a.pq.mu, 1e-30) ? r : a));
     const report = {
       waters: rows.length, cells: groups.length, times: idx.length, temperature: temp, temperatureFrom: tempFrom,
       // The run's, low and high, where each water is at its own.
-      temperatures: temps ? [Math.min(...rows.map((r) => r.tc)), Math.max(...rows.map((r) => r.tc))] : null,
+      temperatures: temps ? extentOf(rows.map((r) => r.tc)) : null,
       waterError,
       counted: [...mapped].map(([n, v]) => ({ name: n, as: v.p })),
       skipped: [...skipped].map(([n, why]) => ({ name: n, why })),

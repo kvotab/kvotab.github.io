@@ -698,6 +698,26 @@ function withPhreeqc(engine) {
     `${salt.report.drift[0].by.toFixed(3)} in log K (${salt.report.drift[0].rel}); ionic strength `
     + `${salt.report.ionicStrength.map((x) => x.toFixed(3)).join(' to ')}`);
 
+  // --- every stored time of every cell: 80 cells x 2,003 times -------------
+  // A water a row, and the report's ranges were the rows spread into one call,
+  // which runs past the stack at some 125,000. PHREEQC's answer for one water
+  // stands in for every one: the report over them is what is checked.
+  const many = (() => {
+    const one = engine.run(`${P.punchBlock()}SOLUTION 1\n  units mol/kgw\n  pH 7\n  Na 1e-3; Cl 1.2e-3 charge; Ca 2e-3; S(6) 5e-4\nEND\n`);
+    return { run: (input) => [one[0], ...Array.from({ length: (input.match(/^SOLUTION\b/gm) || []).length }, () => one[1].slice())] };
+  })();
+  const longText = `<SETTINGS>\nMODE = transport\nCELLS = 80\nLENGTH = 0.8\nVELOCITY = 1e-5\nDIFFUSION = 1\nADVECTION = 1\n`
+    + 'LEFT = robin\nRIGHT = free\nTEND = 2e4\nCONC_UNIT = mol/L\n\n<SPECIES>\nNa+ 1e-3 D=1e-9 left=1e-2\n'
+    + 'Cl- 1.2e-3 D=1e-9 left=1.1e-2\nCa+2 2e-3 D=1e-9 left=1e-3\nSO4-2 5e-4 D=1e-9 left=3e-3\n';
+  let longRun = null;
+  handleRtmMessage({ type: 'run', id: 1, text: longText, solver: { method: 'ndf', tend: 2e4, rtol: 1e-6, atol: 1e-20, matrix: 'auto',
+    norm: 'max', maxSteps: 500000, maxPoints: 4000, hmax: 2e4 / 8000, nonNegative: true } }, (msg) => { if (msg.type === 'result') longRun = msg; });
+  let everyTime;
+  try { everyTime = P.viewRun({ engine: many, database, run: longRun, modelText: longText, unit: 's', times: 0 }); } catch (e) { everyTime = { error: e.message }; }
+  check('a run read at every stored time of every cell, 160,240 waters: the report over them',
+    !!everyTime.report && everyTime.report.waters === 160240 && everyTime.report.cells === 80,
+    everyTime.report ? `${everyTime.report.waters} waters, ${everyTime.report.cells} cells` : everyTime.error);
+
   // --- activity coefficients that follow the ionic strength -----------------
   const dbRead = P.readDatabase(dbText);
   check('the database\'s -gamma is read: Ca+2 a = 5, b = 0.165; Na+ 4.08 and 0.082',
