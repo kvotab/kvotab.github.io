@@ -1333,7 +1333,7 @@ def _cumulative_tail(P, F, stat):
           '    ax.plot(x, v, color=colors[name], linewidth=2.2 if name == "Validation" else 1.5, linestyle=":" if name == "Out of Bag" else "-",',
           '            marker="o" if len(x) == 1 else "None", label=name)',
           'on = "Validation" if "Validation" in curves else "Out of Bag" if "Out of Bag" in curves else next(iter(curves))',
-          f'ax.plot([KEPT], [curves[on][KEPT - 1]], linestyle="none", marker="D", markersize=7, color=colors[on], markeredgecolor="#fcf7f2")   # the number kept',
+          f'ax.plot([KEPT], [curves[on][KEPT - 1]], linestyle="none", marker="D", markersize=7, color=colors[on], markeredgecolor="#f8f9fb")   # the number kept',
           f'ax.axvline(KEPT, color="{predictive.MUTED}", linewidth=1.2, linestyle="--")',
           'ax.set_xlim(0.5, len(cum) + 0.5)',
           f'ax.set_xlabel("Number of {what}")', f'ax.set_ylabel("{STAT_LABELS[stat]}")',

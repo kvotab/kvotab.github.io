@@ -157,7 +157,7 @@ for gi, gname in enumerate(r['groups']):
             want += [(pr[i], res['actual'][i]) if kind == 'abp' else (res['rows'][i] + 1, res['actual'][i] - pr[i]) for i in idx]
         check.near(f'{lab}: every model\'s points, the page\'s', max(abs(a - b) for p, q in zip(got, want) for a, b in zip(p, q)) + abs(len(got) - len(want)), 0, 1e-12)
         check(f'{lab}: a colour per model (the Model Average in the text\'s), the legend beside', ([sc['colors'][0][:7] for sc in ax['scatter']], F['legend']),
-              (COLORS[:3] + ['#352921'], ['Lin', 'Tree', 'Bad', 'Model Average']))
+              (COLORS[:3] + ['#161b22'], ['Lin', 'Tree', 'Bad', 'Model Average']))
         check(f'{lab}: the titles, the size', (ax['title'], ax['xlabel'], ax['ylabel'], F['size']),
               (f'{"Actual by predicted" if kind == "abp" else "Residual by row"} {gname}', 'Predicted' if kind == 'abp' else 'Row', 'y' if kind == 'abp' else 'Residual', [4.8, 3.3]))
 

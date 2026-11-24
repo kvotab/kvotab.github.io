@@ -95,7 +95,7 @@
   }
 
   /* The light theme's colours in the graphs' code (the page's PALETTE, BASE, MUTED, the profiler's red). */
-  const PY = { muted: '#786b5d', text: '#352921', surface: '#fcf7f2', fit: '#c0392b' };
+  const PY = { muted: '#5d6773', text: '#161b22', surface: '#f8f9fb', fit: '#c0392b' };
   const J = (v) => JSON.stringify(v);
   const pyNum = (x) => (x == null || !Number.isFinite(x) ? 'None' : String(x).replace(/^(-?)(\d+)e/, '$1$2.0e').replace(/^(-?\d+)$/, '$1.0'));
   const pyLit = (v) => (typeof v === 'number' ? pyNum(v) : J(String(v)));
@@ -450,7 +450,7 @@
     if (read < 0 || at < read || !res.model || k < 0) return null;
     const head = [...lines.slice(0, read), 'import matplotlib.pyplot as plt', ...lines.slice(read, at + 1)];
     const log = res.model.distribution === 'Poisson';
-    const muted = '#786b5d', base = '#2f6690';
+    const muted = '#5d6773', base = '#2f6690';
     const tail = [
       log ? 'mu = np.exp(e)   # the prediction: the mean at the linear predictor (log link)' : 'mu = e   # the prediction (identity link)',
       `m = ${['train', 'valid', 'sets == 2'][k]}   # the ${set.toLowerCase()} rows`,

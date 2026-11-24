@@ -1738,7 +1738,7 @@ def _code_compare(P, fits, table_name):
 # sends what it chose (the rootogram's style and ticks, the models of an
 # overlay); counts.plot_code writes the code of one graph.
 COLORS = {k: c for k, c in zip(ORDER, ['#b0413e', '#2f6690', '#3a7d44', '#6c5b7b', '#1f8a78', '#9c8200', '#8c564b', '#b8408f', '#12808f'])}
-BAR, POINT, TEXT, MUTED, SURFACE, REF = '#8fa9c2', '#2f6690', '#352921', '#786b5d', '#fcf7f2', '#c0392b'
+BAR, POINT, TEXT, MUTED, SURFACE, REF = '#8fa9c2', '#2f6690', '#161b22', '#5d6773', '#f8f9fb', '#c0392b'
 PX = 0.72   # points per pixel: a figure at 100 pixels an inch
 
 

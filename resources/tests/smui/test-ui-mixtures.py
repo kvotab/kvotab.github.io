@@ -787,7 +787,7 @@ def check_biplot(lab, g, F):
     rays = [t for t in tr if t.get('mode') == 'lines' and not t.get('fill')]
     if rays:
         want = [(a, b) for a, b in zip(rays[0]['x'], rays[0]['y']) if a is not None and not (a == 0 and b == 0)]
-        ends = [(ln['x'][1], ln['y'][1]) for ln in ax['lines'] if len(ln['x']) == 2 and (ln['color'] or '')[:7] == '#786b5d']
+        ends = [(ln['x'][1], ln['y'][1]) for ln in ax['lines'] if len(ln['x']) == 2 and (ln['color'] or '')[:7] == '#5d6773']
         check.near(f'{lab}: the rays of the columns', maxdiff([q for p in ends for q in p], [q for p in want for q in p]), 0, 1e-9)
         text = [t for t in tr if t.get('mode') == 'text'][0]
         check(f'{lab}: the columns named at the rays\' ends', [t_['s'] for t_ in ax['texts']][-len(text['text']):], text['text'])

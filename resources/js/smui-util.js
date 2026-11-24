@@ -194,7 +194,7 @@
     return {
       text: v('--text-primary', '#161b22'), muted: v('--text-muted', '#5d6773'), grid: v('--border-color', '#dbe0e6'),
       surface: v('--bg-surface', '#f8f9fb'), accent: v('--color-kvot-accent', '#b4533f'),
-      bright: v('--color-kvot-bright', '#f3b87b'), link: v('--link-color', '#a8503f'),
+      bright: v('--color-kvot-bright', '#f3b87b'), link: v('--link-color', '#a5432f'),
       dark: document.documentElement.getAttribute('data-theme') === 'dark',
     };
   }

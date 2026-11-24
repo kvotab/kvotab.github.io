@@ -427,7 +427,7 @@ def check_tree(check, lab, s, F):
 
     def key(r):
         return (round(r['x'], 3), round(r['y'], 3), round(r['w'], 3), round(r['h'], 3))
-    for cls, fc, what in (('sm-part-box', '#fcf7f2ff', 'a box per node'), ('sm-part-track', '#e0d7ceff', 'the rate bars\' tracks')):
+    for cls, fc, what in (('sm-part-box', '#f8f9fbff', 'a box per node'), ('sm-part-track', '#dbe0e6ff', 'the rate bars\' tracks')):
         check(f'{lab}: {what}, where the page draws them', sorted(key(b) for b in ax['bars'] if b['fc'] == fc), sorted(key(r) for r in s['rects'] if cls in r['cls'].split()))
     rates = sorted(key(b) for b in ax['bars'] if b['fc'] and b['fc'][:7] in PALETTE and b['fc'][7:] == 'ff')
     check(f'{lab}: the level rates as bars', rates, sorted(key(r) for r in s['rects'] if 'sm-part-rate' in r['cls'].split()))

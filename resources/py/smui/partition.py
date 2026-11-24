@@ -1170,7 +1170,7 @@ def draw_tree(nodes, levels=None, small=False, stats=True, bar=True, prob=True, 
     import matplotlib.pyplot as plt
     from matplotlib.patches import Rectangle
     palette = ['#2f6690', '#d9822b', '#3a7d44', '#b0413e', '#6c5b7b', '#1f9e89', '#c0a000', '#8c564b', '#e377c2', '#7f7f7f', '#17becf', '#9467bd']
-    ink, second, muted, border, surface, band = '#352921', '#6b5d4f', '#786b5d', '#e0d7ce', '#fcf7f2', '#f6efe8'
+    ink, second, muted, border, surface, band = '#161b22', '#454e59', '#5d6773', '#dbe0e6', '#f8f9fb', '#f2f4f6'
     pt = 0.72   # points per pixel, at 100 pixels an inch
 
     def fmt(v, sig=7):

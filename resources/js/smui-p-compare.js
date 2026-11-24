@@ -53,7 +53,7 @@
     const out = {};
     let i = 0;
     for (const m of models) {
-      if (m.key === AVERAGE) out[m.key] = dark ? '#f2ece6' : '#352921';
+      if (m.key === AVERAGE) out[m.key] = dark ? '#f2f5f7' : '#161b22';
       else out[m.key] = pal[i++ % pal.length];
     }
     return out;

@@ -543,7 +543,7 @@ from test_predictive import check_contrib_native, check_shared_native, joined, r
 from smui import data as sdata, util  # noqa: E402
 
 GTMP = tempfile.mkdtemp(prefix='smui-partition-charts-')
-BOX, TRACK = '#fcf7f2ff', '#e0d7ceff'
+BOX, TRACK = '#f8f9fbff', '#dbe0e6ff'
 
 
 def clipped(s, px, cw):

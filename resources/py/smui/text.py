@@ -1600,10 +1600,10 @@ def lca(table, column, rows=None, id_col=None, n_clusters=5, min_freq=4, max_ter
         'xy = summary["coords"]   # the clusters mapped: classical scaling of their Kullback-Leibler distances',
         'size = 10 + 30 * np.sqrt(pi / pi.max())   # each cluster\'s marker across, in pixels: its area follows its mixing probability',
         'fig, ax = plt.subplots(figsize=(4, 3.6), layout="constrained")',
-        f'ax.axhline(0, color="#e0d7ce", linewidth=0.72, zorder=0)', f'ax.axvline(0, color="#e0d7ce", linewidth=0.72, zorder=0)',
+        f'ax.axhline(0, color="#dbe0e6", linewidth=0.72, zorder=0)', f'ax.axvline(0, color="#dbe0e6", linewidth=0.72, zorder=0)',
         f'ax.scatter(xy[:, 0], xy[:, 1], s=(0.72 * size) ** 2, color="{BASE}", alpha=0.6, linewidths=0)',
         'for c in range(len(pi)):',
-        '    ax.text(xy[c, 0], xy[c, 1], f"Cluster {c + 1}", ha="center", va="center", fontsize=7.56, color="#352921")',
+        '    ax.text(xy[c, 0], xy[c, 1], f"Cluster {c + 1}", ha="center", va="center", fontsize=7.56, color="#161b22")',
         'ax.set_xlabel("MDS1")', 'ax.set_ylabel("MDS2")', 'ax.set_title("MDS Plot")', 'plt.show()']
     counts = np.bincount(likely, minlength=k)
     return {'column': column, 'k': k, 'n_docs': n, 'n_terms': len(cols), 'min_freq': min_freq, 'max_terms': max_terms, 'seed': seed, 'starts': LCA_STARTS,
@@ -1804,7 +1804,7 @@ def termsel(table, column, response, rows=None, id_col=None, target=None, weight
             'top = kept[np.argsort(-np.abs(b[kept]), kind="stable")][:30][::-1]   # the 30 largest in size, the largest at the top',
             f'fig, ax = plt.subplots(figsize=(4.4, {max(160, 16 * len(top) + 60) / 100:g}), layout="constrained")',
             f'ax.barh(np.arange(len(top)), b[top], color=["{BASE}" if v > 0 else "#b0413e" for v in b[top]], height=0.75)',
-            'ax.set_yticks(np.arange(len(top)), [chosen[j] for j in top])', 'ax.axvline(0, color="#352921", linewidth=0.72)',
+            'ax.set_yticks(np.arange(len(top)), [chosen[j] for j in top])', 'ax.axvline(0, color="#161b22", linewidth=0.72)',
             'ax.set_xlabel("Coefficient")', f'ax.set_title({_py("Term coefficients" + (f" ({response} = {tgt})" if tgt is not None else f" ({response})"))})', 'plt.show()'])
     doc_rows = [[int(C.rows[i]) for i in C.docs[d]] for d in keep]
     return {'column': column, 'response': response, 'family': family, 'target': tgt, 'levels': levels, 'weighting': weighting, 'min_freq': min_freq,

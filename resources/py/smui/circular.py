@@ -576,7 +576,7 @@ def groups(table, y, x, rows=None, units='degrees', period=None, freq=None, alph
 # rose's bins, the level names); the rest is computed from the rows as the
 # report computes it: a dot or a point for each row, Freq counting in the
 # statistics (and the rose's bars).
-BASE, BAR, RED, GREEN, MUTED, SURFACE = '#2f6690', '#8fa9c2', '#b0413e', '#3a7d44', '#786b5d', '#fcf7f2'
+BASE, BAR, RED, GREEN, MUTED, SURFACE = '#2f6690', '#8fa9c2', '#b0413e', '#3a7d44', '#5d6773', '#f8f9fb'
 PALETTE = ['#2f6690', '#d9822b', '#3a7d44', '#b0413e', '#6c5b7b', '#1f9e89', '#c0a000', '#8c564b', '#e377c2', '#7f7f7f', '#17becf', '#9467bd']
 PX = 0.72   # points per pixel: a figure at 100 pixels an inch
 

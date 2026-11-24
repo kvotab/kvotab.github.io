@@ -45,7 +45,7 @@ HIGHER = {'rsquare', 'corr', 'entropy_rsquare', 'generalized_rsquare', 'auc'}
 UNRANKED = {'n', 'neg_loglik', 'sse', 'me', 'mpe'}
 # each model's colour in the graphs' code, in the models' order (smui-p-compare.js LIGHT)
 COLORS = ['#2f6690', '#c46a12', '#3a7d44', '#b0413e', '#6c5b7b', '#1a8a78', '#8f7600', '#8c564b', '#b8428f', '#666666', '#107f8f', '#7b5bb5']
-AVG_COLOR = '#352921'
+AVG_COLOR = '#161b22'
 
 
 def measure_columns(kind, two_levels):

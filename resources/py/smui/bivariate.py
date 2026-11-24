@@ -83,7 +83,7 @@ def _head(table_name, where=None, imports=(), table=None, rows=None):
 # colours and the graph's size at 100 pixels an inch. A Bivariate graph is put
 # together in the page (the points, and a fragment from each fit: 'plot'); the
 # other graphs' code comes whole from the function that makes their numbers.
-BASE, BAR, RED, GREEN, PURPLE, GREY, TEXT, MUTED = '#2f6690', '#8fa9c2', '#b0413e', '#3a7d44', '#6c5b7b', '#8a8a8a', '#352921', '#786b5d'
+BASE, BAR, RED, GREEN, PURPLE, GREY, TEXT, MUTED = '#2f6690', '#8fa9c2', '#b0413e', '#3a7d44', '#6c5b7b', '#8a8a8a', '#161b22', '#5d6773'
 PALETTE = ['#2f6690', '#d9822b', '#3a7d44', '#b0413e', '#6c5b7b', '#1f9e89', '#c0a000', '#8c564b', '#e377c2', '#7f7f7f', '#17becf', '#9467bd']
 PLT = 'import matplotlib.pyplot as plt'
 

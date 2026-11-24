@@ -1345,7 +1345,7 @@ def _holdout(V, idx, fitted, actual):
 # CSV export of the table (the notebook runs it): the model fitted as the
 # report's code fits it, the light theme's colours, the graph's size at 100
 # pixels an inch.
-BASE, BAR, FIT, MEAN, MUTED, TEXT = '#2f6690', '#8fa9c2', '#c0392b', '#2f6690', '#786b5d', '#352921'
+BASE, BAR, FIT, MEAN, MUTED, TEXT = '#2f6690', '#8fa9c2', '#c0392b', '#2f6690', '#5d6773', '#161b22'
 PALETTE = ['#2f6690', '#d9822b', '#3a7d44', '#b0413e', '#6c5b7b', '#1f9e89', '#c0a000', '#8c564b', '#e377c2', '#7f7f7f', '#17becf', '#9467bd']
 PLT = 'import matplotlib.pyplot as plt'
 J = json.dumps
@@ -4506,7 +4506,7 @@ def _gee_plots(m, table, rows, table_name, out):
           'ax.set_xticks(range(len(labels)), labels); ax.set_yticks(range(len(labels)), labels)']
     if k <= 12:
         c += ['for a in range(len(labels)):', '    for b_ in range(len(labels)):',
-              '        ax.text(b_, a, f"{M[a, b_]:.2f}".replace("-", "−"), ha="center", va="center", fontsize=8, color="white" if abs(M[a, b_]) > 0.5 else "#352921")']
+              '        ax.text(b_, a, f"{M[a, b_]:.2f}".replace("-", "−"), ha="center", va="center", fontsize=8, color="white" if abs(M[a, b_]) > 0.5 else "#161b22")']
     c += [f'ax.set_xlabel({J(tl or "Row of the subject")})', 'ax.set_title("working correlation")', 'plt.show()']
     codes['workcorr'] = '\n'.join(c)
     return codes

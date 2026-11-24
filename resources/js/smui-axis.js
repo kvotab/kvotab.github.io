@@ -49,7 +49,7 @@
 
   // Reference line colours: [key, label, light theme, dark theme]. The code
   // under a graph draws in the light theme's, as a document does.
-  const COLORS = [['gray', 'Gray', '#786b5d', '#b3a698'], ['red', 'Red', '#b0413e', '#f08a80'], ['blue', 'Blue', '#1f4e79', '#8fb8e8'], ['green', 'Green', '#3a7d44', '#86c98f'], ['orange', 'Orange', '#b8651b', '#f0a860']];
+  const COLORS = [['gray', 'Gray', '#5d6773', '#adb6c0'], ['red', 'Red', '#b0413e', '#f08a80'], ['blue', 'Blue', '#1f4e79', '#8fb8e8'], ['green', 'Green', '#3a7d44', '#86c98f'], ['orange', 'Orange', '#b8651b', '#f0a860']];
   const DASHES = [['solid', 'Solid', '-'], ['dash', 'Dashed', '--'], ['dot', 'Dotted', ':']];
   const DAY = 86400000;
   const PX = 0.72;         // matplotlib points per page pixel (the figures are drawn at 100 pixels an inch)

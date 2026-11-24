@@ -627,7 +627,7 @@ def draw_uplift_tree(nodes, groups, binary=False, stats=True, count=True, title=
     import math
     import matplotlib.pyplot as plt
     from matplotlib.patches import Rectangle
-    ink, second, muted, border, surface, band = '#352921', '#6b5d4f', '#786b5d', '#e0d7ce', '#fcf7f2', '#f6efe8'
+    ink, second, muted, border, surface, band = '#161b22', '#454e59', '#5d6773', '#dbe0e6', '#f8f9fb', '#f2f4f6'
     colors = ['#c0392b', '#2f6690']   # the treatment, the control
     pt = 0.72   # points per pixel, at 100 pixels an inch
 
@@ -747,7 +747,7 @@ def _uplift_graph_tail(P, U):
          'share = np.array([leaves[l]["count"] for l in order]) / sum(nd["count"] for nd in leaves)   # each leaf\'s share of the training rows',
          'left = np.r_[0, np.cumsum(share)[:-1]]',
          predictive.figure(460, 300),
-         f'ax.bar(left + share / 2, [leaves[l]["diff"] for l in order], width=share, color="{predictive.BAR}", edgecolor="#fcf7f2", linewidth=1)']
+         f'ax.bar(left + share / 2, [leaves[l]["diff"] for l in order], width=share, color="{predictive.BAR}", edgecolor="#f8f9fb", linewidth=1)']
     if P.has(1):
         L += ['wt = np.ones(len(y)) if w is None else w',
               'for i, l in enumerate(order):   # the leaf\'s uplift on its validation rows',

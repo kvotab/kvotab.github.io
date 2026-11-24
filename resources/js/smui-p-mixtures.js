@@ -67,7 +67,7 @@
   const pyNum = (v) => (Number.isFinite(v) ? String(v) : Number.isNaN(v) ? 'float("nan")' : v > 0 ? 'float("inf")' : '-float("inf")');
   const inches = (px) => String(Math.round(px) / 100);
   const area = (px) => Math.round(100 * (px * 0.72) ** 2) / 100;   // a marker's diameter in pixels as matplotlib's area in points²
-  const INK = '#352921', MUTED_INK = '#786b5d', ZERO = '#e0d7ce';
+  const INK = '#161b22', MUTED_INK = '#5d6773', ZERO = '#dbe0e6';
   const withCode = (graph, code) => (code ? el('div', { class: 'sm-mix-plotcode' }, graph, code) : graph);
   const paletteLines = (f, out) => [`palette = ${pyList(Array.from({ length: f.k + (out ? 1 : 0) }, (_, c) => colorOf(c, f.k, out)))}   # each cluster's colour${out ? ' (grey: the outlier cluster, last)' : ''}`,
     'color = [palette[c] for c in cluster]   # each row in its most likely cluster\'s colour'];
@@ -111,7 +111,7 @@
       `grid = start + (${pyNum(bins.end)} - start) * np.arange(201) / 200   # the curves' points, over the bins`,
       'scale = N * size   # the densities scaled to counts',
       `fig, ax = plt.subplots(figsize=(${inches(W)}, 3.2), layout="constrained")`,
-      `bars = ax.bar(start + (np.arange(nb) + 0.5) * size, counts, width=size, color="${SM.report.BAR}", edgecolor="#fcf7f2", linewidth=0.58, label=${J(col.name)})`,
+      `bars = ax.bar(start + (np.arange(nb) + 0.5) * size, counts, width=size, color="${SM.report.BAR}", edgecolor="#f8f9fb", linewidth=0.58, label=${J(col.name)})`,
       'total, curves = np.zeros(len(grid)), []',
       `for k_ in range(${f.k}):   # each normal cluster: its proportion times its normal density`,
       '    sd = np.sqrt(covs[k_, 0, 0])',

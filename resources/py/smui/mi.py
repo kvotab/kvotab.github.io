@@ -678,7 +678,7 @@ def _cc_code(A, info, alpha):
 # MICE.fit and MI.fit make: fitting the analysis model draws nothing) and
 # keep what the graph shows. The page sends what it chose (the bins, the
 # level names); mi.plot_code writes the code of one graph.
-OBS, IMP, TEXT, MUTED, SURFACE = '#2e6fba', '#b8406e', '#352921', '#786b5d', '#fcf7f2'
+OBS, IMP, TEXT, MUTED, SURFACE = '#2e6fba', '#b8406e', '#161b22', '#5d6773', '#f8f9fb'
 PX = 0.72   # points per pixel: a figure at 100 pixels an inch
 
 

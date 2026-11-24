@@ -623,7 +623,7 @@ check('missing values: the code runs and drops the same rows', (err, None if err
 # ---- the graphs' matplotlib code, run with Agg on the CSV, against the report's numbers ----------------------------------
 from test_charts import run_snippet_more  # noqa: E402
 
-TREATED, CONTROL, MUTED, ACCENT = '#b8406eff', '#2e6fbaff', '#786b5dff', '#bb6c5dff'
+TREATED, CONTROL, MUTED, ACCENT = '#b8406eff', '#2e6fbaff', '#5d6773ff', '#b4533fff'
 
 
 def nice_bins(v):
@@ -735,7 +735,7 @@ if F:
                                                                                  for (a, b, _), w_ in zip(segs, want)), True)
     marks = {ln['marker']: (ln['color'], sorted(int(v) for v in ln['y'])) for ln in A['lines'] if ln['marker'] in ('s', 'o', 'D')}
     check('estimate comparison: the unadjusted square, the ATE circles, the ATT diamonds, in their colours', marks,
-          {'s': (MUTED, [0]), 'o': ('#352921ff', [1, 2, 3, 4, 5]), 'D': (ACCENT, [6, 7, 8])})
+          {'s': (MUTED, [0]), 'o': ('#161b22ff', [1, 2, 3, 4, 5]), 'D': (ACCENT, [6, 7, 8])})
     check('estimate comparison: the titles and the legend', (A['xlabel'], A['title'], F['legend']), ('Effect on earnings', 'estimate comparison', ['Unadjusted', 'ATE', 'ATT']))
 F, code = chart('estimates', {'ate': ['ipw', 'ra'], 'att': []}, 'estimate comparison (IPW and RA, no ATT)')
 if F:

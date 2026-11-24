@@ -248,7 +248,7 @@
   const pyNum = (v) => (Number.isFinite(v) ? String(v) : Number.isNaN(v) ? 'float("nan")' : v > 0 ? 'float("inf")' : '-float("inf")');
   const pyLit = (v) => (typeof v === 'number' ? pyNum(v) : J(String(v)));
   const inches = (px) => String(Math.round(px) / 100);
-  const PAPER = { base: '#2f6690', bar: '#8fa9c2', text: '#352921', muted: '#786b5d' };
+  const PAPER = { base: '#2f6690', bar: '#8fa9c2', text: '#161b22', muted: '#5d6773' };
   const mcall = (ctx, fn, payload) => ctx.call(fn, { ...payload, where: ctx.where || [] });
   // A graph with its code block under it, as one item of a row.
   const withCode = (graph, code) => (code ? el('div', { class: 'mv-plotcode' }, graph, code) : graph);

@@ -577,7 +577,7 @@ def _sigma(defects=None, opportunities=None, sigma_level=None, **_):
 # statsmodels and scipy calls), the field left empty solved the same way; the
 # grid of each curve is the report's, the colours the light theme's, the
 # graph's size at 100 pixels an inch.
-BASE, EXACT, MARK, MUTED = '#2f6690', '#b35900', '#c0392b', '#786b5d'
+BASE, EXACT, MARK, MUTED = '#2f6690', '#b35900', '#c0392b', '#5d6773'
 
 SOLVE_CODE = '''
 def solve(f, target, lo, hi, grow=True):

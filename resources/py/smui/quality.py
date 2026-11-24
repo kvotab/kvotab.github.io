@@ -221,8 +221,8 @@ J = json.dumps
 PLT = 'import matplotlib.pyplot as plt'
 # the page's colours (smui-p-quality.js colors(), light theme)
 COL = {'point': '#2f6690', 'line': '#2f66908c', 'limit': '#c0392b', 'center': '#2e7d32', 'flag': '#d62728', 'zone': '#3c281e4c',
-       'spec': '#b35900', 'target': '#6c5b7b', 'within': '#2e7d32', 'overall': '#b0413e', 'mean': '#8c6d00', 'text': '#352921',
-       'muted': '#786b5d', 'grid': '#e0d7ce', 'bar': '#8fa9c2', 'shadeA': '#d627281f', 'shadeB': '#e6aa0021', 'shadeC': '#2e7d321f'}
+       'spec': '#b35900', 'target': '#6c5b7b', 'within': '#2e7d32', 'overall': '#b0413e', 'mean': '#8c6d00', 'text': '#161b22',
+       'muted': '#5d6773', 'grid': '#dbe0e6', 'bar': '#8fa9c2', 'shadeA': '#d627281f', 'shadeB': '#e6aa0021', 'shadeC': '#2e7d321f'}
 PALETTE = ['#2f6690', '#d9822b', '#3a7d44', '#b0413e', '#6c5b7b', '#1f9e89', '#c0a000', '#8c564b', '#e377c2', '#7f7f7f', '#17becf', '#9467bd']
 
 
@@ -1787,7 +1787,7 @@ def _cap_hist_code(ctx, r, plot):
               'g = np.linspace(max(v.min() - 0.2 * span, 1e-9), v.max() + 0.2 * span, 200)   # the fit\'s own grid']
         curves.append(('scale * fr.pdf(g)', r['fit']['label'], COL['overall'], '-'))
     L += [f'fig, ax = plt.subplots(figsize=({_inch(W)}, {_inch(H)}), layout="constrained")',
-          f'ax.bar(mids, counts, width=size, color="{COL["bar"]}", edgecolor="#fcf7f2", linewidth=0.8, label="Histogram")']
+          f'ax.bar(mids, counts, width=size, color="{COL["bar"]}", edgecolor="#f8f9fb", linewidth=0.8, label="Histogram")']
     for expr, name, color, ls in curves:
         xs = 'g' if 'fr.pdf' in expr else 'grid'
         L.append(f'ax.plot({xs}, {expr}, color="{color}", linewidth=2{", linestyle=" + J(ls) if ls != "-" else ""}, label={J(name)})')
@@ -1831,7 +1831,7 @@ def _cap_goal_code(ctx, out, plot):
           f'fig, ax = plt.subplots(figsize=({_inch(W)}, {_inch(H)}), layout="constrained")',
           f'ax.fill([-0.5, 0, 0.5], [0, 1 / (6 * K), 0], facecolor="#2e7d3212", edgecolor="{COL["limit"]}", linewidth=1.4, label=f"Ppk = {{K:g}}")   # the goal triangle',
           f'ax.axvline(0, color="{COL["grid"]}", linewidth=1)',
-          f'ax.scatter(gx, gy, s=33, color="{COL["point"]}", edgecolors="#fcf7f2", linewidths=1, zorder=3)',
+          f'ax.scatter(gx, gy, s=33, color="{COL["point"]}", edgecolors="#f8f9fb", linewidths=1, zorder=3)',
           'for nm, a, b in zip(names, gx, gy):',
           f'    ax.annotate(nm, (a, b), xytext=(4, 4), textcoords="offset points", fontsize=8, color="{COL["text"]}")',
           'ax.set_xlim(-xmax, xmax)', 'ax.set_ylim(0, ymax)',

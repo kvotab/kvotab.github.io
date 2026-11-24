@@ -595,7 +595,7 @@ A = F1['axes'][0]
 ev = V['stability']['eigenvalues']
 check('the companion eigenvalues: each one where it lies, the largest first', near([q for p in A['scatter'][0]['xy'] for q in p], [q for e in ev for q in (e['real'], e['imag'])], 1e-9), True)
 check('... inside the unit circle in the report\'s blue', A['scatter'][0]['colors'], ['#2f6690ff' if e['modulus'] < 1 else '#c0392bff' for e in ev])
-check('... the unit circle', line(A, [math.cos(2 * math.pi * i / 120) for i in range(121)], [math.sin(2 * math.pi * i / 120) for i in range(121)], 1e-9, color='#786b5dff') is not None, True)
+check('... the unit circle', line(A, [math.cos(2 * math.pi * i / 120) for i in range(121)], [math.sin(2 * math.pi * i / 120) for i in range(121)], 1e-9, color='#5d6773ff') is not None, True)
 lim = max(1.15, *(e['modulus'] + 0.1 for e in ev))
 check('... the page\'s square range and labels', (near(A['xlim'], [-lim, lim]), near(A['ylim'], [-lim, lim]), A['xlabel'], A['ylabel'], A['title']), (True, True, 'Real', 'Imaginary', 'Companion matrix eigenvalues'))
 

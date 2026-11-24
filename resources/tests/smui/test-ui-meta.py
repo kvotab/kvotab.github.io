@@ -587,7 +587,7 @@ window.__mt = {
   },
 };
 '''
-TEXT_C, MUTED_C, RE_C, STUDY_C = '#352921ff', '#786b5dff', '#b0413eff', '#2a6db3ff'
+TEXT_C, MUTED_C, RE_C, STUDY_C = '#161b22ff', '#5d6773ff', '#b0413eff', '#2a6db3ff'
 
 
 async def run_more(page, g, table_js):

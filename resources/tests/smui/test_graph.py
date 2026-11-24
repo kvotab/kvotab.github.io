@@ -1509,7 +1509,7 @@ if TOPO:
         cmap_ = matplotlib.colors.LinearSegmentedColormap.from_list('ramp', graph.RAMP)
         col_ = {k_: matplotlib.colors.to_hex(cmap_((v_[k_] - lo_) / (hi_ - lo_)), keep_alpha=True) for k_ in iso}
         check('Map Shapes: each region in the page\'s blue-grey-red at its mean (the page\'s range of v)', sorted(set(R_['colors'])), sorted(set(col_.values())))
-        check('Map Shapes: the land under them, the countries\' borders, the colour bar', (len(ns_['_axes'][0]['polys']) == 2 and ns_['_axes'][0]['polys'][0]['colors'][0] == '#e0d7ce8c', ns_['_axes'][0]['lines'] != [], ns_['_colorbars']), (True, True, ['Mean(v)']))
+        check('Map Shapes: the land under them, the countries\' borders, the colour bar', (len(ns_['_axes'][0]['polys']) == 2 and ns_['_axes'][0]['polys'][0]['colors'][0] == '#dbe0e68c', ns_['_axes'][0]['lines'] != [], ns_['_colorbars']), (True, True, ['Mean(v)']))
     # by name: the ids the page's map matched; with Freq, N
     E_ = {'type': 'map', 'stat': 'n', 'label': 'N', 'range': [0, 1]}
     ids_ = dict(zip(nm, iso))

@@ -654,7 +654,7 @@ async def chart_code(page):
                 spans = sorted((round(b['x'], 9), round(b['x'] + b['w'], 9)) for b in ax['bars'] if (b['fc'] or '').startswith('#5a5046'))
                 check(f'{lab}: the shaded common support, the page\'s', spans, rects)
                 vl = sorted(round(s['x0'], 9) for s in g['shapes'] if s['x0'] == s['x1'])
-                check(f'{lab}: the trimming lines, the page\'s', sorted(round(ln['x'][0], 9) for ln in ax['lines'] if ln['color'].startswith('#bb6c5d')), vl)
+                check(f'{lab}: the trimming lines, the page\'s', sorted(round(ln['x'][0], 9) for ln in ax['lines'] if ln['color'].startswith('#b4533f')), vl)
                 check(f'{lab}: the axis titles', (ax['xlabel'], ax['ylabel']), (g['titles']['x'].replace('&#61;', '='), g['titles']['y']))
             elif g['label'] == 'Love plot':
                 cats = list(reversed(ex['cats']))
@@ -664,7 +664,7 @@ async def chart_code(page):
                     want_pts = sorted((cats.index(yv), xv) for xv, yv in zip(t['x'], t['y']) if xv is not None)
                     got_pts = sorted((round(p[1]), p[0]) for p in sc[0]['xy']) if sc else []
                     check(f'{lab}: the {t["name"]} |SMD|, the page\'s', len(got_pts) == len(want_pts) and all(a[0] == b[0] and abs(a[1] - b[1]) < 1e-9 for a, b in zip(got_pts, want_pts)), True)
-                check(f'{lab}: the threshold, the page\'s', [round(ln['x'][0], 12) for ln in ax['lines'] if ln['color'].startswith('#bb6c5d')], [round(s['x0'], 12) for s in g['shapes']])
+                check(f'{lab}: the threshold, the page\'s', [round(ln['x'][0], 12) for ln in ax['lines'] if ln['color'].startswith('#b4533f')], [round(s['x0'], 12) for s in g['shapes']])
                 check(f'{lab}: the x axis title', ax['xlabel'], g['titles']['x'])
             else:
                 cats = list(reversed(ex['cats']))

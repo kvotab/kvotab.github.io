@@ -590,7 +590,7 @@ def _fit_code(S, info, table, table_name, rows, n_rep, method, seed, extra_impor
 # graph's size at 100 pixels an inch. The page sends what it chose (the
 # diagram's layout and the treatment's labels, the histograms' bins);
 # mediation.plot_code writes the code of one graph.
-ACME, ADE, TEXT, MUTED, SURFACE = '#2e6fba', '#b8406e', '#352921', '#786b5d', '#fcf7f2'
+ACME, ADE, TEXT, MUTED, SURFACE = '#2e6fba', '#b8406e', '#161b22', '#5d6773', '#f8f9fb'
 PX = 0.72   # points per pixel: a figure at 100 pixels an inch
 SM_ROW = {mine: theirs for mine, theirs, _ in EFFECTS}   # the report's names of the effects -> statsmodels' summary() rows
 COEF_SCALE = {'ols': '', 'logit': ' (log odds)', 'probit': ' (probit)', 'poisson': ' (log)'}

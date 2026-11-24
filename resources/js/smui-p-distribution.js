@@ -178,7 +178,7 @@
      the backend makes get their code from it (plot_code, mosaic_code); the
      histogram with its box plots and the CDF plot, whose bins and sums the
      page works out, get theirs here. */
-  const PAPER = { text: '#352921', muted: '#786b5d', base: '#2f6690' };
+  const PAPER = { text: '#161b22', muted: '#5d6773', base: '#2f6690' };
   const J = JSON.stringify;
   const pyNum = (v) => (Number.isFinite(v) ? String(v) : Number.isNaN(v) ? 'float("nan")' : v > 0 ? 'float("inf")' : '-float("inf")');
   const inches = (px) => String(Math.round(px) / 100);

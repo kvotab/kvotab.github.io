@@ -945,7 +945,7 @@ def save(table, inputs, rows=None, method='dl', alpha=0.05):
 # it chose: the forest plot's options, its columns and its axis range, the
 # order of a sort by label; the other graphs' axis ranges and ticks and the
 # funnel's lines. meta.plot_code writes the code of one graph.
-STUDY, RE_C, TEXT, MUTED, GRID, SURFACE = '#2a6db3', '#b0413e', '#352921', '#786b5d', '#e0d7ce', '#fcf7f2'
+STUDY, RE_C, TEXT, MUTED, GRID, SURFACE = '#2a6db3', '#b0413e', '#161b22', '#5d6773', '#dbe0e6', '#f8f9fb'
 PX = 0.72   # points per pixel: a figure at 100 pixels an inch
 
 

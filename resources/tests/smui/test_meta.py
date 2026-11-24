@@ -418,7 +418,7 @@ from decimal import Decimal, ROUND_HALF_UP  # noqa: E402
 from test_charts import maxdiff, run_snippet_more  # noqa: E402
 
 chart_dir = tempfile.mkdtemp(prefix='smui-meta-charts-')
-STUDY_C, RE_C, TEXT_C, MUTED_C = '#2a6db3ff', '#b0413eff', '#352921ff', '#786b5dff'
+STUDY_C, RE_C, TEXT_C, MUTED_C = '#2a6db3ff', '#b0413eff', '#161b22ff', '#5d6773ff'
 METHOD_NAME = {'dl': 'DerSimonian–Laird', 'pm': 'Paule–Mandel', 'reml': 'REML'}
 
 

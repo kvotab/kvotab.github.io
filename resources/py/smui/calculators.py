@@ -50,7 +50,7 @@ COMPARE = {'diff': 'Difference', 'ratio': 'Ratio', 'odds-ratio': 'Odds Ratio'}
 # multipletests' methods: key -> (label, shown at first)
 MULTI = [('holm', 'Holm', True), ('fdr_bh', 'Benjamini-Hochberg (FDR)', True), ('bonferroni', 'Bonferroni', False), ('sidak', 'Šidák', False),
          ('holm-sidak', 'Holm-Šidák', False), ('simes-hochberg', 'Hochberg', False), ('hommel', 'Hommel', False), ('fdr_by', 'Benjamini-Yekutieli (FDR)', False)]
-BASE, MUTED, FILL, CRIT = '#2f6690', '#786b5d', '#d9822b', '#b0413e'
+BASE, MUTED, FILL, CRIT = '#2f6690', '#5d6773', '#d9822b', '#b0413e'
 
 
 def _f(v, name):

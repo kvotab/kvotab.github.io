@@ -889,7 +889,7 @@ def missing_clustering(table, columns, rows=None, where=None, table_name='data')
                      'M = df[cols].isna().to_numpy().astype(float)   # 1 where a value is missing',
                      'U, counts = np.unique(M, axis=0, return_counts=True)   # the missing data patterns, each once, and how many rows have each',
                      'fig, ax = plt.subplots(2, 2, figsize=(%g, %g), gridspec_kw={"width_ratios": [5, 1], "height_ratios": [5, 1]}, layout="constrained")' % (w, h),
-                     'dark = "#352921"',
+                     'dark = "#161b22"',
                      '# the patterns (rows) and the columns clustered by Ward\'s method; the columns over every row (a pattern as often as rows have it)',
                      'rd = dendrogram(linkage(U, method="ward"), orientation="right", ax=ax[0, 1], no_labels=True, color_threshold=0, above_threshold_color=dark) if len(U) > 1 else {"leaves": [0]}',
                      'cd = dendrogram(linkage((U * np.sqrt(counts)[:, None]).T, method="ward"), orientation="bottom", ax=ax[1, 0], no_labels=True, color_threshold=0, above_threshold_color=dark) if len(cols) > 1 else {"leaves": [0]}',

@@ -400,7 +400,7 @@ def _expand(t, e, f):
 # light theme's colours and the graph's size at 100 pixels an inch.
 J = json.dumps
 PLT = 'import matplotlib.pyplot as plt'
-BASE, TEXT, MUTED = '#2f6690', '#352921', '#786b5d'
+BASE, TEXT, MUTED = '#2f6690', '#161b22', '#5d6773'
 PALETTE = ['#2f6690', '#d9822b', '#3a7d44', '#b0413e', '#6c5b7b', '#1f9e89', '#c0a000', '#8c564b', '#e377c2', '#7f7f7f', '#17becf', '#9467bd']
 # smui-p-survival.js FIT_COLORS: a fitted distribution's colour, by its place in DISTS
 FIT_COLORS = ['#b0413e', '#3a7d44', '#6c5b7b', '#c0a000', '#1f9e89', '#8c564b', '#e377c2', '#17becf', '#7f7f7f', '#2f6690']

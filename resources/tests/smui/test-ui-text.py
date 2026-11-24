@@ -994,7 +994,7 @@ async def main():
       const tbl = [...rep.body.querySelectorAll('table.sm-rt')].find(t => t.caption && t.caption.textContent === 'Term List');
       const bar = tbl.querySelector('.sm-rt-bar'), box = getComputedStyle(tbl.closest('.sm-tx-list'));
       return { bar: getComputedStyle(bar).backgroundColor, box: box.backgroundColor, w: bar.getBoundingClientRect().width }; })()''')
-    check('the count bars keep the histograms\' colour on the dark list (7.5:1)', (bars['bar'], bars['box'], bars['w']), ('rgb(143, 169, 194)', 'rgb(26, 20, 16)', 100))
+    check('the count bars keep the histograms\' colour on the dark list (7.8:1)', (bars['bar'], bars['box'], bars['w']), ('rgb(143, 169, 194)', 'rgb(13, 16, 21)', 100))
     await shot(page, 'text-06-dark.png')
     await page.call('Emulation.setDeviceMetricsOverride', {'width': 390, 'height': 860, 'deviceScaleFactor': 1, 'mobile': True}, session=page.sid)
     await asyncio.sleep(0.8)

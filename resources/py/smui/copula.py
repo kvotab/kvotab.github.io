@@ -1558,7 +1558,7 @@ def tails(table, columns, rows=None, fits=None, pair=None):
 # the light theme's colours, the graph's size at 100 pixels an inch. The page
 # sends what it chose (the family shown, the pair, the scale, the bins, the
 # simulation's size and seed); copula.plot_code writes the code of one graph.
-CONTOUR, SIM, POINT, BAR, MUTED, TEXT, SURFACE = '#b0413e', '#1baf7a', '#2f6690', '#8fa9c2', '#786b5d', '#352921', '#fcf7f2'
+CONTOUR, SIM, POINT, BAR, MUTED, TEXT, SURFACE = '#b0413e', '#1baf7a', '#2f6690', '#8fa9c2', '#5d6773', '#161b22', '#f8f9fb'
 HDR_WIDTH = (2.2, 1.7, 1.25, 1)
 PX = 0.72   # points per pixel: a figure at 100 pixels an inch
 _SM_ALL = {'clayton': 'ClaytonCopula', 'gumbel': 'GumbelCopula', 'frank': 'FrankCopula'}

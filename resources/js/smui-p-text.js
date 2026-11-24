@@ -60,8 +60,8 @@
      theme (checked with the data-viz palette validator; the words are their
      own labels, so no colour carries a meaning of its own). */
   const INK = {
-    light: { colors: ['#1c5cab', '#b4501f', '#0f7a55', '#4a3aa7', '#6a6a00', '#b8336a'], grays: ['#352921', '#5a4d42', '#6b5d4f', '#786b5d'], low: '#1f5fa8', mid: '#6b6259', high: '#b23a2e' },
-    dark: { colors: ['#6da7ec', '#f08a5d', '#3cc494', '#a99ff0', '#d0b24a', '#ee86ad'], grays: ['#e8ddd0', '#cfc2b3', '#b8a898', '#9f9182'], low: '#7fb0ff', mid: '#b8a898', high: '#ff8a7a' },
+    light: { colors: ['#1c5cab', '#b4501f', '#0f7a55', '#4a3aa7', '#6a6a00', '#b8336a'], grays: ['#161b22', '#363e48', '#454e59', '#5d6773'], low: '#1f5fa8', mid: '#4c5560', high: '#b23a2e' },
+    dark: { colors: ['#6da7ec', '#f08a5d', '#3cc494', '#a99ff0', '#d0b24a', '#ee86ad'], grays: ['#e4e8ec', '#c9d0d7', '#b0b9c3', '#949ea9'], low: '#7fb0ff', mid: '#b0b9c3', high: '#ff8a7a' },
   };
   const ink = () => (SM.util.themeColors().dark ? INK.dark : INK.light);
 
@@ -90,7 +90,7 @@
   const J = JSON.stringify;
   const pyList = (a) => `[${a.map((v) => J(v)).join(', ')}]`;
   const area = (px) => Math.round(100 * (px * 0.72) ** 2) / 100;   // a marker's diameter in pixels as matplotlib's area in points²
-  const BASE = '#2f6690', INK_TEXT = '#352921', ZERO = '#e0d7ce', INK_MUTED = '#786b5d';
+  const BASE = '#2f6690', INK_TEXT = '#161b22', ZERO = '#dbe0e6', INK_MUTED = '#5d6773';
   const withCode = (graph, code) => (code ? el('div', { class: 'sm-tx-plotcode' }, graph, code) : graph);
   const zeroLines = [`ax.axhline(0, color="${ZERO}", linewidth=0.72, zorder=0)`, `ax.axvline(0, color="${ZERO}", linewidth=0.72, zorder=0)`];
 
@@ -438,12 +438,17 @@
   }
 
   /* ---- Word Cloud ------------------------------------------------------------------------------------------ */
+  /* A word's width at px and the height of the font's box, which is the box
+     of the word drawn (IBM Plex Sans: 1.3 em; a fixed 1.18 em, Verdana's
+     size, let rows of large words overlap by a pixel or two). */
   let measurer;
-  function textWidth(text, px) {
+  function textBox(text, px) {
     if (measurer === undefined) { try { measurer = document.createElement('canvas').getContext('2d'); } catch (e) { measurer = null; } }
-    if (!measurer) return text.length * px * 0.62;
+    if (!measurer) return { w: text.length * px * 0.62, h: px * 1.3 };
     measurer.font = `${px}px "IBM Plex Sans", verdana, sans-serif`;
-    return measurer.measureText(text).width;
+    const m = measurer.measureText(text);
+    const h = m.fontBoundingBoxAscent + m.fontBoundingBoxDescent;
+    return { w: m.width, h: Number.isFinite(h) && h > 0 ? h : px * 1.3 };
   }
 
   /* Boxes for the words, largest first. Centered: along an elliptical
@@ -452,7 +457,7 @@
      default); Alphabetical: alphabetically, in lines. */
   function cloudLayout(words, mode, width) {
     const pad = 3;
-    for (const w of words) { w.w = textWidth(w.term, w.size) + 2 * pad; w.h = w.size * 1.18 + pad; }
+    for (const w of words) { const b = textBox(w.term, w.size); w.w = b.w + 2 * pad; w.h = b.h + pad; }
     if (mode === 'ordered' || mode === 'alphabetical') {
       const lines = [];
       let line = [], lw = 0;

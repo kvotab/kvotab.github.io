@@ -1003,7 +1003,7 @@ for label, kw, a_, b_ in (('on correlations, Prin2 by Prin3, ellipse, varimax', 
         ax = F['axes'][0]
         P = pts(ax)
         check.near(f'PCA {label}: {key}: the diamonds are the loadings', max(gap(P[:, 0], ld_[:, a_]), gap(P[:, 1], ld_[:, b_])), 0.0, abs_=1e-9)
-        check(f'PCA {label}: {key}: a ray to each column', all(has_line(ax, [0, ld_[i, a_]], [0, ld_[i, b_]], color='#786b5d') for i in range(5)), True)
+        check(f'PCA {label}: {key}: a ray to each column', all(has_line(ax, [0, ld_[i, a_]], [0, ld_[i, b_]], color='#5d6773') for i in range(5)), True)
         check(f'PCA {label}: {key}: the names at the ends', texts(ax), colsq)
         circ = [p for p in ax['patches'] if p['type'] == 'ellipse']
         unit = on_ != 'unscaled'
@@ -1082,7 +1082,7 @@ for label, kw, xc in (('linear', {}, 'g'), ('quadratic, Freq', {'method': 'quadr
     check(f'Discriminant {label}: the 95% confidence regions of the means', cl_ok, True)
     check(f'Discriminant {label}: the normal 50% contours', c50_ok, True)
     oy = 0 if two else len(labs) - 0.5
-    check(f'Discriminant {label}: the biplot rays, 1.5 × the standardized coefficients', all(has_line(ax, [0, 1.5 * std_[j, 0]], [oy, oy + (1.5 * std_[j, 1] if two else 0.25 * (j + 1) / 4)], color='#786b5d') for j in range(4)), True)
+    check(f'Discriminant {label}: the biplot rays, 1.5 × the standardized coefficients', all(has_line(ax, [0, 1.5 * std_[j, 0]], [oy, oy + (1.5 * std_[j, 1] if two else 0.25 * (j + 1) / 4)], color='#5d6773') for j in range(4)), True)
     check(f'Discriminant {label}: the covariates at the rays\' ends, the groups in the legend', (texts(ax), ax['legend']), (['a', 'c', 'd', 'e'], labs))
     check(f'Discriminant {label}: the canonical plot\'s axes', (ax['xlabel'], ax['ylabel'] if two else [t_ for t_ in ax['yticklabels'] if t_]), ('Canonical1', 'Canonical2' if two else labs))
     F = figure(f'Discriminant {label}: scores by row', dr_['scores_code'], tq)
@@ -1192,7 +1192,7 @@ for label, kw in (('2 to 4 clusters, in their units', {'k_min': 2, 'k_max': 4, '
                     ell_ok &= has_line(ax, ex, ey, rel=1e-7, color=PAL[c_])
             check(f'{tag}: the 90% ellipse of each cluster', ell_ok, True)
             s_ = 0.8 * np.abs(pcs_[:, :2]).max() / np.abs(V_[:, :2]).max()
-            got_rays = all(has_line(ax, [0, s_ * V_[j, 0]], [0, s_ * V_[j, 1]], rel=1e-9, color='#786b5d') for j in range(3))
+            got_rays = all(has_line(ax, [0, s_ * V_[j, 0]], [0, s_ * V_[j, 1]], rel=1e-9, color='#5d6773') for j in range(3))
             check(f'{tag}: the columns\' rays {"drawn" if rays else "left out (Biplot Rays off)"}', (got_rays, sorted(t_ for t_ in texts(ax) if t_ in ('u', 'v', 'a'))), (rays, ['a', 'u', 'v'] if rays else []))
             ev_k = np.array(km_['pca']['eigenvalues'])
             check(f'{tag}: the axes\' shares of the variance, the title', (ax['xlabel'], ax['ylabel'], ax['title']),
@@ -1221,7 +1221,7 @@ for label, kw in (('', {}), (' (Freq)', {'freq': 'f'}), (' (Weight, rows left ou
     F = figure(f'FDR LogWorth by Effect Size{label}', rs_['effect_code'], tq)
     ax = F['axes'][0]
     check.near(f'FDR LogWorth by Effect Size{label}: the tests', gap(pts(ax), [[x_['effect'], x_['fdr_logworth']] for x_ in good]), 0.0, abs_=1e-9)
-    check(f'FDR LogWorth by Effect Size{label}: red where significant', [c_[:7] for c_ in ax['scatter'][0]['colors']], ['#c0392b' if x_['fdr_p'] < 0.05 else '#786b5d' for x_ in good])
+    check(f'FDR LogWorth by Effect Size{label}: red where significant', [c_[:7] for c_ in ax['scatter'][0]['colors']], ['#c0392b' if x_['fdr_p'] < 0.05 else '#5d6773' for x_ in good])
     F = figure(f'FDR LogWorth by RSquare{label}', rs_['r2_code'], tq)
     ax = F['axes'][0]
     check.near(f'FDR LogWorth by RSquare{label}: the continuous responses\' tests', gap(pts(ax), [[x_['r2'], x_['fdr_logworth']] for x_ in good if x_['r2'] is not None]), 0.0, abs_=1e-9)

@@ -47,7 +47,7 @@ from .util import code_head
 
 J = json.dumps
 PALETTE = ['#2f6690', '#d9822b', '#3a7d44', '#b0413e', '#6c5b7b', '#1f9e89', '#c0a000', '#8c564b', '#e377c2', '#7f7f7f', '#17becf', '#9467bd']   # the page's, light theme
-GRID, SURFACE = '#e0d7ce', '#fcf7f2'   # kvot.css, light theme
+GRID, SURFACE = '#dbe0e6', '#f8f9fb'   # kvot.css, light theme
 
 SEED = 20260926          # Monte Carlo bands: the same numbers every time
 CRITERIA = ('aic', 'bic', 'hqic', 'fpe')

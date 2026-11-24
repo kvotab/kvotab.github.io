@@ -479,7 +479,7 @@ def _time_lines(S, name='t', of='y'):
 # options say so (Show Points, Show Prediction Interval, the Mean Line ...;
 # '!flag': when it is off). So neither a display option nor the room there is
 # fits a model again. assemble() puts a recipe together as the page does.
-BASE, RED, MUTED, INK = '#2f6690', '#b0413e', '#786b5d', '#352921'   # the report's points, fits, muted and text, light theme
+BASE, RED, MUTED, INK = '#2f6690', '#b0413e', '#5d6773', '#161b22'   # the report's points, fits, muted and text, light theme
 BAR_FILL, BAND = '#6f93b8', '#2f6ec7'   # the diagnostics charts' bars and ±2 standard error marks (smui-timeseries.css)
 REGIMES = ['#2a78d6', '#eb6834', '#1baf7a']   # the regimes, light theme (smui-p-timeseries.js)
 PT = 0.72   # points per pixel, at 100 pixels an inch

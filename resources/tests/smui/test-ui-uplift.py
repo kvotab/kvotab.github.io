@@ -164,7 +164,7 @@ def check_uplift_tree(lab, s, F):
 
     def key(r):
         return (round(r['x'], 3), round(r['y'], 3), round(r['w'], 3), round(r['h'], 3))
-    check(f'{lab}: a box per node, where the page draws them', sorted(key(b) for b in ax['bars'] if b['fc'] == '#fcf7f2ff'), sorted(key(r) for r in s['rects'] if 'sm-part-box' in r['cls'].split()))
+    check(f'{lab}: a box per node, where the page draws them', sorted(key(b) for b in ax['bars'] if b['fc'] == '#f8f9fbff'), sorted(key(r) for r in s['rects'] if 'sm-part-box' in r['cls'].split()))
     check(f'{lab}: the groups\' colour marks', sorted(key(b) for b in ax['bars'] if b['w'] == 3), sorted(key(r) for r in s['rects'] if 'sm-upl-swatch' in r['cls'].split()))
     tx = sorted((t['s'], round(t['x'], 2), round(t['y'], 2)) for t in ax['texts'])
     check(f'{lab}: every text of the boxes, in its place', tx, sorted((t['s'], round(t['x'], 2), round(t['y'], 2)) for t in s['texts']))

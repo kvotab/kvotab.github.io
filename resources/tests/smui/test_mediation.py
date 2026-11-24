@@ -414,7 +414,7 @@ for label, kw, frame, name in (
 # ---- the graphs' matplotlib code, run with Agg on the CSV, against the report's numbers ----------------------------------
 from test_charts import run_snippet_more  # noqa: E402
 
-ACME_C, ADE_C, TEXT_C = '#2e6fbaff', '#b8406eff', '#352921ff'
+ACME_C, ADE_C, TEXT_C = '#2e6fbaff', '#b8406eff', '#161b22ff'
 ORDER7 = ['ACME (control)', 'ACME (treated)', 'ACME (average)', 'ADE (control)', 'ADE (treated)', 'ADE (average)', 'Total Effect']
 
 
@@ -530,7 +530,7 @@ for label, kw, frame_, name, tl in (
         check(f'{nm} simulated ({label}): the bars count the report\'s simulations in the page\'s bins', [b_['h'] for b_ in A['bars']], [float(c_) for c_ in cnt])
         vl = sorted(round(ln['x'][0], 9) for ln in A['lines'] if ln['color'] == TEXT_C)
         check(f'{nm} simulated ({label}): the estimate and the interval, the report\'s', vl, sorted(round(e[nm][k], 9) for k in ('estimate', 'lower', 'upper')))
-        check(f'{nm} simulated ({label}): the zero line when the bins straddle it', len([ln for ln in A['lines'] if ln['color'] == '#786b5dff']), 1 if bins['start'] < 0 < bins['end'] else 0)
+        check(f'{nm} simulated ({label}): the zero line when the bins straddle it', len([ln for ln in A['lines'] if ln['color'] == '#5d6773ff']), 1 if bins['start'] < 0 < bins['end'] else 0)
         check(f'{nm} simulated ({label}): the titles', (A['xlabel'], A['ylabel'], A['title']), (nm, 'Simulations', f'{nm} simulated'))
     # the path diagram, wide and compact
     for compact in (False, True):

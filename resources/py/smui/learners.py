@@ -1220,7 +1220,7 @@ def _svm_tuning_tail(P, M):
         L += ['from matplotlib.colors import LinearSegmentedColormap',
               f'ramp = LinearSegmentedColormap.from_list("ramp", {json.dumps(RAMP)})',
               pv.figure(400, 320),
-              'sc = ax.scatter(cost_, gamma_, c=crit_, cmap=ramp, marker="s", s=75, edgecolors="#fcf7f2", linewidths=0.7)',
+              'sc = ax.scatter(cost_, gamma_, c=crit_, cmap=ramp, marker="s", s=75, edgecolors="#f8f9fb", linewidths=0.7)',
               f'ax.scatter([C], [gamma], marker="s", s=150, facecolors="none", edgecolors="{pv.TEXT}", linewidths=1.5)   # the best, fitted again',
               f'fig.colorbar(sc, ax=ax, label="{what}")',
               'ax.set_xscale("log")', 'ax.set_yscale("log")', 'ax.set_xlabel("Cost")', 'ax.set_ylabel("Gamma")']
@@ -1343,7 +1343,7 @@ def _boundary_tail(P, M, a, b, m, cur, held_py, two, plot):
         L += ['pg = np.zeros((len(grid), len(levels)))', 'pg[:, svm.classes_] = svm.predict_proba(Zg)',
               'dec = svm.decision_function(Zg).reshape(XX.shape)   # 0 on the boundary, -1 and 1 on the margins',
               'neg, pos = colors[int(svm.classes_[0])], colors[int(svm.classes_[1])]   # toward the second level where positive',
-              'ax.imshow(np.clip(dec, -2.5, 2.5), extent=extent, origin="lower", aspect="auto", cmap=LinearSegmentedColormap.from_list("dec", [neg, "#fcf7f2", pos]), vmin=-2.5, vmax=2.5, alpha=0.24, interpolation="bilinear")',
+              'ax.imshow(np.clip(dec, -2.5, 2.5), extent=extent, origin="lower", aspect="auto", cmap=LinearSegmentedColormap.from_list("dec", [neg, "#f8f9fb", pos]), vmin=-2.5, vmax=2.5, alpha=0.24, interpolation="bilinear")',
               f'ax.contour(gx, gy, dec, levels=[0], colors="{pv.TEXT}", linewidths=1.44)',
               f'ax.contour(gx, gy, dec, levels=[-1, 1], colors="{pv.MUTED}", linewidths=0.86, linestyles="--")',
               f'handles += [Line2D([], [], color="{pv.TEXT}", linewidth=1.44, label="Boundary"), Line2D([], [], color="{pv.MUTED}", linewidth=0.86, linestyle="--", label="Margins (±1)")]']
@@ -1355,7 +1355,7 @@ def _boundary_tail(P, M, a, b, m, cur, held_py, two, plot):
         L += ['pred_grid = (ym + ys * svm.predict(Zg)).reshape(XX.shape)',
               f'ramp = LinearSegmentedColormap.from_list("ramp", {J(RAMP)})',
               'im = ax.imshow(pred_grid, extent=extent, origin="lower", aspect="auto", cmap=ramp, alpha=0.45, interpolation="bilinear")',
-              'cs = ax.contour(gx, gy, pred_grid, colors="#fcf7f2", linewidths=0.43)',
+              'cs = ax.contour(gx, gy, pred_grid, colors="#f8f9fb", linewidths=0.43)',
               f'ax.clabel(cs, fontsize=6.8, colors="{pv.TEXT}")',
               f'fig.colorbar(im, ax=ax, label={J(P.y)})']
     if cat:
@@ -1363,14 +1363,14 @@ def _boundary_tail(P, M, a, b, m, cur, held_py, two, plot):
               '    for train_rows, face in ((True, True), (False, False)):',
               '        r = ok & (y == j) & (train == train_rows)',
               '        if r.any():',
-              '            ax.scatter(va[r], vb[r], s=34, marker=markers[j % len(markers)], facecolors=colors[j % len(colors)] if face else "none", edgecolors=colors[j % len(colors)] if not face else "#fcf7f2", linewidths=0.8)',
+              '            ax.scatter(va[r], vb[r], s=34, marker=markers[j % len(markers)], facecolors=colors[j % len(colors)] if face else "none", edgecolors=colors[j % len(colors)] if not face else "#f8f9fb", linewidths=0.8)',
               '    if (ok & (y == j)).any():',
               '        handles.append(Line2D([], [], linestyle="none", marker=markers[j % len(markers)], color=colors[j % len(colors)], label=str(name)))']
     else:
         L += ['for train_rows, face in ((True, True), (False, False)):',
               '    r = ok & (train == train_rows)',
               '    if r.any():',
-              f'        ax.scatter(va[r], vb[r], s=26, marker="o", facecolors="{pv.TEXT}" if face else "none", edgecolors="{pv.TEXT}" if not face else "#fcf7f2", linewidths=0.6)',
+              f'        ax.scatter(va[r], vb[r], s=26, marker="o", facecolors="{pv.TEXT}" if face else "none", edgecolors="{pv.TEXT}" if not face else "#f8f9fb", linewidths=0.6)',
               f'handles.append(Line2D([], [], linestyle="none", marker="o", color="{pv.TEXT}", label="Rows"))']
     if rings:
         L += ['if (sv & ok).any():',

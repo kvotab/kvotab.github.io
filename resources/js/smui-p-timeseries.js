@@ -1050,8 +1050,8 @@
     }
     L.push('');
     if (forecast) {
-      L.push(`ax.axvline(t[-1], color="#786b5d", linewidth=0.72, linestyle=":")   # the end of the ${held ? 'values the models are fitted to' : 'data'}`);
-      if (held) L.push('ax.axvspan(t[-1], t_hold[-1], color="#786b5d", alpha=0.12, linewidth=0)   # the held-back values');
+      L.push(`ax.axvline(t[-1], color="#5d6773", linewidth=0.72, linestyle=":")   # the end of the ${held ? 'values the models are fitted to' : 'data'}`);
+      if (held) L.push('ax.axvspan(t[-1], t_hold[-1], color="#5d6773", alpha=0.12, linewidth=0)   # the held-back values');
       L.push(`ax.set_xlabel(${J(ctx.name('time') || 'Row')})`, `ax.set_ylabel(${J(col.name)})`, `ax.set_title(${J(title)})`,
         'fig.legend(loc="outside lower center", ncols=2, frameon=False, fontsize=8)   # the models');
     } else {

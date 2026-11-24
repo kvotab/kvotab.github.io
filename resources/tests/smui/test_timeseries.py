@@ -1174,7 +1174,7 @@ F, _ = draw('the structural model\'s components', Ug['plot_code']['components'],
 check('... a panel for each component, named as the page names them', [a['left'] for a in F['axes']], [c_['label'] for c_ in Ug['components']])
 check('... each smoothed component, in the model\'s colour', [line(a, tday, c_['mean'], 1e-6, color='#3a7d44ff') is not None for a, c_ in zip(F['axes'], Ug['components'])], [True] * n_)
 check('... a band where the page has one', [len(a['polys']) for a in F['axes']], [1 if c_['lower'] else 0 for c_ in Ug['components']])
-check('... the data in the level panel', line(F['axes'][0], tday, Sg['values'], marker='o', ls='None', color='#786b5dff') is not None, True)
+check('... the data in the level panel', line(F['axes'][0], tday, Sg['values'], marker='o', ls='None', color='#5d6773ff') is not None, True)
 Tg = call('timeseries.theta', **base_g, period=12, h=12)
 check_model('the Theta model', Tg, csv, tday, Sg['values'])
 T2 = dict(Tg, forecast=dict(Tg['forecast'], lower=Tg['forecast']['sm_lower'], upper=Tg['forecast']['sm_upper']))
@@ -1195,7 +1195,7 @@ while i_ < len(mg['most']):
         runs.append((edges_[i_], edges_[j_] - edges_[i_]))
     i_ = j_
 check('the regimes: a band over each run of the most likely regime, as the page shades them', [(round(b['x'], 9), round(b['w'], 9)) for b in A['bars']], [(round(a, 9), round(b, 9)) for a, b in runs])
-check('... the series in ink, the legend', (line(A, tg_, list(gs), marker='o', color='#352921ff') is not None, F['legend']), (True, ['growth', 'Regime 0 most likely', 'Regime 1 most likely']))
+check('... the series in ink, the legend', (line(A, tg_, list(gs), marker='o', color='#161b22ff') is not None, F['legend']), (True, ['growth', 'Regime 0 most likely', 'Regime 1 most likely']))
 F, _ = draw('the regime probabilities', mg['plot_code']['prob'], g_csv, {'fprob': True}, size=(620, 260))
 A = F['axes'][0]
 check('the regime probabilities: the smoothed ones, with points', [line(A, tg_, p_, 1e-6, marker='o') is not None for p_ in mg['prob']], [True, True])

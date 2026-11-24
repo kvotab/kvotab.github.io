@@ -1238,7 +1238,7 @@ def evaluate(table, factors, rows=None, model='main', alpha=0.05, rmse=1.0, coef
 # model matrix and V = (X'X)^-1, then the diagnostics or a graph (matplotlib,
 # the light theme's colours, the graph's size at 100 pixels an inch).
 MODEL_LABELS = {'main': 'Main Effects', '2fi': 'Main Effects and Two-Factor Interactions', 'rsm': 'Response Surface (with squares)', 'full': 'Full Factorial'}
-BASE, TEXT, MUTED = '#2f6690', '#352921', '#786b5d'
+BASE, TEXT, MUTED = '#2f6690', '#161b22', '#5d6773'
 J = json.dumps
 
 

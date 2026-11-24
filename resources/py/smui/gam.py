@@ -888,7 +888,7 @@ def compare(table, rows=None, alpha=0.05, table_name='data', **model):
 # what it chose (a term's band, residuals, rug and intercept; the surface's
 # two terms); gam.plot_code writes the code of one graph. The Prediction
 # Profiler is interactive and has none.
-FIT, BAND, POINT, MUTED, GRID = '#c0392b', '#c0392b', '#2f6690', '#786b5d', '#e0d7ce'
+FIT, BAND, POINT, MUTED, GRID = '#c0392b', '#c0392b', '#2f6690', '#5d6773', '#dbe0e6'
 PX = 0.72   # points per pixel: a figure at 100 pixels an inch
 
 

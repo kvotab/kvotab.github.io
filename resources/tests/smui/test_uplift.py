@@ -517,7 +517,7 @@ for label, kw in [('continuous, a validation column', dict(y='yc', x=['x1', 'g',
     if F:
         ax = F['axes'][0]
         texts = [t_['s'] for t_ in ax['texts']]
-        boxes = [b for b in ax['bars'] if b['fc'] == '#fcf7f2ff']
+        boxes = [b for b in ax['bars'] if b['fc'] == '#f8f9fbff']
         check(f'{label}: ... a box per node, two lines per split', (len(boxes), len(ax['lines'])), (len(res['nodes']), 2 * res['splits']))
         fmt_ = (lambda v: f'{v:.4f}'.replace('-', '−')) if res['binary'] else None
         diffs = [t_ for t_ in texts]

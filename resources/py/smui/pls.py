@@ -384,7 +384,7 @@ def _code(M, table, table_name, rows, alpha, graph=False):
 # ---------------------------------------------------------------------------
 
 SET_COLORS = [predictive.BASE, '#3a7d44', '#6c5b7b']   # smui-p-pls.js setColors(), light theme
-GRID = '#e0d7ce'                                        # the zero lines (the theme's grid colour)
+GRID = '#dbe0e6'                                        # the zero lines (the theme's grid colour)
 
 
 def _width(w):

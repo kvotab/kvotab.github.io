@@ -1369,7 +1369,7 @@
     ] });
     const [xl, xh] = extent(d.hat, [h3 * 1.05]);
     const trace = { type: 'scatter', mode: 'markers', x: d.hat, y: d.externally, rows: d.rows, hovertext: hover, hovertemplate: '%{hovertext}<br>leverage %{x:.4g}, studentized %{y:.4g}<extra></extra>',
-      marker: { size: cd, sizemode: 'area', sizeref: (2 * cmax) / (34 ** 2), sizemin: 3.5, opacity: 0.8, line: { width: 0.6, color: P.dark ? '#1a1410' : '#ffffff' } }, name: 'Rows' };
+      marker: { size: cd, sizemode: 'area', sizeref: (2 * cmax) / (34 ** 2), sizemin: 3.5, opacity: 0.8, line: { width: 0.6, color: P.dark ? '#0d1015' : '#ffffff' } }, name: 'Rows' };
     const vline = (x, dash) => ({ type: 'line', xref: 'x', x0: x, x1: x, yref: 'paper', y0: 0, y1: 1, line: { color: P.muted, width: 1, dash } });
     const hline = (v, dash, color = P.muted) => ({ type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: v, y1: v, line: { color, width: 1, dash } });
     ob.add(ctx.plot([trace], { xaxis: { title: { text: 'Leverage (hat)' }, range: [Math.max(0, xl - 0.02 * (xh - xl)), xh + 0.04 * (xh - xl)] }, yaxis: { title: { text: 'Externally Studentized Residual' } },
@@ -1876,7 +1876,7 @@
     // the values on the cells, in a colour that reads on each: the strong colours are dark in the light theme and light in the dark one
     // placed by the categories' serial numbers: a label such as '2' would be read as the index 2
     const annotations = k > 12 ? [] : Mx.values.flatMap((row, i) => row.map((v, j) => ({ x: j, y: i, xref: 'x', yref: 'y', text: txt[i][j], showarrow: false,
-      font: { size: 10.5, color: v != null && Math.abs(v) > 0.5 ? (tc.dark ? '#1a1410' : '#ffffff') : tc.text } })));
+      font: { size: 10.5, color: v != null && Math.abs(v) > 0.5 ? (tc.dark ? '#0d1015' : '#ffffff') : tc.text } })));
     ob.add(ctx.plot([{ type: 'heatmap', z: Mx.values, x: labels, y: labels, zmin: -1, zmax: 1, colorscale: scale, text: txt, hovertemplate: '%{y} and %{x}: %{text}<extra></extra>', xgap: 1, ygap: 1, colorbar: { thickness: 10, len: 0.85 } }],
       { xaxis: { type: 'category', title: { text: res.model.time || 'Row of the subject' }, showgrid: false, showline: false, ticks: '' }, yaxis: { type: 'category', autorange: 'reversed', showgrid: false, showline: false, ticks: '' }, annotations, margin: { l: 70, r: 10, t: 8, b: 40 } },
       { width: W(side + 80), height: side, title: 'working correlation', select: false }), ctx.code(codeOf(res, 'workcorr')),

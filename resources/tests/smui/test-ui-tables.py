@@ -1524,7 +1524,7 @@ async def snapshot_code(page):
         ax = F['axes'][0]
         got = ax['scatter'][0]['xy'] if ax['scatter'] else []
         check(f'{lab}: a mark for each missing cell, at its column and row number', [tuple(p) for p in got], [tuple(p) for p in points_of(g['traces'][0])])
-        check(f'{lab}: square marks in the text colour', (ax['scatter'][0]['colors'][0][:7] if ax['scatter'] else None), '#352921')
+        check(f'{lab}: square marks in the text colour', (ax['scatter'][0]['colors'][0][:7] if ax['scatter'] else None), '#161b22')
         check(f'{lab}: the columns on the axis, the first row at the top', ([t for t in ax['xticklabels'] if t], ax['yinverted']), (g['ticks'], True))
         check(f'{lab}: the titles and the size', (ax['title'], ax['ylabel'], F['size']), (g['label'], g['titles']['y'], [g['w'] / 100, g['h'] / 100]))
         if i:

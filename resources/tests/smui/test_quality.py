@@ -510,7 +510,7 @@ from test_charts import close, maxdiff, run_snippet  # noqa: E402
 
 CTMP = _tempfile.mkdtemp(prefix='smui-quality-')
 U_PAL = ['#2f6690', '#d9822b', '#3a7d44', '#b0413e', '#6c5b7b', '#1f9e89', '#c0a000', '#8c564b', '#e377c2', '#7f7f7f', '#17becf', '#9467bd']
-QC = {'point': '#2f6690', 'line': '#2f66908c', 'limit': '#c0392b', 'center': '#2e7d32', 'flag': '#d62728', 'zone': '#3c281e4c', 'muted': '#786b5d'}
+QC = {'point': '#2f6690', 'line': '#2f66908c', 'limit': '#c0392b', 'center': '#2e7d32', 'flag': '#d62728', 'zone': '#3c281e4c', 'muted': '#5d6773'}
 
 
 def export(tid):

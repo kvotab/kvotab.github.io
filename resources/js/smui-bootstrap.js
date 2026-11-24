@@ -240,7 +240,7 @@
       'k = np.floor((x - start) / size + 1e-9).astype(int)   # each value\'s bin, as the graph counts it',
       'counts = np.bincount(k[(k >= 0) & (k < nb)], minlength=nb)',
       'fig, ax = plt.subplots(figsize=(3.8, 2.4), layout="constrained")',
-      `ax.bar(start + (np.arange(nb) + 0.5) * size, counts, width=0.98 * size, color="${SM.report.BAR}", edgecolor="#fcf7f2", linewidth=0.43)`);
+      `ax.bar(start + (np.arange(nb) + 0.5) * size, counts, width=0.98 * size, color="${SM.report.BAR}", edgecolor="#f8f9fb", linewidth=0.43)`);
     if (Number.isFinite(s.original)) L.push(`ax.axvline(t0, color="${red}", linewidth=1.3)   # solid: the original estimate`);
     if (Number.isFinite(L95.pct_lower)) L.push(`ax.axvline(lower, color="${red}", linewidth=0.86, linestyle="--")   # dashed: the 95% percentile limits`);
     if (Number.isFinite(L95.pct_upper)) L.push(`ax.axvline(upper, color="${red}", linewidth=0.86, linestyle="--")`);

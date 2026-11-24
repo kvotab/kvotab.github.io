@@ -1050,7 +1050,7 @@ def _hdr_def_lines(vary_all, thr, G, bw):
 # fits, densities) the code computes from the data, by the same methods; only
 # what the page chose is written into it as numbers. graph.code writes it.
 PALETTE = ['#2f6690', '#d9822b', '#3a7d44', '#b0413e', '#6c5b7b', '#1f9e89', '#c0a000', '#8c564b', '#e377c2', '#7f7f7f', '#17becf', '#9467bd']
-TEXT, MUTED, GRIDLINE, SURFACE = '#352921', '#786b5d', '#e0d7ce', '#fcf7f2'   # kvot.css, light theme
+TEXT, MUTED, GRIDLINE, SURFACE = '#161b22', '#5d6773', '#dbe0e6', '#f8f9fb'   # kvot.css, light theme
 POINT, INK, BAR, FIT_RED, BOX_BLUE, MISSING = '#2f6690', '#1f4e79', '#8fa9c2', '#b0413e', '#4a6f94', '#aaaaaa'
 RAMP = ['#2f6ec7', '#b0b0b0', '#c0392b']        # the page's blue-grey-red (SM.util.ramp at 0, 0.5, 1)
 HEAT = ['#eef3f8', '#7aa3c8', '#1f4e79']        # a heatmap's counts, light theme
@@ -1411,10 +1411,10 @@ _HELPERS['boundaries'] = [
     '    return out']
 
 # the map's colours in the light theme, as the page's (smui-p-graph.js geoLayout): the land, the borders
-MAP_LAND, MAP_BORDER = '#e0d7ce8c', '#786b5d80'
+MAP_LAND, MAP_BORDER = '#dbe0e68c', '#5d677380'
 
 # Axis Settings' reference lines (smui-axis.js): their colours in the light theme, and matplotlib's line styles.
-_REF_COLORS = {'gray': '#786b5d', 'red': '#b0413e', 'blue': '#1f4e79', 'green': '#3a7d44', 'orange': '#b8651b'}
+_REF_COLORS = {'gray': '#5d6773', 'red': '#b0413e', 'blue': '#1f4e79', 'green': '#3a7d44', 'orange': '#b8651b'}
 _REF_DASHES = {'solid': '-', 'dash': '--', 'dot': ':'}
 DAY_MS = 86400000
 

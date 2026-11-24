@@ -750,7 +750,7 @@ def outcome_models(table, y, treatment, treated=None, outcome=None, covariates=N
 # mirrored or overlaid, the balance threshold and order, the estimators it
 # shows); treatment.plot_code writes the code of one graph.
 TREATED, CONTROL = '#b8406e', '#2e6fba'
-TEXT, MUTED, GRID, SURFACE, ACCENT = '#352921', '#786b5d', '#e0d7ce', '#fcf7f2', '#bb6c5d'
+TEXT, MUTED, GRID, SURFACE, ACCENT = '#161b22', '#5d6773', '#dbe0e6', '#f8f9fb', '#b4533f'
 PX = 0.72   # points per pixel: a figure at 100 pixels an inch
 
 

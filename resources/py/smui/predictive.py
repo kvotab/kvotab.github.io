@@ -1333,7 +1333,7 @@ def predictor(P, model, predict=None, proba=None):
 
 PLT = 'import matplotlib.pyplot as plt'
 SEP = '\n\n# ----\n'
-BASE, BAR, TEXT, MUTED, FIT, SURFACE = '#2f6690', '#8fa9c2', '#352921', '#786b5d', '#c0392b', '#fcf7f2'
+BASE, BAR, TEXT, MUTED, FIT, SURFACE = '#2f6690', '#8fa9c2', '#161b22', '#5d6773', '#c0392b', '#f8f9fb'
 PALETTE = ['#2f6690', '#d9822b', '#3a7d44', '#b0413e', '#6c5b7b', '#1f9e89', '#c0a000', '#8c564b', '#e377c2', '#7f7f7f', '#17becf', '#9467bd']
 
 

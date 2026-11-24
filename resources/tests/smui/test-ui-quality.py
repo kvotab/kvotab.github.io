@@ -887,7 +887,7 @@ def check_control(lab, g, D, F):
         check(f'{lab}: the subgroups on the axis, as the page labels them', [t for t in axes[-1]['xticklabels'] if t], xa['ticktext'])
     phases = [a['text'] for a in D['annotations'] if a.get('yref') == 'paper']
     check(f'{lab}: the phases, named above, a dashed line between them', ([t['s'] for t in axes[0]['texts'] if t['y'] == 1.0],
-                                                                       sorted(ln['x'][0] for ln in axes[0]['lines'] if ln['ls'] == '--' and ln['color'][:7] == '#786b5d')),
+                                                                       sorted(ln['x'][0] for ln in axes[0]['lines'] if ln['ls'] == '--' and ln['color'][:7] == '#5d6773')),
           (phases, sorted(s['x0'] for s in D['shapes'])))
 
 
@@ -1055,7 +1055,7 @@ async def chart_code(page):
             if means:
                 check(f'{lab}: the cell means, joined when the page joins them', (bool(cm) and close(cm[0]['y'], means[0]['y'], 1e-12), cm[0]['ls'] if cm else None),
                       (True, '-' if 'lines' in (means[0].get('mode') or '') else 'None'))
-            rb = [t for t in tr if t.get('mode') == 'lines' and (t.get('yaxis') or 'y') == 'y' and t.get('color') == '#786b5d']
+            rb = [t for t in tr if t.get('mode') == 'lines' and (t.get('yaxis') or 'y') == 'y' and t.get('color') == '#5d6773']
             if rb:
                 want = sorted((a, b, c) for a, b, c in zip(rb[0]['x'][0::3], rb[0]['y'][0::3], rb[0]['y'][1::3]))
                 segs = sorted((s[0][0], s[0][1], s[1][1]) for c_ in ax['segments'] for s in c_['segs'])

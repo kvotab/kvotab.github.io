@@ -488,7 +488,7 @@ def fit(table, items, rows=None, id_col=None, freq=None, delimiter=None, min_sup
             'd = np.maximum(5, 28 * np.sqrt(rule_table["Support"] / smax))   # each rule\'s bubble across, in pixels: its area follows the support',
             'fig, ax = plt.subplots(figsize=(5.2, 4), layout="constrained")',
             f'ax.scatter(rule_table["Confidence"], rule_table["Lift"], s=(0.72 * d) ** 2, color="{BASE}", alpha=0.55, edgecolors="{BASE}", linewidths=0.7)',
-            'ax.axhline(1, color="#e0d7ce", linewidth=0.72, zorder=0)   # lift 1: no association',
+            'ax.axhline(1, color="#dbe0e6", linewidth=0.72, zorder=0)   # lift 1: no association',
             'ax.set_xlabel("Confidence")', 'ax.set_ylabel("Lift")', 'ax.set_title("Rules: confidence, lift and support")', 'plt.show()'])
     counts = np.asarray(D['counts'], dtype=float)
     return {'n_transactions': len(D['keys']), 'total': W, 'weighted': bool(np.any(counts != 1)), 'n_items': len(names), 'items': names,

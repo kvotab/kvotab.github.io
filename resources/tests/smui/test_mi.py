@@ -562,7 +562,7 @@ for label, kw, frame_, name in (
             check(f'{col_} trace ({label}): a dot at each imputation', bool(dots) and dots[0]['x'] == [float(t) for t in takes] and near_seq(dots[0]['y'], [means[t - 1] for t in takes]), True)
             om = rr['observed_mean'][col_]
             check(f'{col_} trace ({label}): the observed mean', [round(x['y'][0], 9) for x in A['lines'] if x['ls'] == ':'], [round(om, 9)])
-            burn = [b_ for b_ in A['bars'] if b_['fc'].startswith('#786b5d')]
+            burn = [b_ for b_ in A['bars'] if b_['fc'].startswith('#5d6773')]
             check(f'{col_} trace ({label}): the burn-in shaded', [(b_['x'], b_['x'] + b_['w']) for b_ in burn], [(0.5, rr['trace']['burnin'] + 0.5)] if rr['trace']['burnin'] > 0 else [])
             check(f'{col_} trace ({label}): the range and the titles', (A['xlim'], A['ylabel'], A['title']),
                   ([0.5, max(2, len(means)) + 0.5], f'Mean of imputed {col_}' + (' (codes)' if cat else ''), f'{col_} trace'))

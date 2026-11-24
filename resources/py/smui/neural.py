@@ -1143,7 +1143,7 @@ def draw_network(inputs, layers, outputs, title=None):
     from matplotlib.patches import Circle, PathPatch, Rectangle
     from matplotlib.path import Path
     pt = 0.72   # points per pixel
-    ink, muted = '#352921', '#786b5d'
+    ink, muted = '#161b22', '#5d6773'
     fills = {'in': ('#dce8f4', '#2f6690'), 'hid': ('#ddf0da', '#3a7d44'), 'out': ('#d4efeb', '#1b7a70')}
     M_, L_, C_ = Path.MOVETO, Path.LINETO, Path.CURVE4
     glyphs = {'tanh': ([(-6, 4), (-1.5, 4), (1.5, -4), (6, -4)], [M_, C_, C_, C_]),

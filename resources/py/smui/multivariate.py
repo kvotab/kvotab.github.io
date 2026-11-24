@@ -354,7 +354,7 @@ def _by_words(table, where=None):
 # inch. The page puts each block right under its graph; it writes the
 # scatterplot matrix's itself (the page chose its bins).
 PLT = 'import matplotlib.pyplot as plt'
-BASE, BAR, RED, TEXT, MUTED, GRID, BLUE = '#2f6690', '#8fa9c2', '#c0392b', '#352921', '#786b5d', '#e0d7ce', '#2f6ec7'
+BASE, BAR, RED, TEXT, MUTED, GRID, BLUE = '#2f6690', '#8fa9c2', '#c0392b', '#161b22', '#5d6773', '#dbe0e6', '#2f6ec7'
 PALETTE = ['#2f6690', '#d9822b', '#3a7d44', '#b0413e', '#6c5b7b', '#1f9e89', '#c0a000', '#8c564b', '#e377c2', '#7f7f7f', '#17becf', '#9467bd']
 DIVERGING = [BLUE, '#f6f3f0', RED]        # the page's colour maps (light theme): blue for -1, red for +1
 PX = 0.72                                  # points per pixel, at 100 pixels an inch

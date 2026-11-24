@@ -1988,7 +1988,7 @@
           o.add(ctx.plot([{ type: xs.length > 4000 ? 'scattergl' : 'scatter', mode: 'markers', x: xs, y: ys, rows, marker: { symbol: 'square', size, color: SM.util.themeColors().text }, hovertemplate: '%{text}<extra></extra>', text: xs.map((j, k) => `row ${ys[k]}: ${cols[j].name} missing`), name: 'missing' }],
             { xaxis: { tickvals: cols.map((_, j) => j), ticktext: cols.map((c) => c.name), range: [-0.6, cols.length - 0.4], showgrid: false, zeroline: false }, yaxis: { autorange: 'reversed', title: { text: 'Row' }, zeroline: false } },
             { width: w, height: h, title: 'Missing value snapshot' }),
-          ctx.code(snapshotCode(ctx, cols, { width: w, height: h, size, color: '#352921' })),
+          ctx.code(snapshotCode(ctx, cols, { width: w, height: h, size, color: '#161b22' })),
           ctx.note('A mark for each missing cell. Drag over marks to select their rows; selected rows show in the accent colour.'));
         }
       }
