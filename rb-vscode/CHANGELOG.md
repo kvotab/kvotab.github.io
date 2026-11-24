@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.14
+
+* From the site: in the dark theme the Total line is drawn light, as is
+  everything else drawn black (a radionuclide whose line is black, and the
+  Total's CI and SEM bands), so it stands out against the dark chart. A
+  chart already open follows when the theme changes, VS Code's or the
+  page's own; the Excel chart and the Python script still draw it black.
+
 ## 0.1.13
 
 * The files bar: the files open are boxes at the top of the page, where the
