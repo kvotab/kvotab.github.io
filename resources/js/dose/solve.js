@@ -47,6 +47,34 @@
   The integrator is the NDF/BDF of resources/js/ode with the exact sparse
   Jacobian. It is restarted at every age where a rate or SEE table has a kink,
   so that no step straddles one.
+
+  The ICRP 103 system in steps (dose.step, days). Publication 158 describes
+  rates and S that change continuously with age (para 13, eqs. 2.15-2.16),
+  and the integrals above follow them exactly. The coefficients the ICRP
+  published do not: they are those of a calculation that moves in steps of
+  about nine days from the intake on and takes both the transfer rates and S
+  as they are at the start of each step. Read off its InMoP annex (2026-11):
+  where the model does not change with age (silver, cobalt, iridium,
+  antimony, tellurium ..., by injection) the continuous integral is low for
+  3-month-olds by an amount that grows with the half-life, 0.1 % at 6 h,
+  0.3 % at 17 h, 1 % at 3 d and 1.2 to 1.8 % from 5 d on, 0.2 to 0.35 % for
+  1-year-olds and 0.1 % for 5-year-olds, which is S held for the first days
+  and half a step late after them; the step that closes the gap is 9.0 to
+  9.1 d at each of the three ages (52 nuclides: median 9.06 d, quartiles
+  8.9 to 9.2), taken here as 1/40 year. Where the rates change with age they
+  are held too: strontium-90 at 3 months is 1.3 % low with continuous rates
+  and S, 0.8 % with S in steps alone, 0.05 % with both (barium-133 1.6, 0.9,
+  0.1; radium-226 1.4, 0.8, 0.06; caesium-137 1.35 low, 0.2 high, 0.03).
+
+  With a step, each dose group carries one integral, its transformations,
+  and a dose grows over a step by the step's own S times the transformations
+  in it -- exact for the held S, whatever the activity does within the step.
+  The rates are held step by step through the first year of life and for
+  the first three steps of any intake; after that they follow the same
+  straight lines of age half a step late, which is the mean of the steps and
+  within 0.02 % of holding them all the way (41 nuclides with age-dependent
+  models, six ages), and saves a restart of the integrator every nine days
+  of childhood.
 */
 import { ndf } from '../ode/solvers/ndf.js';
 import { cscFromTriplets } from '../ode/core/sparse.js';
@@ -54,6 +82,8 @@ import { lerp } from './see60.js';
 import { pchipSlopes } from './see103.js';
 
 const DAY = 86400;
+const FIRST_YEAR = 365; // days: the rates are held step by step while a step starts within it
+const STEPS_HELD = 3;   // and for this many steps after the intake at least
 
 /** Index of the interval of `xs` (sorted) that holds x, and the weight within it. */
 function bracket(xs, x) {
@@ -146,7 +176,10 @@ export function integrate(sys, dose, opt) {
      (cross: shares of the lower phantom with the SEE of the upper one, and
      the reverse). */
   const product = !icrp103 && !!dose.cross;
-  const M = icrp103 || product ? 4 : 2; // basis functions per group
+  // The length of a step (ICRP 103 only; see the head), or 0: rates and SEE continuous in age.
+  const L = icrp103 && dose.step > 0 ? dose.step : 0;
+  const stepped = L > 0;
+  const M = stepped ? 1 : icrp103 || product ? 4 : 2; // basis functions per group
 
   /* --- the rates, as a function of age ------------------------------------ */
   const tr = sys.transfers.map((x) => ({
@@ -174,13 +207,13 @@ export function integrate(sys, dose, opt) {
     let byU = byCols.get(by);
     if (!byU) byCols.set(by, byU = new Map());
     let g = byU.get(uOf[c]);
-    if (g === undefined) { g = dg.length; byU.set(uOf[c], g); dg.push({ cols, cross: dose.cross ? dose.cross[c] : null, u: uOf[c], comps: [] }); }
+    if (g === undefined) { g = dg.length; byU.set(uOf[c], g); dg.push({ cols, cross: dose.cross ? dose.cross[c] : null, parts: dose.split ? dose.split[c] : null, u: uOf[c], comps: [] }); }
     dg[g].comps.push(c);
   }
   const G = dg.length;
   const N = n + G * M;
   // PCHIP slopes of each group's SEE over the phantom ages, per target.
-  const slopes = icrp103 ? dg.map(({ cols }) => {
+  const slopesOf = (cols) => {
     const v = new Float64Array(pa.length), d = new Float64Array(pa.length), out = new Float64Array(pa.length * nT);
     for (let T = 0; T < nT; T++) {
       for (let p = 0; p < pa.length; p++) v[p] = cols[p][T];
@@ -188,7 +221,8 @@ export function integrate(sys, dose, opt) {
       for (let p = 0; p < pa.length; p++) out[p * nT + T] = d[p];
     }
     return out;
-  }) : null;
+  };
+  const slopes = icrp103 ? dg.map(({ cols }) => slopesOf(cols)) : null;
 
   /* --- the sparsity pattern ----------------------------------------------- */
   const I = [], J = [];
@@ -256,6 +290,7 @@ export function integrate(sys, dose, opt) {
   };
   const B = new Float64Array(M);
   const basis = (age) => {
+    if (stepped) { B[0] = 1; return; } // the integral is the group's transformations
     if (stretch.mode === 'cubic') {
       const u = (age - pa[stretch.kp]) / stretch.h, v = 1 - u;
       B[0] = v * v * v; B[1] = 3 * u * v * v; B[2] = 3 * u * u * v; B[3] = u * u * u;
@@ -293,6 +328,54 @@ export function integrate(sys, dose, opt) {
   // share grows with the integrals just as the doses do.
   const F = dose.functionals || [];
   const K = F.length;
+  /* In steps: the SEE of every dose group at the age a step starts at -- the
+     first-year weight, the cubic of PCHIP between the later phantoms, the
+     last phantom's from its age on -- and each functional's weights of it. */
+  const Sg = stepped ? new Float64Array(G * nT) : null;
+  const fwS = stepped && K ? new Float64Array(G * K) : null;
+  let kLast = 0; // from this step on SEE is the last phantom's
+  const stepOf = (t) => Math.min(kLast, Math.floor(t / L + 1e-9));
+  // A group in parts (dose.split: its activity shared among several source
+  // regions by mass) has each part's SEE at the age times the part's share
+  // of the mass there, the masses the phantoms' at their ages and straight
+  // between them, from birth on, as the rates are between theirs.
+  const partSlopes = stepped ? dg.map(({ parts }) => (parts ? parts.map((x) => slopesOf(x.cols)) : null)) : null;
+  const seeAt = (age) => {
+    const whole = last === 0 || age >= pa[last];
+    const [kp] = whole ? [last] : bracket(pa, age);
+    const h = whole ? 0 : pa[kp + 1] - pa[kp];
+    const cubic = !whole && kp > 0;
+    const u = whole ? 0 : (age - pa[kp]) / h, v = 1 - u;
+    const b0 = v * v * v, b1 = 3 * u * v * v, b2 = 3 * u * u * v, b3 = u * u * u;
+    const w = whole || cubic ? 0 : Math.min(1, Math.max(0, firstYear ? firstYearWeight(age) : u));
+    // scale x the columns' SEE at the age, added to the group's
+    const add = (cols, d, scale, o) => {
+      if (whole) { const c = cols[last]; for (let T = 0; T < nT; T++) Sg[o + T] += scale * c[T]; return; }
+      const lo = cols[kp], hi = cols[kp + 1];
+      if (cubic) { // the cubic of PCHIP, in Bernstein form as above
+        for (let T = 0; T < nT; T++) Sg[o + T] += scale * (b0 * lo[T] + b1 * (lo[T] + h * d[kp * nT + T] / 3) + b2 * (hi[T] - h * d[(kp + 1) * nT + T] / 3) + b3 * hi[T]);
+      } else for (let T = 0; T < nT; T++) Sg[o + T] += scale * (lo[T] + w * (hi[T] - lo[T]));
+    };
+    Sg.fill(0);
+    dg.forEach(({ cols, parts }, g) => {
+      if (!parts) { add(cols, slopes[g], 1, g * nT); return; }
+      parts.forEach((x, k) => { const f = lerp(pa, x.mass, age) / lerp(pa, x.total, age); if (f) add(x.cols, partSlopes[g][k], f, g * nT); });
+    });
+  };
+  let stepNow = -1;
+  const useStep = (k) => {
+    if (k === stepNow) return;
+    stepNow = k;
+    seeAt(a0 + k * L);
+    for (let g = 0; g < G; g++) {
+      for (let j = 0; j < K; j++) {
+        const f = F[j];
+        let v = 0;
+        for (let T = 0; T < nT; T++) if (f[T]) v += f[T] * Sg[g * nT + T];
+        fwS[g * K + j] = v;
+      }
+    }
+  };
   const fw = new Float64Array(G * K * M);
   const setShares = () => {
     fw.fill(0);
@@ -321,6 +404,15 @@ export function integrate(sys, dose, opt) {
   // How fast the shares grow at a time: each functional's weights applied to
   // the group's SEE there, times the group's activity, per day.
   const ratesAt = (t, yt, out) => {
+    if (stepped) {
+      useStep(stepOf(t));
+      for (let g = 0; g < G; g++) {
+        let q = 0;
+        for (const c of dg[g].comps) q += yt[c];
+        for (let k = 0; k < K; k++) out[g * K + k] = DAY * fwS[g * K + k] * q;
+      }
+      return out;
+    }
     basis(a0 + t);
     for (let g = 0; g < G; g++) {
       let q = 0;
@@ -348,14 +440,17 @@ export function integrate(sys, dose, opt) {
   const vals = new Float64Array(nzA); // triplet order
   const cscVals = new Float64Array(pattern.nnz);
   let cachedT = NaN;
+  // In steps: the age whose rates a stretch holds, or NaN where they follow age half a step late.
+  let heldAge = NaN;
   const build = (t) => {
     if (t === cachedT) return;
     cachedT = t;
     vals.fill(0);
     const age = a0 + t;
+    const rateAge = !stepped ? age : heldAge === heldAge ? heldAge : Math.max(a0, age - L / 2);
     for (let c = 0; c < n; c++) vals[c] = -lambda[sys.comps[c].member]; // diagonal slots come first
     for (let k = 0; k < tr.length; k++) {
-      const r = rateAt(tr[k], age);
+      const r = rateAt(tr[k], rateAge);
       if (!r) continue;
       vals[trSlots[k].diag] -= r;
       if (trSlots[k].off >= 0) vals[trSlots[k].off] += r;
@@ -386,8 +481,23 @@ export function integrate(sys, dose, opt) {
   /* --- integrate stretch by stretch ---------------------------------------- */
   const kinks = new Set([0, tEnd]);
   const addKink = (age) => { const t = age - a0; if (t > 0 && t < tEnd) kinks.add(t); };
-  for (const x of tr) if (x.ages) x.ages.forEach(addKink);
-  pa.forEach(addKink);
+  let tHeld = 0; // in steps: until here the rates are held step by step
+  if (stepped) {
+    // Rates that still change after the intake: held over each step at first,
+    // then their straight lines of age half a step late (kinks half a step
+    // after the tables' ages).
+    if (tr.some((x) => x.ages && x.ages[x.ages.length - 1] > a0)) {
+      const held = Math.max(STEPS_HELD, Math.ceil((FIRST_YEAR - a0) / L));
+      tHeld = held * L;
+      for (let k = 1; k <= held; k++) if (k * L < tEnd) kinks.add(k * L);
+      for (const x of tr) if (x.ages) for (const a of x.ages) { const t = a - a0 + L / 2; if (t > tHeld && t < tEnd) kinks.add(t); }
+    }
+    // SEE changes from step to step until one starts at the last phantom's age.
+    if (last > 0 && a0 < pa[last]) kLast = Math.ceil((pa[last] - a0) / L - 1e-9);
+  } else {
+    for (const x of tr) if (x.ages) x.ages.forEach(addKink);
+    pa.forEach(addKink);
+  }
   const breaks = [...kinks].sort((p, q) => p - q);
   const outputs = (opt.outputs || []).filter((t) => t > 0 && t < tEnd).sort((p, q) => p - q);
 
@@ -410,8 +520,57 @@ export function integrate(sys, dose, opt) {
   };
   const series = [point(0, y, H, P)];
   const stats = { steps: 0, segments: 0, failed: 0, equations: N, nonzeros: pattern.nnz };
+  // In steps: what a part of one step adds to the doses and the shares.
+  const gain = (ya, yb) => {
+    for (let g = 0; g < G; g++) {
+      const dU = yb[n + g] - ya[n + g];
+      if (dU === 0) continue;
+      const w = DAY * dU, o = g * nT;
+      for (let T = 0; T < nT; T++) H[T] += w * Sg[o + T];
+      for (let k = 0; k < K; k++) P[g * K + k] += w * fwS[g * K + k];
+    }
+  };
   for (let s = 0; s + 1 < breaks.length; s++) {
     const t0 = breaks[s], t1 = breaks[s + 1];
+    if (stepped) {
+      heldAge = t0 < tHeld ? a0 + Math.round(t0 / L) * L : NaN;
+      if (K && s === 0) ratesAt(0, y, series[0].rates);
+      cachedT = NaN;
+      // The times of the stretch: the outputs asked for and, while SEE still
+      // changes, the start of each step; its end is a point of the series as
+      // every stretch's is.
+      const times = [t0], shown = [false];
+      let io = 0, k = Math.floor(t0 / L + 1e-9) + 1;
+      while (io < outputs.length && outputs[io] <= t0) io++;
+      for (;;) {
+        const tb = k <= kLast ? k * L : Infinity, to = io < outputs.length ? outputs[io] : Infinity;
+        const t = Math.min(tb, to);
+        if (!(t < t1)) break;
+        if (t > times[times.length - 1]) { times.push(t); shown.push(to === t); } else if (to === t) shown[shown.length - 1] = shown.length > 1;
+        if (tb === t) k++;
+        if (to === t) io++;
+      }
+      times.push(t1); shown.push(true);
+      let prev = Float64Array.from(y);
+      const res = ndf(f, times, y, {
+        rtol: opt.rtol ?? 1e-6, abstol, jacobian, maxOrder: 5,
+        hmax: Math.max(t1 - t0, 1e-9), maxSteps: 2e5, denseBelow: 0,
+      });
+      for (let i = 1; i < res.t.length; i++) {
+        useStep(stepOf(res.t[i - 1]));
+        gain(prev, res.y[i]);
+        prev = res.y[i];
+        if (!shown[i]) continue;
+        const p = point(res.t[i], res.y[i], H, P);
+        if (K) ratesAt(res.t[i], res.y[i], p.rates);
+        series.push(p);
+      }
+      y.set(prev);
+      stats.steps += res.stats?.nsteps ?? 0;
+      stats.failed += res.stats?.nfailed ?? 0;
+      stats.segments++;
+      continue;
+    }
     setStretch(a0 + (t0 + t1) / 2);
     if (K) setShares();
     if (K && s === 0) ratesAt(0, y, series[0].rates);

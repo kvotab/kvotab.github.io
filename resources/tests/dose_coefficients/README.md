@@ -484,15 +484,98 @@ ages and organ doses of both sexes, before the day's changes and after them:
 
 | | values | within 1 % | within 2 % | within 5 % |
 | --- | --- | --- | --- | --- |
-| injection | 1740 | 91.8 → 96.6 % | 96.6 → 99.7 % | 99.3 → 100.0 % |
-| ingestion | 2526 | 96.4 → 98.2 % | 99.2 → 100.0 % | 99.9 → 100.0 % |
-| inhalation at 1 µm | 5238 | 98.0 → 98.6 % | 99.7 → 100.0 % | 100.0 % |
-| gases and vapours | 522 | 94.8 → 97.1 % | 98.3 → 99.8 % | 100.0 % |
-| organ doses (male and female) | 536798 | | 95.8 → 98.2 % | 97.9 → 99.1 % |
+| injection | 1740 | 91.8 → 99.5 % | 96.6 → 100.0 % | 99.3 → 100.0 % |
+| ingestion | 2526 | 96.4 → 99.6 % | 99.2 → 100.0 % | 99.9 → 100.0 % |
+| inhalation at 1 µm | 5238 | 98.0 → 99.8 % | 99.7 → 100.0 % | 100.0 % |
+| gases and vapours | 522 | 94.8 → 99.4 % | 98.3 → 99.6 % | 100.0 % |
+| organ doses (male and female) | 536798 | | 95.8 → 98.9 % | 97.9 → 99.5 % |
 
-The coefficients printed in Publication 158 and the Part 2 and Part 3 drafts
-hardly move (inhalation against Publication 158 and Part 2, within 5 %,
-99.8 → 99.9 %): what changed is mostly below their two figures.
+Of the annex's 10,026 effective doses 30 are still more than 1 % off (19
+cases of nuclide, route and form, of 7 nuclides; 192 values at noon); of its
+561,420 organ doses 2,842 are more than 5 % off, in 17 nuclides (5,805 in 45
+at noon), and 510 more than 10 % (2,411).
+The coefficients the publications print have two figures; the page's value
+rounds to the printed one for 92.5 % of the 4,104 of the reference file
+(87.8 % before; 3-month-olds 78.5 → 92.8 %) and for 97.3 % of the Part 3
+draft's 1,146 (91.7 %; 3-month-olds 76.4 → 96.9 %).
+
+Four of the day's findings are not about one chain but about how the
+published coefficients were calculated. None is in the publications' text;
+each was read off the annex and then checked on the printed tables:
+
+- **Steps.** The calculation behind the coefficients moves in steps of about
+  nine days from the intake on and takes the transfer rates and S at the
+  start of each step (`OPTIONS103.ageStep`, 1/40 year; solve.js has the
+  detail). Found from the nuclides whose model does not change with age (Ag,
+  Bi, Mo, Se, Co, Ir, Ni, Ru, Sb, Tc, Te, S by injection): integrated
+  continuously, a 3-month-old's coefficient is low by an amount that grows
+  with the half-life, 0.1 % at 6 h, 0.3 % at 17 h, 1 % at 3 d, 1.2–1.8 %
+  from 5 d, falling to 0.5–1 % for long-lived ones; a 1-year-old's by
+  0.2–0.35 % and a 5-year-old's by 0.1 %. That is S held for the first days
+  and half a step late after them. The step that closes each nuclide's gap
+  (against its own adult ratio) is 9.06 d in the median at 3 months
+  (quartiles 8.9–9.2, 52 nuclides), 8.9 d at 1 year, 9.2 d at 5 years. With
+  the rates held too, the bone seekers follow: Sr-90 at 3 months −1.3 %
+  continuous, −0.8 % with S in steps, −0.05 % with both (Ba-133 −1.6, −0.9,
+  −0.1; Ra-226 −1.4, −0.8, −0.06; Cs-137 −1.35, +0.2, +0.03). This was the
+  3-month shortfall: 142 values more than 1 % low at 3 months, none now.
+  Tried and worse: PCHIP through a node at 100 d (overshoots 2 %), the
+  slope at 1 year from nodes without the newborn, S held over DCAL's time
+  grid (spoils 1 and 5 years), the readings listed on 2026-11-24 before.
+- **J per MeV.** With the steps in, the densest 0.004 % of the ratios of
+  the 93,570 organ doses at each age lies at 1.001354–1.001376:
+  1.602176634/1.6 = 1.001360. The annex has 1 MeV = 1.6 × 10⁻¹³ J (the
+  factor of Publication 30); see103.js takes it. DCAL's SEECAL has 1.602 ×
+  10⁻¹³ (a single-precision constant in the program): the ICRP 60 system
+  keeps the exact value, 0.011 % from it.
+- **The rest of the body in a chain** (`OPTIONS103.otherShares`, dose103.js
+  `otherParts`). A tissue that some member's model names takes its share of
+  another member's activity in "Other" by the reference male's masses, for
+  both sexes, the masses straight in age between the phantoms', each share
+  with its own S; what is left is spread by the masses of the sex whose dose
+  it is. It is what DCAL does in the ICRP 60 system (the `cross` columns).
+  Found on Bi-210m, whose one progeny Tl-206 names skin, spleen, red marrow
+  and gonads: adult female skin 0.841, spleen 1.045, ovaries 1.205, every
+  other tissue 1.024, red marrow 0.967; 10-year-old male testes 0.589 and
+  skin 0.934 (the shares and S between 10 and 15 years are each
+  interpolated, not their product). With the shares all are 1.000 at the six
+  ages in both sexes. The same settles the progeny that name muscle (Sr-82's
+  adult female muscle 0.87 and breast 1.20; Ag-113 0.79 and 1.23; Ba-129)
+  and radium's chains (Ra-226's adult female skin 0.845, ovaries 1.148).
+  Three details the annex needs: thallium, bismuth and polonium in lead's
+  chains count as naming bone volume (`boneVolume` in progeny.json: without,
+  Bi-210m's adult female rest is 1.013); a chain that names trabecular and
+  cortical marrow names all marrow (Ra-226's adult female rest 1.008 →
+  1.001); and the masses are straight in age from birth (with the 3-month
+  masses by eq. 2.16, Bi-210m's skin at 3 months is 0.96). **Chains headed
+  by uranium do without** (`"*shares": false` in the uranium set): the Part 2
+  draft prints 24 uranium coefficients per age, and at 10 and 15 years and
+  for adults 23 or 24 of the page's round to them without the shares, 19
+  with; the fraction of the shares' effect that fits is 0 to 0.1 for U-234,
+  0.3 to 0.75 for U-238. No annex covers uranium yet. The Part 3 draft needs
+  the shares (Sn-113 Type F at 15 years and adult fits only with 0.5 to 1.1
+  of them).
+- **Progeny formed in the tracts** (`OPTIONS103.giProgenyFA`). Where an
+  element has a higher fA in food, its nuclides formed in the gut or the
+  lungs take the fA of its other soluble forms, not the highest as paras 130
+  and 132 say: antimony from Sb-124n takes 0.05. With 0.1, Sb-124n's brain
+  was 1.50–1.70 and thyroid 1.53–1.75 times the annex's after ingestion; the
+  annex gives both ingested forms the same coefficient. The same cleared
+  Sb-126m, Sb-128m, Y-95, Nb-88, Nb-89, Nb-89m and Te-117 and most of
+  Pb-195m and Pb-197m. Secreted antimony keeps the highest (Sb-124 and
+  Sb-125 are 0.4–1 % low otherwise), polonium the 0.1 it had.
+
+In radium's chains (progeny.json, the radium set): thallium, lead, bismuth
+and polonium formed in the ST0–ST2 of another progeny take their own pools
+(Ra-225's kidneys 1.06–1.13 → 1.00, Ra-228's 1.07–1.08 → 1.00), and
+thorium's spleen and skin follow ST1's deposition by age instead of being
+fixed fractions of the outflow at every age (Ra-228's spleen up to 1.46 and
+skin up to 1.45 in children → 1.00).
+
+Checked and kept: full absorption is fA 0.99 (Tc-99 at 3 months is +1.0 %
+with 0.999 and −1.2 % with 0.98, −0.06 % with 0.99); actinium from radium's
+soft tissue at 1.386 d⁻¹; shadows of a parent's "Other" as the parent has
+it.
 
 Each change started from a nuclide the annex had off, split by chain member
 and tissue, fitted to the S coefficients of source regions, checked against
@@ -540,21 +623,30 @@ marrow.
 
 Still open:
 
-- **3-month-olds.** 142 of the 1671 cases are more than 1 % low at 3 months
-  (46 nuclides; tritium 0.986, Sr-89 0.983, Cs-137 0.988), and none at
-  1 year. Short-lived nuclides are right, so S at the age of intake is.
-  The annex's S falls about 0.3 % a day after 100 days where Publication
-  158's eq. 2.16 gives 0.46 %, and is back on eq. 2.16 by about 150–230 days.
-  Several shapes fit about equally (98 % within 1 %) and no published rule
-  gives any of them, so the page keeps eq. 2.16. Ruled out: eq. 2.16's first
-  branch for the whole year (77.6 % within 1 %), S tabulated by month,
-  quarter or half-year, and transfer rates following eq. 2.16 or held at the
-  3-month values in the first year (Sr-90 0.932 and 1.070).
-- **Strontium chains, females from 15 years.** Rubidium's muscle up to 12 %
-  low and other soft tissue up to 13 % high; males within 0.6 % at every age.
-  It makes the adult e of Sr-80 and Sr-83 1.016. Publication 158 takes the
-  reference male's biokinetics for both sexes.
-- **Zn-72 in children.** Bone surface 0.905–0.97, red marrow 0.945–0.98.
-- **Ba-141 and Ba-142.** Red marrow 1–3 % and bone surface 1–2 % high from
-  5 years (e within 0.6 %).
-- **The largest e left.** Ra-227 (1.009–1.024) and Ag-113's adult (1.022).
+- **Ra-227, Ra-228, Ra-225.** Actinium's and thorium's soft tissue: muscle
+  and the other tissues of the rest 3–13 % low, Ra-227's red marrow up to
+  13 % high with age. e within 1.5 %.
+- **Bi-210.** The tissues outside polonium's named ones are 5–7 % low at
+  every age in both sexes, everything polonium names exact; Bi-210m is
+  exact. Fitted, it is 1.7 % more of Po-210's transformations in polonium's
+  own "Other" (0.6 % at 3 months). Holding polonium in bismuth's soft tissue
+  with a half-time of 10 d instead of para 484's 7 d fits adults, not
+  children.
+- **Bi-214 and Pb-214 by ingestion and inhalation.** Testes 0.87–0.94 and
+  ovaries 0.90–0.94; by injection 0.99–1.00.
+- **Radon.** Rn-222 by ingestion 1.018 at 3 months to 0.985 for adults, as a
+  gas 0.977 at 10 years; 428 organ doses more than 5 % off. Not looked at.
+- **3-month-olds of calcium, polonium and zinc.** Ca-41, Ca-45 and Ca-47
+  1.010–1.012 in every tissue but bone surface and muscle (strontium, barium
+  and radium are right, and the rates are Table 9.2's); Po-206 and Po-210
+  1.011–1.014 (its dose moves 2.6 % for a change of 0.2 to 0.15 in the fA of
+  what it secretes at 3 months); Zn-65 1.007 (it would fit with full
+  absorption taken as 0.984, where technetium needs 0.99).
+- **Te-118** (Sb-118, 3.6 min): bladder 1.10–1.19, colon and stomach
+  0.96–0.97, e 0.987 for adults.
+- **Mo-93** (Nb-93m): bone surface 0.86–0.87 and red marrow 0.94–0.95 at
+  15 years and for adults, right in children.
+- **Se-70** (As-70): spleen and pancreas 1.04–1.07; Se-72's fit only with
+  arsenic leaving them at 0.08 d⁻¹.
+- **Zn-72 in children**, **Pb-197m and Pb-195m** (a few tissues), **iodine
+  and tritium** (0.3 % and 0.15 % high at every age).

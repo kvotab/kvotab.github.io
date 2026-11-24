@@ -21,7 +21,13 @@
   nuclide's lines then reduce to four weights per energy interval, and the S
   of a pair is a short dot product with the pair's values and slopes.
 */
-export const MEV = 1.602176634e-13; // J per MeV
+/* J per MeV as the ICRP's coefficients have it: 1.6e-13, the rounded factor
+   of Publication 30 (H = 1.6e-10 U SEE), not the exact 1.602 176 634e-13.
+   Read off the InMoP annex (2026-11): with the exact value every dose of the
+   page was 1.00136 times the annex's -- the densest 0.004 % of the ratios of
+   93,570 organ doses lies at 1.001354 to 1.001376 at each of the six ages,
+   and 1.602176634 / 1.6 = 1.001360. */
+export const MEV = 1.6e-13;
 export const W_ALPHA = 20;
 const RECOIL_E = 2.0; // MeV: the alpha energy whose SAF recoils and fission fragments take
 

@@ -29,7 +29,7 @@
 import { loadSystem, fetchIO } from './data.js';
 import { coefficients60, AGES_60, TISSUES_60, W_60, REMAINDER_60 } from './dose60.js';
 import { recipe60, f1Table, assemble60 } from './model60.js';
-import { assemble103, sexSpecific103 } from './model103.js';
+import { assemble103, sexSpecific103, OPTIONS103 } from './model103.js';
 import { TARGETS_60 } from './see60.js';
 import { LUNG_REGIONS, CONTENTS, regionOf, key } from './regions.js';
 import { coefficients103, AGES_103, TISSUES_103, W_103, W_REMAINDER_103, REMAINDER_103 } from './dose103.js';
@@ -167,10 +167,11 @@ function systemSummary(sys, data, S) {
    intake differs with age, its models do not), and how big it is -- the
    equations of one integration are the compartments' activities and, for
    each group of compartments that share their dose per transformation (a
-   member in a source region), four integrals of its activity in the ICRP 103
-   system and two in the ICRP 60 one, from which solve.js puts the doses to
-   all targets together. In the ICRP 103 system a sex-specific model (radon)
-   is two integrations per age, each with one sex's targets. */
+   member in a source region), integrals of its activity from which solve.js
+   puts the doses to all targets together: one in the ICRP 103 system, the
+   group's transformations (its S is held over each step of the calculation),
+   and two in the ICRP 60 one. In the ICRP 103 system a sex-specific model
+   (radon) is two integrations per age, each with one sex's targets. */
 const CUTOFFS = [0, 1e-5, 1e-4, 1e-3];
 function describe(sys, data, spec, age0) {
   let S, regions, sexes, targets, perAge = 1;
@@ -195,7 +196,7 @@ function describe(sys, data, spec, age0) {
   // a source region (and in the ICRP 103 system, for Other, whose Other).
   const groups = new Set(S.comps.map((c) => (sys === '60' ? `${c.member}|${c.region}`
     : `${c.member}|${c.region}|${c.region === 'Other' ? (c.otherOf ?? c.member) : -1}`))).size;
-  const perGroup = sys === '60' ? 2 : 4;
+  const perGroup = sys === '60' ? 2 : OPTIONS103.ageStep > 0 ? 1 : 4;
   // The matrix: the diagonal, a value for each pair of compartments a
   // transfer or a decay joins, and a basis function for each compartment
   // in each of its group's integrals (solve.js).

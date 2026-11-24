@@ -127,8 +127,20 @@ export const OPTIONS103 = {
   bloodPools: false,      // red cells and other slow blood pools count as foreign to progeny (no measurable effect)
   sameOther: false,       // progeny produced in another element's ST0-ST2/Other: true = the progeny's pool of the
                           // same name (where the OIR section does not say the structures are the same)
-  giProgenyFA: 'own',     // progeny produced in the contents after ingestion: 'own' highest reference
-                          // fA (para 130), or 'parent' = the ingested form's fA
+  giProgenyFA: 'soluble', // progeny produced in the respiratory or alimentary tract: 'soluble' = the fA of
+                          // its element's soluble forms other than in food, as the calculations have it
+                          // (the annex of Publication 158: antimony from 124nSb, 126mSb and 128mSb takes
+                          // 0.05, not the 0.1 of antimony in food; with 0.1 the brain and thyroid were
+                          // 1.5 to 1.75 times the annex's after ingestion); 'own' = its highest reference
+                          // fA (paras 130, 132); 'parent' = the ingested form's fA
+  otherShares: true,      // in a chain, the tissues another member's model names take their share of a
+                          // member's rest of the body by the reference male's masses, for both sexes
+                          // (dose103.js otherParts; needs ageStep); false = all of it spread by the
+                          // masses of the sex whose dose it is
+  ageStep: 365 / 40,      // days: the transfer rates and S are held over steps of this length from the
+                          // intake on, each at its start, as in the calculation behind the published
+                          // coefficients (solve.js has what was read off them); 0 = both continuous
+                          // in age, as Publication 158 describes them (para 13, eqs. 2.15-2.16)
 };
 const GAS_EXHALE = GAS_PROGENY.exhale;
 export const elementOf = (nuclide) => nuclide.split('-')[0];
@@ -619,7 +631,10 @@ export function assemble103(data, spec) {
       if (!specFA && rules.secretionFA === 'soluble') return el?.fAinhaled || own;
       return own;
     }
-    if (route === 'ingestion') return j === 0 || rules.giProgenyFA === 'parent' ? ingest.fA : own;
+    // A progeny formed in the tracts: the fA of its soluble forms other than
+    // in food, where its element has a higher one for food (giProgenyFA).
+    const formed = (!specFA && rules.giProgenyFA === 'soluble' && el?.fAinhaled) || own;
+    if (route === 'ingestion') return j === 0 || rules.giProgenyFA === 'parent' ? ingest.fA : formed;
     // Inhaled material cleared to the alimentary tract.
     const fr = frOf(absorb);
     if (j === 0) {
@@ -633,8 +648,8 @@ export function assemble103(data, spec) {
     // stands for a particle matrix (Publication 130 paras 125, 130), which a
     // vapour has not; the annex's 94Ru and 95Ru as RuO4 (fr 0.5) agree only so.
     // (Radon at home gives its aerosols as gas forms marked particles.)
-    if (gas && !gas.particles) return own;
-    return own.map((x) => fr * x);
+    if (gas && !gas.particles) return formed;
+    return formed.map((x) => fr * x);
   };
 
   /* Respiratory tract of a member: transport compartments in two states, bound compartments. */
@@ -747,7 +762,7 @@ export function assemble103(data, spec) {
   const memberInfo = members.map((m) => ({
     name: m.name, el: m.el, lambda: m.lambda, T: m.T, kind: m.kind, of: m.of ?? null,
     model: m.model ? (m.model.label || m.modelKey || 'default') : null, modelKey: m.modelKey ?? null, named: [...m.named],
-    progeny: m.spec ? { set: m.spec.set, model: m.kind === 'spec' ? m.model : null } : null,
+    progeny: m.spec ? { set: m.spec.set, model: m.kind === 'spec' ? m.model : null, boneVolume: !!m.spec.boneVolume } : null,
   }));
   const intake = {
     route, form: form || gas || ingest, absorb,

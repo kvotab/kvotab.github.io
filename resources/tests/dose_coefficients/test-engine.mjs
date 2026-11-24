@@ -232,34 +232,58 @@ if (!SYSTEM || SYSTEM === '103') {
 /* ---- pinned results (this page's own) ------------------------------------------------ */
 {
   const pins = [
-    ['103', { nuclide: 'Cs-137', route: 'ingestion', form: 'soluble' }, 7300, 1.3529e-8],
-    ['103', { nuclide: 'Sr-90', route: 'inhalation', form: 'F' }, 100, 2.3426e-7],
-    ['103', { nuclide: 'Pb-212', route: 'ingestion', form: 'all' }, 7300, 5.6032e-9],
-    ['103', { nuclide: 'Pb-210', route: 'injection' }, 7300, 1.5771e-6],
+    ['103', { nuclide: 'Cs-137', route: 'ingestion', form: 'soluble' }, 7300, 1.3519e-8],
+    ['103', { nuclide: 'Sr-90', route: 'inhalation', form: 'F' }, 100, 2.3703e-7],
+    ['103', { nuclide: 'Pb-212', route: 'ingestion', form: 'all' }, 7300, 5.5951e-9],
+    ['103', { nuclide: 'Pb-210', route: 'injection' }, 7300, 1.5749e-6],
     // caesium formed in barium's bone volume: that bone volume is not part of its "Other" (9 % low at 3 months otherwise)
-    ['103', { nuclide: 'Ba-129', route: 'injection' }, 100, 1.0199e-10],
+    ['103', { nuclide: 'Ba-129', route: 'injection' }, 100, 1.0210e-10],
     // thallium formed in lead's red cells stays in red cells (Publication 137 para 481; 7 % low otherwise)
-    ['103', { nuclide: 'Pb-198', route: 'injection' }, 7300, 4.1394e-11],
+    ['103', { nuclide: 'Pb-198', route: 'injection' }, 7300, 4.1326e-11],
     // lanthanum formed on barium's bone surfaces is on its own (Publication 137 para 354; 2.8 % low at 3 months otherwise)
-    ['103', { nuclide: 'Ba-140', route: 'injection' }, 100, 3.1742e-8],
+    ['103', { nuclide: 'Ba-140', route: 'injection' }, 100, 3.2391e-8],
     // iodine formed from tellurium: one compartment for inorganic iodide in other tissue (Publication 137 para 135; 3.7 % high otherwise)
-    ['103', { nuclide: 'Te-134', route: 'injection' }, 7300, 6.6817e-11],
+    ['103', { nuclide: 'Te-134', route: 'injection' }, 7300, 6.6726e-11],
     // saliva passes the oesophagus by the slow transit (ICRP 158 section 2.3.2.3; 17 % low otherwise): the male's oesophagus
-    ['103', { nuclide: 'I-134', route: 'injection' }, 7300, 3.8724e-11, 'Oesophagus'],
+    ['103', { nuclide: 'I-134', route: 'injection' }, 7300, 3.8671e-11, 'Oesophagus'],
     // gallium formed in zinc's kidneys is in gallium's kidneys, which empty to the bladder (Publication 134 para 437; 2 % high otherwise)
-    ['103', { nuclide: 'Zn-72', route: 'injection' }, 7300, 1.4087e-9],
+    ['103', { nuclide: 'Zn-72', route: 'injection' }, 7300, 1.4078e-9],
     // rubidium formed from strontium on rubidium's own model, kidneys explicit (Publication 151 Table 22.3; 0.26 of this with para 484's)
-    ['103', { nuclide: 'Sr-80', route: 'injection' }, 365, 1.1967e-9, 'Kidneys'],
-    ['103', { nuclide: 'Ra-226', route: 'ingestion', form: 'all' }, 7300, 1.2646e-7],
+    ['103', { nuclide: 'Sr-80', route: 'injection' }, 365, 1.1952e-9, 'Kidneys'],
+    ['103', { nuclide: 'Ra-226', route: 'ingestion', form: 'all' }, 7300, 1.2611e-7],
+    // the steps of the published calculation (OPTIONS103.ageStep): rates and S held over 1/40 year; continuous
+    // in age, a 3-month-old's 110mAg is 1.0 % lower and its 90Sr 1.3 %
+    ['103', { nuclide: 'Ag-110m', route: 'injection' }, 100, 1.0627e-7],
+    ['103', { nuclide: 'Ag-110m', route: 'injection', rules: { ageStep: 0 } }, 100, 1.0516e-7],
+    ['103', { nuclide: 'Sr-90', route: 'injection' }, 100, 6.1098e-7],
+    ['103', { nuclide: 'Sr-90', route: 'injection', rules: { ageStep: 0 } }, 100, 6.0323e-7],
+    // the rest of the body in a chain (OPTIONS103.otherShares): what 206Tl's model names takes the male's share of
+    // 210mBi's; by her own masses the adult female's skin has 0.84 of this, and by the 10-year-old's own masses
+    // all the way to 15 his testes 0.59
+    ['103', { nuclide: 'Bi-210m', route: 'injection' }, 7300, 5.1894e-7, 'Skin', 'F'],
+    ['103', { nuclide: 'Bi-210m', route: 'injection', rules: { otherShares: false } }, 7300, 4.3666e-7, 'Skin', 'F'],
+    ['103', { nuclide: 'Bi-210m', route: 'injection' }, 3650, 1.1138e-6, 'Gonads'],
+    ['103', { nuclide: 'Bi-210m', route: 'injection', rules: { otherShares: false } }, 3650, 6.5636e-7, 'Gonads'],
+    // chains headed by uranium do without the shares (progeny.json, the uranium set): the Part 2 draft's printed values
+    ['103', { nuclide: 'U-234', route: 'ingestion', form: 'soluble' }, 9125, 3.4690e-8],
+    ['103', { nuclide: 'U-234', route: 'ingestion', form: 'soluble', rules: { otherShares: true } }, 9125, 3.4476e-8],
+    // antimony formed in the gut takes the fA of its forms other than in food (OPTIONS103.giProgenyFA); with the
+    // highest, the brain has 1.5 times this
+    ['103', { nuclide: 'Sb-124n', route: 'ingestion', form: 'food' }, 7300, 5.3939e-14, 'Brain'],
+    ['103', { nuclide: 'Sb-124n', route: 'ingestion', form: 'food', rules: { giProgenyFA: 'own' } }, 7300, 8.2358e-14, 'Brain'],
+    // radium's chains: thorium's spleen follows ST1 by age; lead-chain members formed in another progeny's soft tissue take their own pools
+    ['103', { nuclide: 'Ra-228', route: 'injection' }, 365, 1.5242e-5, 'Spleen'],
+    ['103', { nuclide: 'Ra-225', route: 'injection' }, 7300, 3.5647e-7, 'Kidneys'],
     ['60', { nuclide: 'Po-210', route: 'ingestion' }, 7300, 1.206e-6],
   ];
-  for (const [sys, spec, age, want, tissue] of pins) {
+  for (const [sys, spec, age, want, tissue, sex = 'M'] of pins) {
     await (sys === '103' ? d103 : d60).prepare(spec.nuclide);
     const r = sys === '103'
       ? coefficients103(d103, { ...spec, cutoff: 1e-4 }, [age])[0]
       : coefficients60(d60, recipe60(d60.cases, spec.route, { nuclide: spec.nuclide, bio: null, f1file: null }), [age])[0];
-    const got = tissue ? r.H.M[tissue] : r.E;
-    check(`pinned: ${sys} ${spec.nuclide} ${spec.route} ${spec.form || ''} at ${age} d${tissue ? `, ${tissue} (male),` : ''} is ${want.toExponential(3)}`, near(got, want, 0.002), got.toExponential(4));
+    const got = tissue ? r.H[sex][tissue] : r.E;
+    const how = spec.rules ? ` with ${JSON.stringify(spec.rules).replace(/"/g, '')}` : '';
+    check(`pinned: ${sys} ${spec.nuclide} ${spec.route} ${spec.form || ''}${how} at ${age} d${tissue ? `, ${tissue} (${sex === 'F' ? 'female' : 'male'}),` : ''} is ${want.toExponential(3)}`, near(got, want, 0.002), got.toExponential(4));
   }
 }
 

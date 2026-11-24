@@ -728,7 +728,7 @@ function renderSize() {
   const rows = [
     ['Chain', `${d.info.members.map((m) => m.name).join(', ')}${dropped.length ? `; left out by the cut-off: ${dropped.join(', ')}` : ''}`],
     ['Transfers', `${count(z.transfers, 'transfer')} between compartments and ${count(z.decays, 'decay')} from one member to the next`],
-    ['Equations', `${count(z.compartments, 'activity', 'activities')}, and ${z.perGroup} integrals of activity for each of the ${count(z.groups, 'group')} of compartments that share a source region (${(z.perGroup * z.groups).toLocaleString('en')}); the doses to ${targets} follow from these`],
+    ['Equations', `${count(z.compartments, 'activity', 'activities')}, and ${z.perGroup === 1 ? 'the number of transformations in' : `${z.perGroup} integrals of activity for`} each of the ${count(z.groups, 'group')} of compartments that share a source region${z.perGroup === 1 ? '' : ` (${(z.perGroup * z.groups).toLocaleString('en')})`}; the doses to ${targets} follow from these`],
     ['Matrix', `${count(z.coefficients, 'coefficient')}: the transfer and decay rates, and the weights of the integrals`],
     ['Runs', n ? `${count(n, 'integration')}${z.perAge > 1 ? ', one for each age and sex: the model differs between the sexes' : ', one for each age at intake'}; over 50 years for adults and to age 70 for children; ${Math.min(n, POOL_SIZE)} at a time on this device` : 'none: no age at intake is ticked'],
   ];

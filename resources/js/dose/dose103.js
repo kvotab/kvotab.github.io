@@ -6,8 +6,10 @@
   every compartment the S coefficients of its source region in each of the
   twelve reference individuals (newborn, 1, 5, 10, 15 y and adult, male and
   female; see103.js), integrate (solve.js) to age 70 for children and over 50
-  years for adults, with S interpolated in age as ICRP 158 paras 174-176 say,
-  and combine the target regions into tissues (Table 2.12):
+  years for adults, with S interpolated in age as ICRP 158 paras 174-176 say
+  and, like the transfer rates, held over steps of 1/40 year as in the
+  calculation behind the published coefficients (OPTIONS103.ageStep), and
+  combine the target regions into tissues (Table 2.12):
 
     Lung (thoracic airways)  1/3 BB (basal and secretory cells equally),
                              1/3 bb, 1/3 AI
@@ -21,7 +23,7 @@
   the arithmetic mean of its 13 remainder tissues (prostate for males, uterus
   for females).
 */
-import { assemble103, sexSpecific103 } from './model103.js';
+import { assemble103, sexSpecific103, OPTIONS103 } from './model103.js';
 import { emissionWeights, sAllRows, sForRegions } from './see103.js';
 import { integrate } from './solve.js';
 
@@ -74,6 +76,59 @@ export const REMAINDER_103 = ['Adrenals', 'Extrathoracic region', 'Gallbladder',
 
 const partsOf = (name, sex) => (typeof TISSUES_103[name] === 'function' ? TISSUES_103[name](sex) : TISSUES_103[name]);
 
+/*
+  The source regions a chain's models name between them. A progeny model
+  marked boneVolume in progeny.json (thallium, bismuth and polonium in lead's
+  chains) has the bone volume compartments, whether or not this chain fills
+  them. Read off the InMoP annex (2026-11): 210mBi, whose one progeny 206Tl
+  names skin, spleen, red marrow and gonads, was in the adult female 16 %
+  low in skin, 4.5 % high in spleen, 21 % high in ovaries and 2.4 % high in
+  every tissue of the rest, and in the 10-year-old male 41 % low in testes;
+  with the male's shares all of them are 1.000 at the six ages in both
+  sexes. So are the chains whose progeny name muscle (82Sr's adult female
+  muscle was 13 % low and her breast 20 % high; 113Ag's 21 % and 23 %).
+*/
+function chainRegions(sys) {
+  const out = new Set();
+  for (const m of sys.members) {
+    for (const r of m.named) out.add(r);
+    if (m.progeny?.boneVolume) { out.add('T-bone-V'); out.add('C-bone-V'); }
+  }
+  // The marrow of trabecular and cortical bone (the models of radium's chains) is all marrow, red and yellow.
+  if (out.has('T-marrow') || out.has('C-marrow')) { out.add('R-marrow'); out.add('Y-marrow'); }
+  return out;
+}
+
+/*
+  The rest of the body of a member (the regions that may form Other and that
+  its model does not name, `named`) in parts: each region another member of
+  the chain names (`chainNamed`), with the share of the rest of the body's
+  mass it has in the reference male at each phantom's age -- an organ only
+  the female has by her mass over his rest of the body --, and what is left,
+  spread over the remaining regions by the masses of the sex whose dose it
+  is. For the male the parts add up to the whole at the phantoms' ages; the
+  female's skin, say, holds the male's share. Null where no other member
+  names anything of it. colsFor(region, named) gives the S columns.
+*/
+function otherParts(saf, named, chainNamed, colsFor) {
+  const male = PHANTOMS_103.M.map((id) => saf.phantoms[id]), female = PHANTOMS_103.F.map((id) => saf.phantoms[id]);
+  const src = male[0].sources;
+  const mine = (ph, s) => ph.other[s] && !named.has(src[s]);
+  const X = [];
+  src.forEach((r, s) => { if (chainNamed.has(r) && (mine(male[0], s) || mine(female[0], s))) X.push(s); });
+  if (!X.length) return null;
+  const total = male.map((ph) => src.reduce((a, r, s) => a + (mine(ph, s) && ph.masses.sources[s] > 0 ? ph.masses.sources[s] : 0), 0));
+  const parts = X.map((s) => ({
+    region: src[s],
+    mass: male.map((ph, p) => (ph.masses.sources[s] > 0 ? ph.masses.sources[s] : female[p].masses.sources[s] || 0)),
+    cols: colsFor(src[s], named),
+  }));
+  const rest = new Set([...named, ...X.map((s) => src[s])]);
+  parts.push({ region: 'Other', mass: total.map((M, p) => M - parts.reduce((a, x) => a + x.mass[p], 0)), cols: colsFor('Other', rest) });
+  for (const x of parts) x.total = total;
+  return parts;
+}
+
 /**
  * @param {object} data  {index, elements, deposition, emissions: (name) => {r, bs},
  *                        saf: {index, phantoms: {id: SafPhantom}}}
@@ -96,6 +151,12 @@ export function coefficients103(data, spec, ages = AGES_103, opt = {}) {
     }
     return sCache.get(key);
   };
+  const step = spec.rules?.ageStep ?? OPTIONS103.ageStep;
+  // Shares of the rest of the body need the steps: a share and an S each at
+  // a step's start. A set of progeny.json may say that its parents' chains
+  // do without ("*shares": false).
+  const head = data.progeny?.sets?.[data.progeny?.parents?.[spec.nuclide.split('-')[0]]];
+  const otherShares = step > 0 && (spec.rules?.otherShares ?? (head?.['*shares'] !== false && OPTIONS103.otherShares));
   return ages.map((age0) => {
     const adultAge = data.elements[spec.nuclide.split('-')[0]]?.adultAge || 7300;
     const intakeAge = age0 === 7300 ? adultAge : age0;
@@ -107,25 +168,37 @@ export function coefficients103(data, spec, ages = AGES_103, opt = {}) {
       const sys = assemble103(data, { ...spec, intakeAge, sex: sex || undefined });
       const which = sex ? [sex] : ['M', 'F'];
       // S columns: per compartment, per reference age, the targets of each sex in turn.
-      const colCache = new Map();
-      const columns = sys.comps.map((c) => {
-        const m = sys.members[c.member];
-        const otherOf = c.region === 'Other' ? (c.otherOf ?? c.member) : -1;
-        const key = `${c.member}|${c.region}|${otherOf}`;
-        if (colCache.has(key)) return colCache.get(key);
-        const named = new Set(otherOf >= 0 ? sys.members[otherOf].named : []);
-        const cols = PHANTOM_AGES_103.map((pa, p) => {
-          const col = new Float64Array(which.length * nT);
-          which.forEach((x, k) => {
-            const id = PHANTOMS_103[x][p];
-            const S = sForRegions(saf.phantoms[id], sRows(m.name, id), [c.region], named)[c.region];
-            col.set(S, k * nT);
-          });
-          return col;
+      const colCache = new Map(), splitCache = new Map();
+      const colsFor = (name, region, named) => PHANTOM_AGES_103.map((pa, p) => {
+        const col = new Float64Array(which.length * nT);
+        which.forEach((x, k) => {
+          const id = PHANTOMS_103[x][p];
+          col.set(sForRegions(saf.phantoms[id], sRows(name, id), [region], named)[region], k * nT);
         });
+        return col;
+      });
+      const keyOf = (c) => `${c.member}|${c.region}|${c.region === 'Other' ? (c.otherOf ?? c.member) : -1}`;
+      const columns = sys.comps.map((c) => {
+        const key = keyOf(c);
+        if (colCache.has(key)) return colCache.get(key);
+        const named = new Set(c.region === 'Other' ? sys.members[c.otherOf ?? c.member].named : []);
+        const cols = colsFor(sys.members[c.member].name, c.region, named);
         colCache.set(key, cols);
         return cols;
       });
+      // The rest of the body in a chain (otherShares): the tissues another
+      // member's model names take their share of it by the reference male's
+      // masses, each with its own S; what is left is spread as before.
+      const chainNamed = otherShares ? chainRegions(sys) : null;
+      const split = otherShares ? sys.comps.map((c) => {
+        if (c.region !== 'Other') return null;
+        const key = keyOf(c);
+        if (splitCache.has(key)) return splitCache.get(key);
+        const named = new Set(sys.members[c.otherOf ?? c.member].named);
+        const parts = otherParts(saf, named, chainNamed, (region, set) => colsFor(sys.members[c.member].name, region, set));
+        splitCache.set(key, parts);
+        return parts;
+      }) : undefined;
       // Numbers of transformations per member and source region.
       const groupKeys = [], groups = [];
       sys.comps.forEach((c, i) => {
@@ -145,7 +218,7 @@ export function coefficients103(data, spec, ages = AGES_103, opt = {}) {
         while (b.kind === 'mirror' && sys.comps[b.of]) b = sys.comps[b.of];
         return { ...g, kind: c.kind, base: b.kind, name: c.name, place: c.place || null };
       };
-      const res = integrate(sys, { phantomAges: PHANTOM_AGES_103, columns, nTargets: which.length * nT, groups, interp: 'icrp103', functionals, byCompartment: !!opt.outputs },
+      const res = integrate(sys, { phantomAges: PHANTOM_AGES_103, columns, split, nTargets: which.length * nT, groups, interp: 'icrp103', step, functionals, byCompartment: !!opt.outputs },
         { intakeAge, period, outputs: opt.outputs, rtol: opt.rtol });
       which.forEach((x, k) => saf.index.targets.forEach((t, i) => { Ht[x][t] = res.H[k * nT + i]; }));
       runs.push({ sys, res, groupKeys, which, doseGroups: opt.outputs ? res.doseGroups.map(kindOf) : null });
