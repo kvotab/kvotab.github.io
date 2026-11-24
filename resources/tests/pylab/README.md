@@ -138,10 +138,12 @@ repository root and Chrome on the ports in `PYLAB_HTTP_PORT` and
       --headless=new --remote-debugging-port=9311 --no-first-run \
       --user-data-dir=/tmp/pylab-chrome --disable-gpu \
       --use-fake-device-for-media-stream --use-fake-ui-for-media-stream \
-      --autoplay-policy=no-user-gesture-required about:blank
+      --autoplay-policy=no-user-gesture-required --mute-audio about:blank
     python3 resources/tests/pylab/test-ui.py
 
-With `PYLAB_SHOTS=<folder>` it saves screenshots. Pyodide, NumPy and SciPy
+`--mute-audio` keeps what the test plays (`sound`, an `audioplayer`'s tone)
+out of the speakers; the page still gets every sample. With
+`PYLAB_SHOTS=<folder>` it saves screenshots. Pyodide, NumPy and SciPy
 come from cdn.jsdelivr.net, so the browser test needs the network.
 
 `test-ui-large.py` runs on the same server and Chrome: the page with
