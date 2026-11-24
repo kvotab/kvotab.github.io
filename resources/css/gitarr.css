@@ -317,7 +317,7 @@ body.gt-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior:
 .gt-meter[data-state="off"] .gt-mark { background: var(--gt-off); border-color: var(--gt-off); color: #fff; }
 .gt-meter[data-state="near"] .gt-mark { background: var(--gt-near); border-color: var(--gt-near); color: #fff; }
 .gt-meter[data-state="ok"] .gt-mark { background: var(--gt-ok); border-color: var(--gt-ok); color: #fff; }
-[data-theme="dark"] .gt-meter[data-state] .gt-mark { color: #1a1410; }
+[data-theme="dark"] .gt-meter[data-state] .gt-mark { color: #0d1015; }
 .gt-meter[data-state="idle"] .gt-mark, .gt-panel.is-quiet .gt-mark { opacity: .55; }
 .gt-scale { display: flex; justify-content: space-between; margin-top: 2px; font-size: .78rem; color: var(--text-muted); }
 
