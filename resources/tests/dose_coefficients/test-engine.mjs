@@ -234,10 +234,12 @@ if (!SYSTEM || SYSTEM === '103') {
   const pins = [
     ['103', { nuclide: 'Cs-137', route: 'ingestion', form: 'soluble' }, 7300, 1.3529e-8],
     ['103', { nuclide: 'Sr-90', route: 'inhalation', form: 'F' }, 100, 2.3426e-7],
-    ['103', { nuclide: 'Pb-212', route: 'ingestion', form: 'all' }, 7300, 5.5916e-9],
+    ['103', { nuclide: 'Pb-212', route: 'ingestion', form: 'all' }, 7300, 5.6032e-9],
     ['103', { nuclide: 'Pb-210', route: 'injection' }, 7300, 1.5771e-6],
     // caesium formed in barium's bone volume: that bone volume is not part of its "Other" (9 % low at 3 months otherwise)
     ['103', { nuclide: 'Ba-129', route: 'injection' }, 100, 1.0199e-10],
+    // thallium formed in lead's red cells stays in red cells (Publication 137 para 481; 7 % low otherwise)
+    ['103', { nuclide: 'Pb-198', route: 'injection' }, 7300, 4.1394e-11],
     ['103', { nuclide: 'Ra-226', route: 'ingestion', form: 'all' }, 7300, 1.2646e-7],
     ['60', { nuclide: 'Po-210', route: 'ingestion' }, 7300, 1.206e-6],
   ];
