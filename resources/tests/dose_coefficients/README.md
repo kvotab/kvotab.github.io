@@ -1315,7 +1315,7 @@ do not move (97.9 % within 0.1 %). Of the printed coefficients only radon's,
 thoron's and Ra-226's move, by 0.07 % at most; the OIR Data Viewer's adults
 by injection are unchanged.
 
-Still open:
+Still open (all three closed in the next section):
 
 - After the gas, kidneys and liver about 1 % low with Publication 158's
   model, where with Publication 137's they are 0.3 % high. From the older
@@ -1332,3 +1332,115 @@ Still open:
   tissue). The rates follow from blood flows, volumes and partition
   coefficients; not rebuilt, the reference masses of each age would be
   needed to more figures than the paper gives.
+
+## What was left after radon: five rules (2026-11-25, night)
+
+Against the annex: organ doses more than 1 % off 160 → 32 and more than
+0.5 % off 1,253 → 238 of 561,420, none more than 2.1 %; within 0.1 %
+95.3 → 96.6 %. Effective doses within 0.1 % 97.9 → 98.4 %, within 0.2 %
+99.4 → 99.6 %. OIR Data Viewer: effective doses within 0.1 % 97.7 → 97.9 %.
+The printed coefficients round as before (98.9 % and 98.5 %).
+
+- **The rest of the body is one source** (`OPTIONS103.otherSAF`, see103.js
+  `otherPhantom`). Its S was the mass-weighted mean of the S of each
+  target–source pair, each pair interpolated in energy on its own. The
+  reference averages the SAFs of the tissues that form it at the tabulated
+  energies and interpolates that mean. The monotone cubic is not linear in
+  its data, so the two differ where the curves have different shapes: below
+  50 keV a tissue's SAF from itself falls with energy and that from its
+  neighbours rises. Above, they agree to 0.01 % (Cs-137: no change). Mo-93
+  (X-rays of 16.5–18.6 keV, spread through soft tissue) by injection: muscle
+  was 0.990, 0.987, 0.994, 0.996, 0.998 and 1.000 of the annex's at the six
+  ages, the prostate 0.989 at 1 and 15 years, lymph nodes 0.990 at 10 years,
+  salivary glands 1.010 there; the ratio of the two ways is 1.013, 1.006,
+  1.005, 1.003 and 1.000 for muscle in the phantoms of 1, 5, 10 and 15 years
+  and the adult, 1.011 and 1.013 for the prostate at 1 and 15 years, 1.015
+  for the lymph nodes and 0.990 for the salivary glands at 10 years. Mo-93
+  31 → 0, Tc-97 8 → 0 and Sb-119 12 → 0 values more than 1 % off. What gave
+  it away: liver and kidneys, which Mo's model names, were exact; only
+  targets inside "Other" were off, most where the body is small.
+
+- **Radon's rates with more figures than printed** (elements.json, Rn).
+  Tables 32.4 and 32.5 have three figures. The rates that follow from
+  reference values are rebuilt: RT-air → Blood-A = F × 1440 × 0.43 / V(air),
+  Blood-V → RT-air = F × 1440 / (0.73 V(blood)), Blood-A → fat, kidneys,
+  liver, bone volume and red marrow = the share of cardiac output × F × 1440
+  / (0.27 V(blood)), Blood-A → Other the rest of that flow, and RT-air →
+  Environment = ln 2 / T for T = 4.5, 5, 8, 11 and 17 s before adulthood (the
+  adult keeps Publication 137's 2600 d⁻¹, which fits better than ln 2 / 23 s).
+  F = 0.83, 1.2, 3.4, 5.0, 6.1 and 6.5 (male) or 5.9 (female) l min⁻¹; blood
+  0.36067 l at 100 days (382.31 g / 1.06, the mass by body mass between the
+  newborn's 290 g and the 530 g at 1 year), then 0.5, 1.4, 2.4, 4.5 or 3.3,
+  5.3 or 3.9 l; V(air) = FRC × 3.858 / 3.30. All 132 rebuilt rates round to
+  the printed ones; for 100 days the printed rates leave 0.36060–0.36079 l of
+  blood with 0.83 l min⁻¹. The mean offset of all tissues from the annex by
+  age went from 0.02, −0.33, 0.01, −0.23, 0.23 and 0.09 % to −0.04, 0.01,
+  −0.03, −0.08, 0.00 and 0.02 % (the gas, with the bismuth rule below at
+  282 d⁻¹); radon alone against the 2023 paper's adult male 0.993–0.998 →
+  0.998–1.002. The tissue-to-blood rates stay as printed.
+
+- **Bismuth as a progeny of radon: blood to ST0 at 279 d⁻¹** (progeny.json,
+  the radon set: `{op: 'set'}`). Its own model and bismuth as a progeny of
+  lead have 300. No source says 279. What says it: after the rules of the
+  section before, the annex still asked for kidneys and liver up and the
+  unnamed tissues down by amounts that one number explains for the gas,
+  for ingestion and for thoron, at every age and in both sexes. By
+  ingestion, where it is largest, kidneys asked +1.66, +1.33, +1.34, +1.21,
+  +0.66 and +0.83 % at the six ages and muscle −1.82, −0.87, −1.00, −0.69,
+  −1.32 and −0.55 %; 282 gives +1.72, +1.34, +1.31, +1.27, +1.16 and +1.04 %
+  and −1.63, −1.17, −1.12, −1.05, −0.88 and −0.73 %, and skin, spleen,
+  marrow, heart, thyroid and pancreas follow. The best value is 276–282 in
+  each of the three cases (rms over all tissues: gas 0.35 → 0.20 %,
+  ingestion 0.66 → 0.19 %, thoron 0.23 → 0.18 %). 300 × 3.3248 / 3.576 =
+  278.9 would be the fast pool reduced as the fat and breast compartments of
+  Publication 137 para 653 reduce the intermediate one; that is a guess.
+  Raising the other outflows from blood by 6 % instead does not fit (skin
+  and spleen go the wrong way), nor does moving the 18–21 d⁻¹ to fat. Pb-214,
+  Pb-212 and Bi-214 taken in themselves are within 0.2 % with 300, and so is
+  Publication 137's radon model against the paper (kidneys 1.004 with 300,
+  1.015 with 282): the lower rate belongs to Publication 158's radon
+  calculation alone.
+
+- **Polonium formed in the ST1 of a bismuth that is itself a progeny is in
+  polonium's own soft tissue** (the lead set: `poolNames`, model103.js
+  `placeSpec`). Polonium's model has one soft-tissue compartment, "Other"
+  here and "ST1" in Publication 137 para 652. Pb-210 by injection had
+  kidneys 1.003–1.005 and every soft tissue 0.994–0.998 of the annex's: the
+  Po-210 formed in the Bi-210 of the pools was moved to Plasma 2, from where
+  a fifth goes to the urinary path. With the three pools one at a time, ST1
+  alone gives what is asked (kidneys −0.29 to −0.44 % for −0.31 to −0.45,
+  muscle +0.38 to +0.59 for +0.36 to +0.58; 15 years apart, where lead is
+  0.2–0.3 % high by itself); ST0 gives a fifth of it and ST2
+  half, and all three 1.7 times too much. The same closes the testes after
+  ingested Bi-214 and Pb-214 (0.984–0.993 → within 0.3 %). Bi-210 taken in
+  is exact with its ST1 foreign, as the pools of the nuclide taken in are
+  everywhere. Lead formed from polonium in that soft tissue is in lead's ST1,
+  as before. The rule is by element: polonium formed from the radon that
+  radium or thorium leaves in its ST1 is not in it (so applied, Ra-228 had
+  1,010 values more than 1 % off).
+
+- **Indium formed from the cadmium in silver's liver leaves it** (the silver
+  set: `identify` "Ag:Liver 1" and "Ag:Liver 2" null for indium). Silver's
+  liver has two compartments and cadmium's one, so cadmium formed there is
+  in an ambiguous compartment and leaves at 0.5 d⁻¹ (Publication 151 para
+  466). The indium it forms there was placed in indium's own Liver 1 and
+  Liver 2, which have the names of silver's. It is ambiguous too and leaves
+  at 2.37 d⁻¹: Ag-115 by injection, liver 1.008–1.009 and every other tissue
+  0.989–0.999 of the annex's → all 312 organ doses within 0.3 % (rms 0.50 →
+  0.10 %).
+
+Still open (nothing more than 2.1 % off):
+
+- Sr-82: kidneys 0.985, 0.984, 0.992, 1.000, 1.009 and 1.021 at the six
+  ages, the adult's heart wall 1.012. Rb-82 lives 76 s; Sr-80, Sr-81 and
+  Sr-83 are within 0.5 %.
+- Testes by ingestion: Se-70 0.982–0.991, Bi-213 1.004–1.021 (most at 10
+  years; by injection and inhalation exact).
+- Pancreas, spleen and gonads after Se-70 and Se-72 0.3–0.6 % low. Arsenic
+  leaves these four tissues at 0.08 d⁻¹; no single rate fits the three.
+- Lead at 15 years 0.2–0.3 % high (Pb-202, Pb-205, Pb-210). Its rates at
+  that age are the adult's times 0.72 and bone's share 0.37 to all printed
+  figures.
+- Effective doses 0.2–0.3 % off: caesium at 3 months, 1 year and 15 years,
+  Ra-228 and Ba-133 at 5 years, Ca-41 and Ca-45.
+

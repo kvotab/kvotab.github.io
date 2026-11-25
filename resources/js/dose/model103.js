@@ -151,6 +151,18 @@ export const OPTIONS103 = {
                           // member's rest of the body by the reference male's masses, for both sexes
                           // (dose103.js otherParts; needs ageStep); false = all of it spread by the
                           // masses of the sex whose dose it is
+  otherSAF: 'combined',   // S from a member's rest of the body: 'combined' = the SAFs of the regions that
+                          // form it are averaged by mass at the tabulated energies and that mean SAF is
+                          // interpolated in energy (see103.js otherPhantom); 'pairs' = each target-source
+                          // pair is interpolated and the S averaged. The monotone cubic is not linear in
+                          // the data, and the two differ for photons below 50 keV, where a target's SAF
+                          // from itself falls with energy and that from its neighbours rises. The annex
+                          // of Publication 158, 93Mo by injection (X-rays of 16.5 to 18.6 keV, the
+                          // nuclide spread in soft tissue): pair by pair, muscle was 0.990, 0.987,
+                          // 0.994, 0.996, 0.998 and 1.000 of the annex's at the six ages, the prostate
+                          // 0.989 at 1 and at 15 years, the lymph nodes 0.990 at 10 years, the salivary
+                          // glands 1.010 there; the mean SAF moves each by what is missing (muscle
+                          // +1.3 % at 1 year, +0.6 % at 5 years, 0.0 for adults). Likewise 97Tc.
   ageSpline: 'types',     // S between the reference ages from 1 year on (the PCHIP of Publication 158 para
                           // 174): 'types' = a spline for each radiation type's S (photons, electrons, alpha
                           // particles, neutrons) and their sum, as the calculations have it; 'total' = one
@@ -667,6 +679,13 @@ export function assemble103(data, spec) {
     // own element that is formed from it as a progeny: sameElement.)
     const own = place.el === m.el && !(rules.sameElement === 'progeny' && src.member === 0 && place.member === 0);
     const pooled = src.region === 'Other' && !own && !sameOther;
+    // A pool of its model that is another element's pool of another name (poolNames, by "El:name"):
+    // polonium's one soft-tissue compartment is the "ST1" of Publication 137 para 652, and polonium formed in
+    // the ST1 of a bismuth that is itself a progeny is in it, as lead formed from polonium there is in lead's
+    // ST1. Formed in that bismuth's ST0 or ST2, which polonium has no pool for, in the pools of the nuclide
+    // taken in, or from radon in another member's ST1, it moves to blood as before.
+    const alias = spec.poolNames?.[`${place.el}:${place.name}`];
+    if (id === undefined && alias && src.region === 'Other' && !pooled && same === true && S.sys.has(alias)) return S.sys.get(alias);
     if (id === undefined && !(pooled && same === true) && (same === true || (Array.isArray(same) && same.includes(place.name))) && S.sys.has(place.name)) {
       return S.sys.get(place.name);
     }

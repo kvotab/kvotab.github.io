@@ -358,10 +358,81 @@ export function sAllRows(ph, w, parts = sRowsByType(ph, w)) {
 }
 
 /**
+ * The rest of the body as one source: the mass-weighted mean SAF of the
+ * regions that may form Other and that `named` leaves (ICRP 155 eq. 2.15),
+ * at the tabulated energies, held as a phantom of that one source (row =
+ * target). `key` names the regions it is the mean of.
+ *
+ * The S of Other is the S of this mean SAF. The mean of the pairs' S is not
+ * the same thing: the monotone cubic is not linear in the data, and where a
+ * target's SAF from itself falls with energy while that from its neighbours
+ * rises, the cubic through the mean differs from the mean of the cubics.
+ * Above 50 keV the two agree to 0.01 %; for X-rays of 16 to 19 keV (93Mo,
+ * 97Tc) the mean SAF gives muscle 1.3 % more at 1 year, 0.5 % at 5 years and
+ * nothing for adults, as the ICRP's coefficients have it (OPTIONS103.otherSAF).
+ */
+export function otherPhantom(ph, named) {
+  const parts = [];
+  let M = 0;
+  ph.sources.forEach((src, s) => {
+    if (!ph.other[s] || named.has(src)) return;
+    const m = ph.masses.sources[s];
+    if (!(m > 0)) return;
+    M += m;
+    parts.push([s, m]);
+  });
+  const key = parts.map(([s]) => s).join(',');
+  const cache = ph.others || (ph.others = new Map());
+  if (cache.has(key)) return cache.get(key);
+  const mini = Object.create(SafPhantom.prototype);
+  Object.assign(mini, { id: `${ph.id}/other`, key, parts, mass: M, nT: ph.nT, nS: 1, energies: ph.energies, radiation: {}, neutron: null, neutronNuclides: [], neutronWR: [] });
+  const nT = ph.nT;
+  for (const type of ['photon', 'electron', 'alpha']) {
+    const R = ph.radiation[type], n = R.n;
+    const vals = new Float32Array(nT * n), offset = new Int32Array(nT + 1);
+    const y = new Float64Array(n);
+    for (let t = 0; t < nT; t++) {
+      y.fill(0);
+      for (const [s, m] of parts) {
+        const r = s * nT + t, st = R.start[r], o = R.offset[r];
+        for (let k = st; k < n; k++) y[k] += m * R.vals[o + k - st];
+      }
+      if (M > 0) for (let k = 0; k < n; k++) vals[t * n + k] = y[k] / M;
+      offset[t + 1] = offset[t] + n;
+    }
+    mini.radiation[type] = { start: new Uint8Array(nT), vals, offset, n, slopes: null };
+  }
+  cache.set(key, mini);
+  return mini;
+}
+
+/**
+ * S coefficients [Sv per (Bq s)] of every target from the rest of the body
+ * (otherPhantom), one array per radiation type of S_TYPES as sRowsByType
+ * gives them. Neutrons, whose SAFs are not interpolated, are the mean of the
+ * pairs'.
+ */
+export function sOtherByType(ph, w, mini) {
+  const types = sRowsByType(mini, w.neutronEY > 0 ? { ...w, neutronEY: 0 } : w);
+  if (w.neutronEY > 0 && mini.mass > 0) {
+    const k = ph.neutronNuclides.indexOf(w.name);
+    if (k >= 0) {
+      if (!ph.neutron) throw new Error(`${w.name}: the neutron SAFs of ${ph.id} are not loaded`);
+      const nT = ph.nT, nR = nT * ph.nS, f = MEV * ph.neutronWR[k] * w.neutronEY / mini.mass;
+      const neutron = new Float64Array(nT);
+      for (const [s, m] of mini.parts) for (let t = 0; t < nT; t++) neutron[t] += f * m * ph.neutron[k * nR + s * nT + t];
+      types[3] = neutron;
+    }
+  }
+  return types;
+}
+
+/**
  * The S coefficients for a member's source regions in one phantom:
  * {region: Float64Array(nT)}, with "Other" the mass-weighted mean over the
  * regions that may form Other and that the member's systemic model does not
- * name (ICRP 155 eq. 2.15).
+ * name (ICRP 155 eq. 2.15), each pair interpolated in energy on its own
+ * (sOtherByType interpolates the mean SAF).
  */
 export function sForRegions(ph, S, regions, named) {
   const out = {};

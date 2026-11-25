@@ -282,7 +282,7 @@ if (!SYSTEM || SYSTEM === '103') {
     ['103', { nuclide: 'Cs-137', route: 'ingestion', form: 'soluble' }, 7300, 1.3554e-8],
     ['103', { nuclide: 'Sr-90', route: 'inhalation', form: 'F' }, 100, 2.3703e-7],
     ['103', { nuclide: 'Pb-212', route: 'ingestion', form: 'all' }, 7300, 5.5951e-9],
-    ['103', { nuclide: 'Pb-210', route: 'injection' }, 7300, 1.5749e-6],
+    ['103', { nuclide: 'Pb-210', route: 'injection' }, 7300, 1.5786e-6],
     // caesium formed in barium's bone volume: that bone volume is not part of its "Other" (9 % low at 3 months otherwise)
     ['103', { nuclide: 'Ba-129', route: 'injection' }, 100, 1.0210e-10],
     // thallium formed in lead's red cells stays in red cells (Publication 137 para 481; 7 % low otherwise)
@@ -366,13 +366,15 @@ if (!SYSTEM || SYSTEM === '103') {
     // kidneys 1.38), those formed in its yellow marrow leave as they leave fat (red marrow 0.78 otherwise, or 1.16
     // held there for good), and the progeny's uptake to breast follows the breast's share of the blood flow by age
     // (a 3-month-old's breast after thoron 1.12 with the adult's); what radon decays to in its arterial blood is in
-    // the progeny's own blood at once (the adult's kidneys after the gas 0.974 of this with the transfer at 1000 d-1
-    // that its venous blood keeps, and 0.963 of the annex's)
+    // the progeny's own blood at once (with the transfer at 1000 d-1 that its venous blood keeps, the adult's kidneys
+    // after the gas have 0.974 of the value); bismuth as radon's progeny goes from blood to its fast soft tissue at
+    // 279 d-1, not at its own model's 300 (with 300 the adult's kidneys after the gas have 0.987 of this, the liver
+    // 0.993 and the muscle 1.005; a 3-month-old's kidneys after radon swallowed 0.980 and its muscle 1.019)
     ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas' }, 7300, 5.0020e-10],
-    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas' }, 7300, 2.4438e-10, 'Liver'],
-    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas' }, 100, 8.7377e-10, 'Liver'],
-    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas' }, 7300, 7.6605e-10, 'Kidneys'],
-    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas' }, 7300, 5.8741e-10, 'Red marrow'],
+    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas' }, 7300, 2.4655e-10, 'Liver'],
+    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas' }, 100, 8.7747e-10, 'Liver'],
+    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas' }, 7300, 7.7515e-10, 'Kidneys'],
+    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas' }, 7300, 5.8927e-10, 'Red marrow'],
     ['103', { nuclide: 'Rn-220', route: 'inhalation', form: 'gas' }, 7300, 1.7681e-10],
     ['103', { nuclide: 'Rn-220', route: 'inhalation', form: 'gas' }, 100, 3.0786e-11, 'Breast'],
     // lead formed in a soft tissue that is not in its model leaves at 7.39 d-1 at every age, the rate Publication 137
@@ -380,27 +382,27 @@ if (!SYSTEM || SYSTEM === '103') {
     // after thoron had 0.980 of this at 3 months and 0.976 at 15 years, a 3-month-old's kidneys 1.023 and a
     // 15-year-old's muscle 1.010
     ['103', { nuclide: 'Rn-220', route: 'inhalation', form: 'gas' }, 100, 3.2607e-10, 'Bone surface'],
-    ['103', { nuclide: 'Rn-220', route: 'inhalation', form: 'gas' }, 100, 6.8335e-10, 'Kidneys'],
-    ['103', { nuclide: 'Rn-220', route: 'inhalation', form: 'gas' }, 5475, 4.4968e-11, 'Bone surface'],
-    ['103', { nuclide: 'Rn-220', route: 'inhalation', form: 'gas' }, 5475, 1.1789e-11, 'Muscle'],
+    ['103', { nuclide: 'Rn-220', route: 'inhalation', form: 'gas' }, 100, 6.8613e-10, 'Kidneys'],
+    ['103', { nuclide: 'Rn-220', route: 'inhalation', form: 'gas' }, 5475, 4.4847e-11, 'Bone surface'],
+    ['103', { nuclide: 'Rn-220', route: 'inhalation', form: 'gas' }, 5475, 1.1730e-11, 'Muscle'],
     // 211Pb formed (by way of 215Po) from the radon in arterial blood is in lead's plasma at once (0.987 of this
     // when it is moved there at 1000 d-1)
-    ['103', { nuclide: 'Rn-219', route: 'inhalation', form: 'gas' }, 7300, 4.5413e-13, 'Bone surface'],
+    ['103', { nuclide: 'Rn-219', route: 'inhalation', form: 'gas' }, 7300, 4.5582e-13, 'Bone surface'],
     // progeny formed in the stomach move on with its contents, at radon's own rate (OPTIONS103.contentsTransit):
     // 15.2 d-1 in the female from 15 years; at the tract's 20.6 her stomach has 0.87 of this and her small intestine 1.11
     ['103', { nuclide: 'Rn-222', route: 'ingestion', form: 'gas' }, 5475, 1.8995e-9, 'Stomach', 'F'],
     ['103', { nuclide: 'Rn-222', route: 'ingestion', form: 'gas', rules: { contentsTransit: 'own' } }, 5475, 1.6577e-9, 'Stomach', 'F'],
-    ['103', { nuclide: 'Rn-222', route: 'ingestion', form: 'gas' }, 5475, 4.1076e-10, 'Small intestine', 'F'],
-    ['103', { nuclide: 'Rn-222', route: 'ingestion', form: 'gas', rules: { contentsTransit: 'own' } }, 5475, 4.5561e-10, 'Small intestine', 'F'],
+    ['103', { nuclide: 'Rn-222', route: 'ingestion', form: 'gas' }, 5475, 4.0945e-10, 'Small intestine', 'F'],
+    ['103', { nuclide: 'Rn-222', route: 'ingestion', form: 'gas', rules: { contentsTransit: 'own' } }, 5475, 4.5420e-10, 'Small intestine', 'F'],
     // the female's shares where she has a model of her own (OPTIONS103.sexShares; "*sexShares" of the radon set):
     // by her own masses after 222Rn, by the male's after 220Rn, as the annex has each
-    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas' }, 7300, 1.3406e-10, 'Gonads', 'F'],
-    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas', rules: { sexShares: 'male' } }, 7300, 1.0637e-10, 'Gonads', 'F'],
-    ['103', { nuclide: 'Rn-220', route: 'inhalation', form: 'gas' }, 7300, 1.9339e-11, 'Gonads', 'F'],
-    ['103', { nuclide: 'Rn-220', route: 'inhalation', form: 'gas', rules: { sexShares: 'own' } }, 7300, 2.3714e-11, 'Gonads', 'F'],
+    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas' }, 7300, 1.3368e-10, 'Gonads', 'F'],
+    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas', rules: { sexShares: 'male' } }, 7300, 1.0611e-10, 'Gonads', 'F'],
+    ['103', { nuclide: 'Rn-220', route: 'inhalation', form: 'gas' }, 7300, 1.9268e-11, 'Gonads', 'F'],
+    ['103', { nuclide: 'Rn-220', route: 'inhalation', form: 'gas', rules: { sexShares: 'own' } }, 7300, 2.3629e-11, 'Gonads', 'F'],
     // 218At, on a branch of 0.02 %, is no member whose tissues count: with astatine's thyroid counted, the members
     // after it leave the thyroid out of their rest of the body and a 3-month-old's thyroid has 0.90 of this
-    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas' }, 100, 4.2545e-10, 'Thyroid'],
+    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas' }, 100, 4.2391e-10, 'Thyroid'],
     ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas', rules: { carried: false } }, 100, 3.8152e-10, 'Thyroid'],
     // antimony formed in the gut takes the fA of its forms other than in food (OPTIONS103.giProgenyFA); with the
     // highest, the brain has 1.5 times this
@@ -418,8 +420,8 @@ if (!SYSTEM || SYSTEM === '103') {
     // progeny keeps bismuth's own pools (214Bi and 214Pb by ingestion: the testes had 0.89 and 0.93 of these with
     // the 210Bi sent to blood); and bone turnover is adult from the adult age of the element taken in
     // (OPTIONS103.chainAdult), bismuth's 20 years
-    ['103', { nuclide: 'Bi-214', route: 'ingestion', form: 'all' }, 7300, 2.9287e-12, 'Gonads'],
-    ['103', { nuclide: 'Pb-214', route: 'ingestion', form: 'all' }, 3650, 6.6441e-11, 'Gonads'],
+    ['103', { nuclide: 'Bi-214', route: 'ingestion', form: 'all' }, 7300, 2.9552e-12, 'Gonads'],
+    ['103', { nuclide: 'Pb-214', route: 'ingestion', form: 'all' }, 3650, 6.7160e-11, 'Gonads'],
     ['103', { nuclide: 'Bi-214', route: 'ingestion', form: 'all' }, 5475, 1.9256e-11, 'Bone surface'],
     ['103', { nuclide: 'Bi-214', route: 'ingestion', form: 'all', rules: { chainAdult: 'own' } }, 5475, 1.7948e-11, 'Bone surface'],
     // mercury formed after lead follows mercury's own model, with red marrow, skin and gonads added (197mPb inhaled
@@ -494,8 +496,26 @@ if (!SYSTEM || SYSTEM === '103') {
     // 218Po formed from the radon that 226Ra leaves in blood is in polonium's Plasma 2, a fifth of which goes to
     // the kidneys; moved there at 1000 d-1, a quarter decays on the way and the kidneys of a 15-year-old have 0.959
     // of this (0.963 of the annex's)
-    ['103', { nuclide: 'Ra-226', route: 'injection' }, 5475, 1.0172e-6, 'Kidneys'],
-    ['103', { nuclide: 'Ra-226', route: 'injection', rules: { gasBlood: 'transfer' } }, 5475, 9.7553e-7, 'Kidneys'],
+    ['103', { nuclide: 'Ra-226', route: 'injection' }, 5475, 1.0140e-6, 'Kidneys'],
+    ['103', { nuclide: 'Ra-226', route: 'injection', rules: { gasBlood: 'transfer' } }, 5475, 9.7286e-7, 'Kidneys'],
+    // the rest of the body as one source: its regions' SAFs averaged at the tabulated energies, then interpolated
+    // (OPTIONS103.otherSAF). 93Mo's X-rays of 16.5 to 18.6 keV: pair by pair, a 1-year-old's muscle has 0.987 of
+    // this and a 15-year-old's prostate 0.989, as they had of the annex's; an adult's muscle is the same either way
+    ['103', { nuclide: 'Mo-93', route: 'injection' }, 365, 5.3225e-10, 'Muscle'],
+    ['103', { nuclide: 'Mo-93', route: 'injection', rules: { otherSAF: 'pairs' } }, 365, 5.2551e-10, 'Muscle'],
+    ['103', { nuclide: 'Mo-93', route: 'injection' }, 5475, 8.5832e-11, 'Prostate/uterus'],
+    ['103', { nuclide: 'Mo-93', route: 'injection', rules: { otherSAF: 'pairs' } }, 5475, 8.4848e-11, 'Prostate/uterus'],
+    ['103', { nuclide: 'Mo-93', route: 'injection', rules: { otherSAF: 'pairs' } }, 7300, 7.5152e-11, 'Muscle'],
+    // polonium formed in the ST1 of a bismuth that is itself a progeny is in polonium's own soft tissue (the lead
+    // set's poolNames): moved to Plasma 2 instead, a fifth of it goes to the urinary path, and after 210Pb the
+    // adult's kidneys have 1.004 of this and the muscle 0.994, as they had of the annex's
+    ['103', { nuclide: 'Pb-210', route: 'injection' }, 7300, 5.1168e-6, 'Kidneys'],
+    ['103', { nuclide: 'Pb-210', route: 'injection' }, 7300, 1.2758e-7, 'Muscle'],
+    ['103', { nuclide: 'Bi-210', route: 'injection' }, 7300, 2.5322e-9, 'Muscle'],
+    // indium formed from the cadmium in silver's liver leaves it at 2.37 d-1 (the silver set): held in indium's own
+    // liver, the adult's liver after 115Ag has 1.008 of this and the red marrow 0.993, as they had of the annex's
+    ['103', { nuclide: 'Ag-115', route: 'injection' }, 7300, 7.0937e-11, 'Liver'],
+    ['103', { nuclide: 'Ag-115', route: 'injection' }, 7300, 9.4973e-12, 'Red marrow'],
     ['60', { nuclide: 'Po-210', route: 'ingestion' }, 7300, 1.206e-6],
   ];
   for (const [sys, spec, age, want, tissue, sex = 'M'] of pins) {
@@ -625,6 +645,47 @@ if (!SYSTEM || SYSTEM === '103') {
       [a, i].every((x) => JSON.stringify(x.out('Pb-214/Other (Rn-222) (Po-218)')) === '[["Pb-214/Blood",[7.39]]]' && x.out('Bi-214/Other (Rn-222) (Po-218) (Pb-214)')[0][1].every((r) => near(r, 66.54, 1e-9)))
       && near(rate(d103.elements.Pb.systemic.default, 'ST0', 'Blood')[0], 5.28, 1e-9),
       `${JSON.stringify(i.out('Pb-214/Other (Rn-222) (Po-218)'))} ${JSON.stringify(rate(d103.elements.Pb.systemic.default, 'ST0', 'Blood'))}`);
+  }
+  {
+    // Bismuth as radon's progeny: 279 d-1 from blood to ST0 at every age; as lead's progeny its own 300.
+    await d103.prepare('Pb-214');
+    const biLead = assemble103(d103, { nuclide: 'Pb-214', route: 'injection', cutoff: 1e-4, intakeAge: 7300, sex: 'M' }).members.find((m) => m.name === 'Bi-214');
+    check('bismuth from blood to its fast soft tissue: 279 d-1 at every age as radon\'s progeny, 300 as lead\'s; every other rate out of blood the same',
+      rate(bi.progeny.model, 'Blood', 'ST0').every((x) => near(x, 279, 1e-9)) && rate(biLead.progeny.model, 'Blood', 'ST0').every((x) => near(x, 300, 1e-9))
+      && ['Liver 1', 'Kidneys 1', 'Kidneys 2', 'UB contents', 'Red marrow', 'Skin'].every((to) => near(rate(bi.progeny.model, 'Blood', to).at(-1), rate(biLead.progeny.model, 'Blood', to).at(-1), 1e-12)),
+      `${JSON.stringify(rate(bi.progeny.model, 'Blood', 'ST0'))} ${JSON.stringify(rate(biLead.progeny.model, 'Blood', 'ST0'))}`);
+    // Radon's own rates: those that follow from cardiac output F, blood volume V and the air volume of the lungs
+    // are held with six figures (Publication 158's tables print three).
+    const F = { male: [0.83, 1.2, 3.4, 5.0, 6.1, 6.5], female: [0.83, 1.2, 3.4, 5.0, 6.1, 5.9] };
+    const V100 = (290 + 240 * 2.5 / 6.5) / 1.06 / 1000;
+    const V = { male: [V100, 0.5, 1.4, 2.4, 4.5, 5.3], female: [V100, 0.5, 1.4, 2.4, 3.3, 3.9] };
+    const FRC = { male: [0.148, 0.244, 0.767, 1.484, 2.677, 3.301], female: [0.148, 0.244, 0.767, 1.484, 2.325, 2.681] };
+    let worst = 0;
+    for (const sex of ['male', 'female']) {
+      const T = d103.elements.Rn.systemic[sex].transfers, get = (a, b) => T.find(([x, y]) => x === a && y === b)[2];
+      for (let a = 0; a < 6; a++) {
+        const flow = F[sex][a] * 1440, air = a === 5 && sex === 'male' ? 3.858 : FRC[sex][a] * 3.858 / 3.30;
+        const outA = T.filter(([x]) => x === 'Blood-A').reduce((q, t) => q + t[2][a], 0);
+        for (const [got, want] of [[outA, flow / (0.27 * V[sex][a])], [get('Blood-V', 'RT-air')[a], flow / (0.73 * V[sex][a])], [get('RT-air', 'Blood-A')[a], flow * 0.43 / air],
+          [get('Blood-A', 'Kidneys')[a], (sex === 'female' && a >= 4 ? 0.17 : 0.19) * flow / (0.27 * V[sex][a])], [get('RT-air', 'Environment')[a], a === 5 ? 2600 : Math.LN2 / [4.5, 5, 8, 11, 17][a] * 86400]]) worst = Math.max(worst, Math.abs(got / want - 1));
+      }
+    }
+    check(`radon's rates from cardiac output, blood volume and the air of the lungs, both sexes and six ages: what leaves arterial blood, venous blood to the air, the air to arterial blood, arterial blood to kidneys, the air to the environment by its half-time (the adult's 2600 d-1): within ${worst.toExponential(1)}`, worst < 2e-5);
+  }
+  {
+    // Where a progeny is when it is formed in a pool of another name, or across a member between.
+    const bornAt = async (nuclide, from, spec = {}) => {
+      await d103.prepare(nuclide);
+      const sys = assemble103(d103, { nuclide, route: 'injection', cutoff: 1e-4, intakeAge: 7300, ...spec });
+      const nm = (c) => `${sys.members[sys.comps[c].member].name}/${sys.comps[c].name}`;
+      return { to: sys.decays.filter((x) => nm(x.from) === from).map((x) => nm(x.to)), out: (label) => sys.transfers.filter((t) => nm(t.from) === label).map((t) => [nm(t.to), t.rates]) };
+    };
+    const a = await bornAt('Pb-210', 'Bi-210/ST1'), b = await bornAt('Pb-210', 'Bi-210/ST0'), c = await bornAt('Bi-210', 'Bi-210/ST1'), e = await bornAt('Bi-214', 'Po-214/Other');
+    check('polonium formed in the ST1 of a bismuth that is a progeny is in its own soft tissue; in that bismuth\'s ST0, or in the ST1 of the bismuth taken in, in a compartment of its own there; lead formed from polonium in that soft tissue is in lead\'s ST1',
+      String(a.to) === 'Po-210/Other' && String(b.to) === 'Po-210/ST0 (Bi-210)' && String(c.to) === 'Po-210/ST1 (Bi-210)' && String(e.to) === 'Pb-210/ST1', `${a.to} | ${b.to} | ${c.to} | ${e.to}`);
+    const ag = await bornAt('Ag-115', 'Cd-115/Liver 1 (Ag-115)');
+    check('115Ag: indium formed from the cadmium in silver\'s Liver 1 is in a compartment of its own there and leaves for plasma at 2.37 d-1, not in indium\'s Liver 1',
+      String(ag.to) === 'In-115m/Liver 1 (Ag-115) (Cd-115)' && JSON.stringify(ag.out('In-115m/Liver 1 (Ag-115) (Cd-115)')) === '[["In-115m/Plasma",[2.37]]]', `${ag.to} ${JSON.stringify(ag.out('In-115m/Liver 1 (Ag-115) (Cd-115)'))}`);
   }
   const bg = rate(bi.progeny.model, 'Blood', 'Breast-g'), fat = rate(bi.progeny.model, 'Blood', 'Fat 1');
   const rnm = d103.elements.Rn.systemic.male;

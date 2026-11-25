@@ -24,7 +24,7 @@
   for females).
 */
 import { assemble103, sexSpecific103, OPTIONS103 } from './model103.js';
-import { emissionWeights, sAllRows, sRowsByType, sForRegions, S_TYPES } from './see103.js';
+import { emissionWeights, sAllRows, sRowsByType, sForRegions, otherPhantom, sOtherByType, S_TYPES } from './see103.js';
 import { integrate } from './solve.js';
 
 export const AGES_103 = [100, 365, 1825, 3650, 5475, 7300];
@@ -185,17 +185,38 @@ export function coefficients103(data, spec, ages = AGES_103, opt = {}) {
   // {all: the sum over the radiation types, types: each type's own (null where the nuclide emits none of it)}
   const sCache = data.sCache || (data.sCache = new Map());
   const betaSpectrum = spec.rules?.betaSpectrum ?? OPTIONS103.betaSpectrum;
+  const wCache = data.wCache || (data.wCache = new Map());
+  const weightsOf = (name) => {
+    const key = betaSpectrum === OPTIONS103.betaSpectrum ? name : `${name}|${betaSpectrum}`;
+    if (!wCache.has(key)) wCache.set(key, emissionWeights(data.emissions(name), saf.index.energies, name, betaSpectrum));
+    return wCache.get(key);
+  };
   const sOf = (name, id) => {
     const key = betaSpectrum === OPTIONS103.betaSpectrum ? `${name}|${id}` : `${name}|${id}|${betaSpectrum}`;
     if (!sCache.has(key)) {
       const ph = saf.phantoms[id];
-      const w = emissionWeights(data.emissions(name), saf.index.energies, name, betaSpectrum);
+      const w = weightsOf(name);
       const types = sRowsByType(ph, w);
       sCache.set(key, { all: sAllRows(ph, w, types), types });
     }
     return sCache.get(key);
   };
-  const sRows = (name, id) => sOf(name, id).all;
+  // S from the rest of the body, the SAFs of its regions combined before they are interpolated in energy
+  // (OPTIONS103.otherSAF): per nuclide, phantom and the set of regions that form it.
+  const otherSAF = spec.rules?.otherSAF ?? OPTIONS103.otherSAF;
+  const oCache = data.oCache || (data.oCache = new Map());
+  const sOther = (name, id, named) => {
+    const ph = saf.phantoms[id];
+    const mini = otherPhantom(ph, named);
+    const key = `${name}|${id}|${betaSpectrum}|${mini.key}`;
+    if (!oCache.has(key)) {
+      const types = sOtherByType(ph, weightsOf(name), mini);
+      const all = new Float64Array(nT);
+      for (const part of types) if (part) for (let t = 0; t < nT; t++) all[t] += part[t];
+      oCache.set(key, { all, types });
+    }
+    return oCache.get(key);
+  };
   const step = spec.rules?.ageStep ?? OPTIONS103.ageStep;
   // The step of an intake: one day where the published calculation of the element taken in has it at that age
   // (OPTIONS103.shortSteps), else the step of all. A step asked for by rule is taken as it is.
@@ -225,16 +246,22 @@ export function coefficients103(data, spec, ages = AGES_103, opt = {}) {
       const which = sex ? [sex] : ['M', 'F'];
       // S columns: per compartment, per reference age, the targets of each sex in turn.
       const colCache = new Map(), splitCache = new Map();
-      const colsOf = (rowsOf) => (name, region, named) => PHANTOM_AGES_103.map((pa, p) => {
+      // (pick: the sum over the radiation types, or one type's own S)
+      const colsOf = (pick) => (name, region, named) => PHANTOM_AGES_103.map((pa, p) => {
         const col = new Float64Array(which.length * nT);
         which.forEach((x, k) => {
           const id = PHANTOMS_103[x][p];
-          const rows = rowsOf(name, id);
+          if (region === 'Other' && otherSAF === 'combined') {
+            const v = pick(sOther(name, id, named));
+            if (v) col.set(v, k * nT);
+            return;
+          }
+          const rows = pick(sOf(name, id));
           if (rows) col.set(sForRegions(saf.phantoms[id], rows, [region], named)[region], k * nT);
         });
         return col;
       });
-      const colsAll = colsOf(sRows);
+      const colsAll = colsOf((e) => e.all);
       // S at the phantoms' ages, and with it each radiation type's own S
       // where S is interpolated in age type by type (ageSpline; solve.js
       // takes the slopes of the age spline from `byType`).
@@ -242,7 +269,7 @@ export function coefficients103(data, spec, ages = AGES_103, opt = {}) {
         const cols = colsAll(name, region, named);
         if (ageSpline === 'types') {
           const present = S_TYPES.map((_, ty) => ty).filter((ty) => which.some((x) => PHANTOMS_103[x].some((id) => sOf(name, id).types[ty])));
-          if (present.length > 1) cols.byType = present.map((ty) => colsOf((n, id) => sOf(n, id).types[ty])(name, region, named));
+          if (present.length > 1) cols.byType = present.map((ty) => colsOf((e) => e.types[ty])(name, region, named));
         }
         return cols;
       };
