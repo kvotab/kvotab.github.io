@@ -1471,6 +1471,26 @@ group's row, and selecting it fills the Information view with what it holds;
 and the page raised nothing. A prompt is answered over the protocol
 (`Page.javascriptDialogOpening`), which needs `Page.enable`.
 
+## test-chrome-kompartment-no-text-selection.py
+
+Kompartment's diagram never starts a text selection: a press on it is a pan, a
+move, a box or a double-click for a block's settings.
+
+    SITE_HTTP_PORT=8765 SITE_CDP_PORT=9222 python3 test-chrome-kompartment-no-text-selection.py    # expect 10/10
+
+`.graph-host` in `kompartment/css/app.css` takes the selection away from the
+whole canvas. Without it, a double-click on a block selected its name, and a
+shift-click or a shift-drag box, which add blocks to the selection, stretched
+the page's text selection over the labels between. With real presses and drags
+on the landscape example: a double-click on a block's label (and the block
+window it opens, closed by its x), a click and then a shift-click on another
+block, a shift-drag box across the labels, a block dragged across others, a pan,
+and plain and shift drags from the canvas onto the text of the Information view
+beside it each leave nothing selected; a selection made in that text goes when
+the canvas is pressed; and the page raised nothing. The test sends no Escape: in
+headless Chrome on macOS an Escape the page does not take goes on to the browser,
+which opens its About page, and the next press never returns.
+
 ## test-chrome-kompartment-checks.py
 
 Kompartment's checks on a model and its run, in the page.

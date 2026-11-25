@@ -3161,6 +3161,14 @@ dialog #flash {
 	border-radius: var(--radius);
 	overflow: hidden;
 	position: relative;
+	/* A press on the diagram starts a gesture -- a pan, a move, a box, a
+	   double-click for a block's settings -- and never a text selection.
+	   Left to the browser, the double-click also selected the word under it,
+	   and a shift-click, which adds a block to the selection here, stretched
+	   the page's selection over every label between the two blocks. Safari
+	   reads only the prefixed property. */
+	-webkit-user-select: none;
+	user-select: none;
 }
 
 .graph-help { font-size: 11px; }

@@ -12943,6 +12943,22 @@ test('the canvas is inset by the padding, not by gaps for rows that are not ther
 	assert(fixed, 'the help line can shrink before the canvas does');
 });
 
+test('a press on the diagram never starts a text selection', async () => {
+	// A double-click there opens a block's settings, and a shift-click or a
+	// shift-drag adds blocks to the selection; left to the browser, they also
+	// selected the label under the pointer and stretched the page's selection
+	// over every label between. The canvas refuses a selection as a whole, and
+	// Safari reads only the prefixed property. Pressed for real in
+	// resources/tests/site/test-chrome-kompartment-no-text-selection.py.
+	const { readFileSync } = await import('node:fs');
+	const css = readFileSync(new URL('../css/app.css', import.meta.url), 'utf8');
+	const at = css.indexOf('\n.graph-host {');
+	assert(at >= 0, 'no rule for the canvas');
+	const rule = css.slice(at, css.indexOf('\n}', at));
+	assert(/\n\t-webkit-user-select: none;/.test(rule) && /\n\tuser-select: none;/.test(rule),
+		`the canvas lets a press select text:${rule}`);
+});
+
 test('every tab has a panel to show, and every panel a tab', async () => {
 	const { readFileSync } = await import('node:fs');
 	const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
