@@ -174,6 +174,12 @@ const KVOT = (() => {
       desc: 'Practise the arithmetic facts on Winnetka cards, in Swedish.',
     },
     {
+      href: './blockmodellen.html',
+      label: 'Blockmodellen',
+      group: 'everyday',
+      desc: 'Learn the Singapore bar model for word problems, step by step, in Swedish.',
+    },
+    {
       href: './gitarr.html',
       label: 'Gitarrstämmare',
       group: 'everyday',

@@ -42,6 +42,7 @@ import kvot_icon as K  # noqa: E402
 # A page with a mark of its own: its touch icon, and whether its icon is one
 # of those drawn from blocks by scripts/kvot_icon.py (which name themselves).
 OWN = {
+    'blockmodellen.html': ('resources/images/blockmodellen-icon-180.png', True),
     'dose_coefficients.html': ('resources/images/dose-icon-180.png', False),
     'ensdf.html': ('resources/images/ensdf-icon-180.png', False),
     'flashcards.html': ('resources/images/flashcards-icon-180.png', True),

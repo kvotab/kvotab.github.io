@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="base-uri 'self'; object-src 'none'">
+  <title>Blockmodellen — kvot ab</title>
+  <meta name="description" content="Lär dig blockmodellen, Singaporemetoden för textuppgifter i matte: korta förklaringar, exempel att stega igenom och uppgifter där du ritar modellen själv, steg för steg. Del och helhet, jämförelse, gånger så många, bråk, före och efter, förhållande och procent.">
+  <link rel="canonical" href="https://kvotab.se/blockmodellen.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="kvot ab">
+  <meta property="og:title" content="Blockmodellen — kvot ab">
+  <meta property="og:description" content="Lär dig blockmodellen, Singaporemetoden för textuppgifter, steg för steg.">
+  <meta property="og:url" content="https://kvotab.se/blockmodellen.html">
+  <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
+  <meta name="twitter:card" content="summary">
+  <script>
+    // Set the theme before first paint so dark-mode visitors get no white flash.
+    (function () {
+      try {
+        var t = localStorage.getItem('kvot-theme');
+        if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* storage unavailable — site.js will apply the default */ }
+    })();
+  </script>
+  <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
+  <link rel="stylesheet" href="./resources/css/kvot-fullwin.css?v=20261124">
+  <script src="./resources/js/kvot-fullwin.js?v=20261124"></script>
+  <link rel="stylesheet" href="./resources/css/blockmodellen.css?v=20261125">
+  <!-- The page's own mark, in the kvot mark's language (see
+       blockmodellen-icon.svg): a block model of a comparison, two bars and
+       the bit that sticks out. The 32 px PNG comes first, for a browser
+       that will not take an SVG (Safari before version 26); the 180 px PNG
+       is what an iPhone puts on its home screen, and the title the name it
+       suggests there. -->
+  <link rel="icon" href="./resources/images/blockmodellen-icon-32.png" sizes="32x32" type="image/png">
+  <link rel="icon" href="./resources/images/blockmodellen-icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="./resources/images/blockmodellen-icon-180.png">
+  <meta name="apple-mobile-web-app-title" content="Blockmodellen">
+</head>
+<body class="bm-body">
+<header></header>
+<div class="content bm-content">
+<main class="bm" id="bm">
+
+  <!-- The page bar. On a phone, and in a lesson on any screen, the site's
+       header and footer are not shown: the kvot mark, the title and the
+       theme switch stand in for them here. -->
+  <div class="bm-top" id="bm-top">
+    <div class="bm-brand">
+      <a class="bm-homelink" href="./index.html"><img src="./resources/images/kvot-logotype.svg" alt="kvot ab: startsidan" width="28" height="28"></a>
+      <h1 class="bm-title">Blockmodellen</h1>
+    </div>
+    <div class="bm-stats" id="bm-stats">
+      <button type="button" class="bm-stat" id="bm-stat-streak" data-on-click="bm:badges"></button>
+      <button type="button" class="bm-stat" id="bm-stat-stars" data-on-click="bm:badges"></button>
+      <button type="button" class="bm-stat" id="bm-stat-solved" data-on-click="bm:badges"></button>
+    </div>
+    <div class="bm-top-end">
+      <button type="button" class="bm-iconbtn" data-on-click="bm:help" aria-label="Om sidan" title="Om sidan">
+        <svg viewBox="0 0 16 16" width="17" height="17" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6"
+             stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.6"/><path d="M6.1 6.2a2 2 0 0 1 3.8.6c0 1.3-1.9 1.6-1.9 2.8"/><path d="M8 11.9v.1"/></svg>
+      </button>
+      <button type="button" class="bm-iconbtn" data-on-click="bm:settings" aria-label="Inställningar" title="Inställningar">
+        <svg viewBox="0 0 16 16" width="17" height="17" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3"
+             stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.1"/><path d="M6.75 3L6.97 1.08A7 7 0 0 1 9.03 1.08L9.25 3A5.15 5.15 0 0 1 10.65 3.59L12.16 2.37A7 7 0 0 1 13.63 3.84L12.41 5.35A5.15 5.15 0 0 1 13 6.75L14.92 6.97A7 7 0 0 1 14.92 9.03L13 9.25A5.15 5.15 0 0 1 12.41 10.65L13.63 12.16A7 7 0 0 1 12.16 13.63L10.65 12.41A5.15 5.15 0 0 1 9.25 13L9.03 14.92A7 7 0 0 1 6.97 14.92L6.75 13A5.15 5.15 0 0 1 5.35 12.41L3.84 13.63A7 7 0 0 1 2.37 12.16L3.59 10.65A5.15 5.15 0 0 1 3 9.25L1.08 9.03A7 7 0 0 1 1.08 6.97L3 6.75A5.15 5.15 0 0 1 3.59 5.35L2.37 3.84A7 7 0 0 1 3.84 2.37L5.35 3.59A5.15 5.15 0 0 1 6.75 3Z"/></svg>
+      </button>
+      <button type="button" class="theme-toggle" data-on-click="kvot:toggleTheme">🌙</button>
+      <span class="kvot-fullwin" data-parts="full"></span>
+    </div>
+  </div>
+
+  <!-- Home: the chapters and their lessons, practice, the cheat sheet. -->
+  <section class="bm-home" id="bm-home">
+    <div class="bm-tabs" id="bm-tabs" role="tablist" aria-label="Blockmodellen">
+      <button type="button" role="tab" id="bm-tab-path" aria-controls="bm-path" aria-selected="true" data-on-click="bm:tab" data-tab="path">Lektioner</button>
+      <button type="button" role="tab" id="bm-tab-train" aria-controls="bm-train" aria-selected="false" data-on-click="bm:tab" data-tab="train" tabindex="-1">Träna</button>
+      <button type="button" role="tab" id="bm-tab-sheet" aria-controls="bm-sheet" aria-selected="false" data-on-click="bm:tab" data-tab="sheet" tabindex="-1">Fusklapp</button>
+    </div>
+    <div class="bm-panel" id="bm-path" role="tabpanel" aria-labelledby="bm-tab-path"></div>
+    <div class="bm-panel" id="bm-train" role="tabpanel" aria-labelledby="bm-tab-train" hidden></div>
+    <div class="bm-panel" id="bm-sheet" role="tabpanel" aria-labelledby="bm-tab-sheet" hidden></div>
+  </section>
+
+  <!-- A lesson: a card, the eight steps, or a problem, one at a time. -->
+  <section class="bm-lesson" id="bm-lesson" aria-label="Lektion" hidden>
+    <div class="bm-lbar">
+      <button type="button" class="bm-iconbtn" data-on-click="bm:quit" aria-label="Avsluta" title="Avsluta">✕</button>
+      <div class="bm-lbar-mid">
+        <div class="bm-lbar-row"><span class="bm-ltitle" id="bm-ltitle"></span><span class="bm-counter" id="bm-counter"></span></div>
+        <div class="bm-progress" id="bm-progress" role="progressbar" aria-label="Så långt har du kommit" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="bm-progress-fill"></i></div>
+      </div>
+    </div>
+    <div class="bm-screen" id="bm-screen"></div>
+    <div class="bm-foot" id="bm-foot">
+      <p class="bm-feedback" id="bm-feedback" role="status" aria-live="polite"></p>
+      <div class="bm-footbtns">
+        <button type="button" class="bm-btn bm-btn-quiet" id="bm-hint" data-on-click="bm:hint" hidden>Ledtråd</button>
+        <button type="button" class="bm-btn bm-btn-quiet" id="bm-alt" data-on-click="bm:alt" hidden></button>
+        <button type="button" class="bm-btn bm-btn-go" id="bm-go" data-on-click="bm:go" hidden></button>
+      </div>
+    </div>
+  </section>
+
+  <!-- A lesson is over. -->
+  <section class="bm-finish" id="bm-finish" aria-label="Klart" hidden></section>
+</main>
+</div>
+
+<dialog class="bm-dialog" id="bm-help" aria-labelledby="bm-help-title">
+  <div class="bm-dialog-head">
+    <h2 id="bm-help-title">Om Blockmodellen</h2>
+    <button type="button" class="bm-iconbtn" data-on-click="bm:close" aria-label="Stäng">✕</button>
+  </div>
+  <div class="bm-dialog-body">
+    <p>Blockmodellen är ett sätt att lösa textuppgifter genom att rita dem. Du ritar block som visar hur mycket något är, och ser sedan hur du ska räkna. Metoden kommer från Singapore och används i många svenska skolor.</p>
+    <h3>Så använder du sidan</h3>
+    <ul>
+      <li><b>Lektioner.</b> Börja med <i>Kom igång</i>, eller gå direkt till det ni håller på med i skolan. Varje kapitel har tre lektioner: <i>Så funkar det</i> förklarar och visar ett exempel steg för steg, i <i>Rita själv</i> gör du alla stegen och sidan kollar vart och ett, och i <i>Lös uppgifter</i> svarar du först och ritar modellen om du behöver hjälp.</li>
+      <li><b>Träna.</b> Nya uppgifter varje gång, av en sort eller blandade. Talen slumpas, så uppgifterna tar aldrig slut.</li>
+      <li><b>Fusklapp.</b> De åtta stegen, alla modellerna, vanliga misstag och ord att kunna på en sida. Skriv gärna ut den.</li>
+    </ul>
+    <h3>Tips</h3>
+    <ul>
+      <li>Rita på papper också. Det är så du gör i skolan och på proven.</li>
+      <li>Kör du fast? Tryck på <b>Ledtråd</b>. Steget räknas då inte som rätt direkt, men du lär dig lika mycket.</li>
+      <li>Skriver du ditt namn under inställningarna är det ibland du som är med i uppgifterna.</li>
+      <li>Knappen med högtalaren läser upp uppgiften, om webbläsaren har en svensk röst.</li>
+    </ul>
+    <h3>Stjärnor, märken och dagar i rad</h3>
+    <p>Varje lektion ger en till tre stjärnor, efter hur mycket som blev rätt på första försöket. En lektion går inte att misslyckas med, och den går alltid att göra om. Övar du varje dag växer raden av dagar. Tryck på siffrorna högst upp för att se dina märken.</p>
+    <h3>För vuxna</h3>
+    <p>Sidan följer den arbetsgång i åtta steg som många svenska skolor använder (se länkarna nedan). Hjälpen trappas ner: först ett exempel som sidan visar, sedan uppgifter där blocken redan är ritade, sedan uppgifter där eleven gör alla stegen själv, och sist uppgifter där eleven svarar först och ritar bara om det behövs. Uppgifterna är skrivna för sidan, och talen slumpas fram så att varje uppgift går jämnt ut.</p>
+    <p>Stjärnor, märken, dagar i rad, namn och inställningar sparas bara i den här webbläsaren. Inget skickas någonstans.</p>
+    <h3>Läs mer</h3>
+    <ul>
+      <li><a href="https://ncm.gu.se/2023blockmodellen/arbetsgang" target="_blank" rel="noopener">Blockmodellen: arbetsgång</a>, NCM. Ur Cecilia Christiansen och Doris Lindberg, <i>En hel del textuppgifter – Singaporemetoden</i>.</li>
+      <li><a href="https://ncm.gu.se/wp-content/uploads/2023/02/3234_23_1.pdf" target="_blank" rel="noopener">Uppslaget: Blockmodellen</a>, Nämnaren 2023:1, Cecilia Christiansen och Doris Lindberg.</li>
+    </ul>
+  </div>
+</dialog>
+
+<dialog class="bm-dialog" id="bm-settings" aria-labelledby="bm-settings-title">
+  <div class="bm-dialog-head">
+    <h2 id="bm-settings-title">Inställningar</h2>
+    <button type="button" class="bm-iconbtn" data-on-click="bm:close" aria-label="Stäng">✕</button>
+  </div>
+  <div class="bm-dialog-body">
+    <fieldset class="bm-set">
+      <legend>Ditt namn</legend>
+      <label class="bm-field"><span>Namn<small>Då är det ibland du som är med i uppgifterna.</small></span>
+        <input type="text" id="bm-set-name" name="bm-name" maxlength="20" autocomplete="off" spellcheck="false" data-on-change="bm:setting"></label>
+      <div class="bm-radios" role="radiogroup" aria-labelledby="bm-pron-label">
+        <span id="bm-pron-label">Skriv om mig som</span>
+        <label><input type="radio" name="bm-pron" value="hon" data-on-change="bm:setting"><span>hon</span></label>
+        <label><input type="radio" name="bm-pron" value="han" data-on-change="bm:setting"><span>han</span></label>
+        <label><input type="radio" name="bm-pron" value="hen" data-on-change="bm:setting"><span>hen</span></label>
+      </div>
+    </fieldset>
+    <fieldset class="bm-set">
+      <legend>Uppläsning</legend>
+      <label class="bm-check"><input type="checkbox" id="bm-set-speech" name="bm-speech" data-on-change="bm:setting"><span>Knapp som läser upp uppgiften<small id="bm-speech-note"></small></span></label>
+    </fieldset>
+    <fieldset class="bm-set">
+      <legend>För vuxna</legend>
+      <div class="bm-setrow">
+        <button type="button" class="bm-btn bm-btn-quiet" data-on-click="bm:reset">Börja om från början …</button>
+      </div>
+    </fieldset>
+    <div class="bm-dialog-foot">
+      <button type="button" class="bm-btn bm-btn-go" data-on-click="bm:close">Klar</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog class="bm-dialog" id="bm-badges" aria-labelledby="bm-badges-title">
+  <div class="bm-dialog-head">
+    <h2 id="bm-badges-title">Dina märken</h2>
+    <button type="button" class="bm-iconbtn" data-on-click="bm:close" aria-label="Stäng">✕</button>
+  </div>
+  <div class="bm-dialog-body" id="bm-badge-body"></div>
+</dialog>
+
+<dialog class="bm-dialog bm-dialog-small" id="bm-ask" aria-labelledby="bm-ask-title">
+  <div class="bm-dialog-body">
+    <h2 id="bm-ask-title"></h2>
+    <p id="bm-ask-text"></p>
+    <div class="bm-dialog-foot">
+      <button type="button" class="bm-btn bm-btn-quiet" id="bm-ask-no" data-on-click="bm:askNo"></button>
+      <button type="button" class="bm-btn bm-btn-go" id="bm-ask-yes" data-on-click="bm:askYes"></button>
+    </div>
+  </div>
+</dialog>
+
+<div id="kvotmap"></div>
+
+<footer></footer>
+<noscript><p class="bm-noscript">Blockmodellen behöver JavaScript.</p></noscript>
+<script src="./resources/js/kvot-errors.js?v=20260921"></script>
+<script src="./resources/js/kvot-safe.js?v=20260911"></script>
+<script src="./resources/js/kvot-actions.js?v=20260902"></script>
+<script src="./resources/js/kvot-icons.js?v=20260902"></script>
+<script src="./resources/js/site.js?v=20261125"></script>
+<script src="./resources/js/blockmodellen-problems.js?v=20261125"></script>
+<script src="./resources/js/blockmodellen-draw.js?v=20261125"></script>
+<script src="./resources/js/blockmodellen-game.js?v=20261125"></script>
+<script src="./resources/js/blockmodellen.js?v=20261125"></script>
+<script>
+  KVOT.renderHeader('Blockmodellen');
+  KVOT.renderNav('blockmodellen.html');
+  KVOT.renderFooter();
+  KVOT.initMap('kvotmap');
+  BM.init();
+</script>
+</body>
+</html>

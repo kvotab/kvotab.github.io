@@ -40,6 +40,7 @@ PAGES = {
     'FARF31': {}, 'SimpleFunctions': {}, 'erosion_corrosion': {}, 'zoterify': {},
     'gitarr': {'own': True, 'phone': False, 'sv': True},
     'piano': {'own': True, 'phone': False, 'sv': True},
+    'blockmodellen': {'own': True, 'phone': False, 'sv': True},
     'karaoke': {'box': '.karaoke-wrap', 'sv': True},
     'logn': {}, 'arsredovisning': {'sv': True}, 'inkomstdeklaration': {'sv': True},
     'proj': {}, 'skb_qa_summary': {}, 'skbref': {},
