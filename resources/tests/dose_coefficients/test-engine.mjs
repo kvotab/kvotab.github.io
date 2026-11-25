@@ -43,7 +43,7 @@ const { parentModelName, f1FileName, recipe60, assemble60 } = await import(path.
 const { coefficients103, AGES_103 } = await import(path.join(JS, 'dose103.js'));
 const { emissionWeights, sAllRows, pchipSlopes, pchipEval, pchipIntegral, spectrumLines, MEV } = await import(path.join(JS, 'see103.js'));
 const { firstYearWeight, dcalWeight } = await import(path.join(JS, 'solve.js'));
-const { deposition103, assemble103, OPTIONS103 } = await import(path.join(JS, 'model103.js'));
+const { deposition103, assemble103, OPTIONS103, chainOptions103 } = await import(path.join(JS, 'model103.js'));
 const { buildChain, carriedMembers } = await import(path.join(JS, 'chain.js'));
 const { catalog60, catalog103 } = await import(path.join(JS, 'catalog.js'));
 const { detriment103, detriment60, nominalDetriment } = await import(path.join(JS, 'risk.js'));
@@ -313,14 +313,15 @@ if (!SYSTEM || SYSTEM === '103') {
     ['103', { nuclide: 'Bi-210m', route: 'injection', rules: { otherShares: false } }, 3650, 6.5636e-7, 'Gonads'],
     // uranium's chains take the shares as every chain does: the adult female's skin after 238U, whose 234Th names
     // skin, has 0.83 of this without them. 234U's has none to take: its 230Th is not among the members the published
-    // calculations carry (chain.js carriedMembers), nor is 238Pu's 234U; counted, her skin would be 1.20 and 1.21 of these
+    // calculations carry (chain.js carriedMembers), nor is 238Pu's 234U: they are no members of the chain
+    // (OPTIONS103.minorMembers); kept in it and their tissues counted, her skin would be 1.20 and 1.21 of these
     ['103', { nuclide: 'U-234', route: 'ingestion', form: 'soluble' }, 9125, 3.4690e-8],
     ['103', { nuclide: 'U-238', route: 'injection' }, 7300, 1.7316e-6, 'Skin', 'F'],
     ['103', { nuclide: 'U-238', route: 'injection', rules: { otherShares: false } }, 7300, 1.4406e-6, 'Skin', 'F'],
     ['103', { nuclide: 'U-234', route: 'injection' }, 7300, 1.6326e-6, 'Skin', 'F'],
-    ['103', { nuclide: 'U-234', route: 'injection', rules: { carried: false } }, 7300, 1.9634e-6, 'Skin', 'F'],
+    ['103', { nuclide: 'U-234', route: 'injection', rules: { carried: false, minorMembers: 'keep' } }, 7300, 1.9602e-6, 'Skin', 'F'],
     ['103', { nuclide: 'Pu-238', route: 'injection' }, 7300, 2.6767e-5, 'Skin', 'F'],
-    ['103', { nuclide: 'Pu-238', route: 'injection', rules: { carried: false } }, 7300, 3.2436e-5, 'Skin', 'F'],
+    ['103', { nuclide: 'Pu-238', route: 'injection', rules: { carried: false, minorMembers: 'keep' } }, 7300, 3.2436e-5, 'Skin', 'F'],
     // a progeny's adult rates from the adult age of the element taken in (OPTIONS103.chainAdult): niobium formed
     // from 93Mo from 20 years; from its own 25 the bone surface has 0.87 of this for adults and 0.86 at 15 years
     ['103', { nuclide: 'Mo-93', route: 'injection' }, 7300, 4.0676e-10, 'Bone surface'],
@@ -400,10 +401,10 @@ if (!SYSTEM || SYSTEM === '103') {
     ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas', rules: { sexShares: 'male' } }, 7300, 1.0611e-10, 'Gonads', 'F'],
     ['103', { nuclide: 'Rn-220', route: 'inhalation', form: 'gas' }, 7300, 1.9268e-11, 'Gonads', 'F'],
     ['103', { nuclide: 'Rn-220', route: 'inhalation', form: 'gas', rules: { sexShares: 'own' } }, 7300, 2.3629e-11, 'Gonads', 'F'],
-    // 218At, on a branch of 0.02 %, is no member whose tissues count: with astatine's thyroid counted, the members
+    // 218At, on a branch of 0.02 %, is no member of the chain: kept in it and astatine's thyroid counted, the members
     // after it leave the thyroid out of their rest of the body and a 3-month-old's thyroid has 0.90 of this
-    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas' }, 100, 4.2391e-10, 'Thyroid'],
-    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas', rules: { carried: false, sidePaths: 'follow' } }, 100, 3.8162e-10, 'Thyroid'],
+    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas' }, 100, 4.2419e-10, 'Thyroid'],
+    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas', rules: { carried: false, sidePaths: 'follow', minorMembers: 'keep' } }, 100, 3.8162e-10, 'Thyroid'],
     // antimony formed in the gut takes the fA of its forms other than in food (OPTIONS103.giProgenyFA); with the
     // highest, the brain has 1.5 times this
     ['103', { nuclide: 'Sb-124n', route: 'ingestion', form: 'food' }, 7300, 5.3939e-14, 'Brain'],
@@ -425,11 +426,19 @@ if (!SYSTEM || SYSTEM === '103') {
     ['103', { nuclide: 'Bi-214', route: 'ingestion', form: 'all' }, 5475, 1.9256e-11, 'Bone surface'],
     ['103', { nuclide: 'Bi-214', route: 'ingestion', form: 'all', rules: { chainAdult: 'own' } }, 5475, 1.7948e-11, 'Bone surface'],
     // mercury formed after lead follows mercury's own model, with red marrow, skin and gonads added (197mPb inhaled
-    // as Type F: the kidneys had 1.07 of this and the spleen 1.05 with the model of Publication 137 para 479); gold
-    // formed in mercury's kidneys is in its own
-    ['103', { nuclide: 'Pb-197m', route: 'inhalation', form: 'F' }, 7300, 1.4204e-11, 'Kidneys'],
-    ['103', { nuclide: 'Pb-197m', route: 'inhalation', form: 'F' }, 7300, 5.2299e-12, 'Spleen'],
-    ['103', { nuclide: 'Pb-195m', route: 'injection' }, 7300, 1.7699e-11, 'Kidneys'],
+    // as Type F: the kidneys had 1.07 of this and the spleen 1.05 with the model of Publication 137 para 479), and
+    // with a spleen and bone surfaces at a tenth of para 479's shares (with none the spleen had 0.991 of this at
+    // 3 months and 0.995 for adults, as it had of the annex's; bone surface 0.998); gold formed in mercury's kidneys
+    // is in its own
+    ['103', { nuclide: 'Pb-197m', route: 'inhalation', form: 'F' }, 7300, 1.4206e-11, 'Kidneys'],
+    ['103', { nuclide: 'Pb-197m', route: 'inhalation', form: 'F' }, 7300, 5.2546e-12, 'Spleen'],
+    ['103', { nuclide: 'Pb-197m', route: 'inhalation', form: 'F' }, 100, 3.3453e-11, 'Spleen'],
+    ['103', { nuclide: 'Pb-197m', route: 'inhalation', form: 'F' }, 100, 6.1112e-11, 'Bone surface'],
+    // a minor member is no member of the chain (OPTIONS103.minorMembers): 195mHg after 195mPb, 0.34 % of 195Tl and
+    // 0.0003 of the chain's energy, gave 0.7 % of a 3-month-old's kidney dose, what the page was above the annex's
+    ['103', { nuclide: 'Pb-195m', route: 'injection' }, 7300, 1.7656e-11, 'Kidneys'],
+    ['103', { nuclide: 'Pb-195m', route: 'inhalation', form: 'F' }, 100, 3.3292e-11, 'Kidneys'],
+    ['103', { nuclide: 'Pb-195m', route: 'inhalation', form: 'F', rules: { minorMembers: 'keep' } }, 100, 3.3523e-11, 'Kidneys'],
     // arsenic formed after selenium has selenium's pancreas, spleen, testes and ovaries in its model, out of
     // Other 2, with an uptake from plasma of 0.004, 0.004, 0.0008 and 0.00028 d-1 (the selenium set; read off the
     // annex of Publication 158: with none the pancreas after 70Se had 0.997 of this and the spleen after 72Se 0.996,
@@ -757,6 +766,23 @@ if (!SYSTEM || SYSTEM === '103') {
     check('82Sr: rubidium formed in strontium\'s ST0 leaves for blood at the rate of its own Other at each age, 15.3 d-1 at 3 months and 7.3 for adults',
       String(sr.to) === 'Rb-82/ST0 (Sr-82)' && JSON.stringify(sr.out('Rb-82/ST0 (Sr-82)')) === '[["Rb-82/Blood",[15.3,13.9,11.7,10.2,8.03,7.3]]]', `${sr.to} ${JSON.stringify(sr.out('Rb-82/ST0 (Sr-82)'))}`);
     const cutOf = (n) => JSON.stringify(buildChain(d103.index, n, { cutoff: 1e-4, horizonDays: 36525, sidePaths: 1e-3 }).cut);
+    // The chain followed way by way: a way is followed if what comes by it is a thousandth of the chain's energy.
+    const chainOf = (n, cutoff = 1e-4) => buildChain(d103.index, n, chainOptions103({ nuclide: n, cutoff }));
+    const namesOf = (n, cutoff) => chainOf(n, cutoff).members.map((m) => m.name).join();
+    for (const n of ['Pb-195m', 'Ra-223', 'Ag-104m', 'U-234', 'U-235', 'Pa-228']) await d103.prepare(n);
+    const pb195 = chainOf('Pb-195m'), all195 = chainOf('Pb-195m', 0);
+    check('a member no followed way reaches is no member of the chain: 195mHg after 195mPb, 211Po after 223Ra, 104Ag after 104mAg, 230Th after 234U, and 218At, 218Rn and 210Tl after 226Ra; with the cut-off at none they stay',
+      namesOf('Pb-195m') === 'Pb-195m,Tl-195,Hg-195,Au-195' && pb195.minor.join() === 'Hg-195m' && pb195.dropped.length === 0
+      && pb195.branches.every((x) => x.from < 4 && x.to < 4 && x.to > x.from) && all195.minor.length === 0 && all195.members.some((m) => m.name === 'Hg-195m')
+      && chainOf('Ra-223').minor.join() === 'Po-211' && chainOf('Ag-104m').minor.join() === 'Ag-104' && namesOf('U-234') === 'U-234'
+      && chainOf('Ra-226').minor.join() === 'At-218,Rn-218,Tl-210' && chainOf('Ra-226', 0).minor.length === 0,
+      `${namesOf('Pb-195m')} | not followed ${pb195.minor} | 223Ra ${chainOf('Ra-223').minor} | 104mAg ${chainOf('Ag-104m').minor} | 234U ${namesOf('U-234')} | 226Ra ${chainOf('Ra-226').minor}`);
+    check('a chain ends where too little is left, though members before it emit less: 235U down to 223Ra, without the 219Rn, 215Po, 211Pb and 211Bi after it; a lesser way stays cut and its member in (209Tl after 213Bi), ways that bring more are followed (131I after 131mTe, 95mNb after 95Zr); 228Pa keeps 220Fr and loses 216At',
+      namesOf('U-235') === 'U-235,Th-231,Pa-231,Ac-227,Th-227,Ra-223' && ['Rn-219', 'Po-215', 'Pb-211', 'Bi-211'].every((n) => chainOf('U-235').minor.includes(n))
+      && namesOf('Bi-213') === 'Bi-213,Po-213,Tl-209,Pb-209' && JSON.stringify(chainOf('Bi-213').cut) === '[["Tl-209","Pb-209"]]'
+      && chainOf('Te-131m').members.some((m) => m.name === 'I-131') && namesOf('Zr-95') === 'Zr-95,Nb-95m,Nb-95' && chainOf('Zr-95').cut.length === 0
+      && chainOf('Pa-228').members.some((m) => m.name === 'Fr-220') && chainOf('Pa-228').minor.includes('At-216'),
+      `235U ${namesOf('U-235')} | 213Bi ${namesOf('Bi-213')} cut ${JSON.stringify(chainOf('Bi-213').cut)} | 228Pa not followed ${chainOf('Pa-228').minor}`);
     await d103.prepare('Te-131m'); await d103.prepare('Zr-95'); await d103.prepare('Ce-144');
     check('the lesser way to a chain member is cut where it brings less than a thousandth of the energy: 209Pb by way of 209Tl after 213Bi, 210Pb by way of 210Tl and 214Bi by way of 218At after 226Ra; 131I by way of 131Te, 95Nb by way of 95mNb and 144Pr by way of 144mPr are followed',
       cutOf('Bi-213') === '[["Tl-209","Pb-209"]]' && cutOf('Ra-226') === '[["At-218","Bi-214"],["Rn-218","Po-214"],["Tl-210","Pb-210"]]' && cutOf('Te-131m') === '[]' && cutOf('Zr-95') === '[]' && cutOf('Ce-144') === '[]',
@@ -798,10 +824,13 @@ if (!SYSTEM || SYSTEM === '103') {
   check('bone turnover for the progeny of 214Bi: adult from 20 years, bismuth\'s adult age; from 25 with chainAdult own',
     turnAges(bi214).join() === '7300' && turnAges(await asm('Bi-214', { chainAdult: 'own' })).join() === '9125', `${turnAges(bi214).join(' ')}`);
   const hg = await modelOf('Pb-197m', 'Hg-197');
-  check('mercury formed after lead: mercury\'s own model (24 d-1 out of Plasma 1, 30 % of it to kidneys) without its brain, with red marrow, skin, testes and ovaries; no spleen, no bone',
+  check('mercury formed after lead: mercury\'s own model (24 d-1 out of Plasma 1, 30 % of it to kidneys) without its brain, with red marrow, skin, testes and ovaries at para 479\'s shares and spleen and the two bone surfaces at a tenth of them (0.0144 and 0.024 d-1), all back with 20 d',
     near(hg.transfers.filter(([x]) => x === 'Plasma 1').reduce((q, t) => q + t[2].at(-1), 0), 24.004, 1e-6) && near(rate(hg, 'Plasma 1', 'Kidneys').at(-1), 7.2, 1e-9)
     && near(rate(hg, 'Plasma 1', 'Red marrow').at(-1), 0.72, 1e-9) && near(rate(hg, 'Red marrow', 'Plasma 1').at(-1), 0.03466, 1e-9)
-    && ['Red marrow', 'Skin', 'Testes', 'Ovaries'].every((c) => c in hg.compartments) && !Object.values(hg.compartments).some((r) => r === 'Brain' || r === 'Spleen' || /bone/.test(r)),
+    && ['Red marrow', 'Skin', 'Testes', 'Ovaries'].every((c) => c in hg.compartments) && !Object.values(hg.compartments).some((r) => r === 'Brain')
+    && hg.compartments.Spleen === 'Spleen' && hg.compartments['Trab bone surf'] === 'T-bone-S' && hg.compartments['Cort bone surf'] === 'C-bone-S'
+    && near(rate(hg, 'Plasma 1', 'Spleen').at(-1), 0.0144, 1e-9) && near(rate(hg, 'Plasma 1', 'Trab bone surf').at(-1), 0.024, 1e-9) && near(rate(hg, 'Plasma 1', 'Cort bone surf').at(-1), 0.024, 1e-9)
+    && ['Spleen', 'Trab bone surf', 'Cort bone surf'].every((c) => near(rate(hg, c, 'Plasma 1').at(-1), 0.03466, 1e-9)),
     Object.keys(hg.compartments).join(' '));
   const as = await modelOf('Se-70', 'As-70');
   check('arsenic formed after selenium: selenium\'s pancreas, spleen, testes and ovaries added to its model out of Other 2, with 0.004, 0.004, 0.0008 and 0.00028 d-1 from plasma and 0.08 d-1 back; 40 d-1 leave plasma as before',

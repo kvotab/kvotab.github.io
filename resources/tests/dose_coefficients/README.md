@@ -1654,3 +1654,85 @@ where anything is absorbed, and the actinides' and lanthanides' absorbed
 fractions are the same at 15 years and after.
 
 Still open: the last list but for lead.
+
+## Mercury's spleen, and a chain followed way by way (2026-11-25, night)
+
+Against the annex: organ doses more than 0.5 % off 65 → 44 and more than
+0.2 % off 1,792 → 1,532 of 561,420, within 0.1 % 98.4 → 98.6 %; effective
+doses within 0.1 % 99.7 % as before. Printed coefficients that round to the
+printed value 99.0 → 99.1 % and 98.6 → 98.8 %. OIR Data Viewer: 34 nuclides
+move, 28 towards it; eleven of them now agree in e and in every organ dose
+to the four figures it gives (U-235, U-234, U-238, Am-243, Pm-141, Sm-141,
+Sm-141m, Tb-150, Ho-154, Ce-137, Mo-91); organ doses outside 2 % 98 → 96.
+
+It started from the short-lived lead isotopes, 25 of the 65 values that were
+left: the spleen after Pb-197m 0.5–0.9 % low, the kidneys after Pb-195m
+0.5–0.7 % high. Both are mercury's, and they are two different things.
+
+- **Mercury as lead's progeny has a spleen and bone surfaces after all, at a
+  tenth of para 479's shares** (progeny.json, the lead set): 0.06 % of the
+  24 d⁻¹ out of Plasma 1 to the spleen (0.0144 d⁻¹) and 0.1 % to each bone
+  surface (0.024 d⁻¹), from Other 1, back with 20 days. The day before, a
+  spleen at para 479's 0.6 % had put it 4–9 % high and was left out; none is
+  0.2–0.9 % low. One rate gives what the annex asks after Pb-197m inhaled as
+  Type F, +0.92, +0.68, +0.70, +0.83, +0.80, +0.49 % (got +0.94, +0.70,
+  +0.70, +0.80, +0.80, +0.48), and by injection, +0.27 to +0.22 (got +0.28
+  to +0.21). A larger uptake in thallium's spleen cannot: it needs 21 % more
+  for one route and 9 % for the other. The bone surfaces after Pb-197m as
+  Type F asked +0.13 to +0.20 %, get +0.11 to +0.19. The spleen's rate is
+  also what its share by mass of the adult's rest of the body takes
+  (`ancestorTissues: 'shared'` gives the adult the same and children too
+  much): Publication 151's para B.6, with a fixed rate. No publication gives
+  the numbers.
+
+- **A chain is followed way by way** (`OPTIONS103.minorMembers`, chain.js
+  `waysByEnergy`). A way from one member to the next is followed if what
+  comes by it, the next member's own energy and that of everything made
+  through it, is a thousandth of what the chain emits in 50 years, with the
+  alpha energy weighted by 20 or without; a member no followed way reaches
+  is no member. The page had two parts of this, found one at a time: the
+  members whose tissues count (`carried`) and the lesser way that is cut
+  (`sidePaths`). It still followed the members themselves.
+  - Pb-195m: Hg-195m is made by 0.34 % of Tl-195 and brings 0.0006 of the
+    energy. It lives 42 hours and gathers in the kidneys: it gave 0.7 % of a
+    3-month-old's kidney dose, 0.3 % of the gonads', 0.2 % of the liver's.
+    Without it the annex asked −0.71, −0.58, −0.55, −0.53, −0.53, −0.48 % of
+    the kidneys and gets −0.69, −0.56, −0.55, −0.55, −0.55, −0.49; liver,
+    gonads, and by injection, the same way.
+  - Not asked for, and they came with it: Ag-104 after Ag-104m, Po-211 after
+    Ra-223, Pb-199 after Po-203, Tc-97m after Ru-97 (rms of their organ
+    doses against the annex 0.099 → 0.031 %, 0.118 → 0.053, 0.034 → 0.013,
+    0.014 → 0.008).
+  - U-235 in the viewer settled what the rule is. Left out member by member
+    (each under a thousandth, leading to nothing that is not), everything
+    after Th-231 went and e fell from 1.0008 to 0.9987 of the viewer's.
+    Judged way by way from the top, with what is below still in place, the
+    chain keeps Pa-231, Ac-227, Th-227 and Ra-223 (0.0020 comes by the way
+    to Pa-231) and ends there: Rn-219, Po-215, Pb-211 and Bi-211 bring
+    0.0009 together. That gives 1.0000 and rms 0.000.
+  - A way is judged by what it brings, not the member by what it emits:
+    Ra-223 after U-235 emits less than Rn-219 and stays.
+  - With the cut-off at none every member is followed, as before.
+  - 122 of 1,252 chains lose a member. Ra-226 by ingestion: 9 nuclides
+    (At-218, Rn-218 and Tl-210 not followed), 367 compartments, 571
+    equations. The Decay chain tab names those not followed.
+
+What stands against the rule:
+
+- Pa-228 in the viewer: with every member and every way followed, rms
+  0.043 %; with the lesser way from At-216 to Bi-212 cut (as before this
+  step) 0.171; now, without At-216 (0.0009 by its way), 0.372. The viewer
+  has that side branch whole. At-216's way brings as much as the way to
+  Rn-219 after U-235, which the viewer has not, so no threshold on this
+  measure separates the two.
+- Pa-231, Th-231, U-231, Np-233 and Pu-243 in the viewer move away by 0.01
+  to 0.03 % in rms (Po-211 after Pa-231, Pu-239 after Pu-243).
+- Sr-81 in the annex, 0.040 → 0.043 %.
+
+Still open:
+
+- Pb-200 inhaled as Type S at 3 months: bladder wall, prostate, ovaries and
+  uterus 0.6–0.7 % low (5 values).
+- The 44 organ doses more than 0.5 % off: Rn-222 16, Ag-115 10, Pb-200 5,
+  Ra-224 and Te-131 4 each, Bi-214 and Rn-220 2 each, Ag-101 1.
+- Thoron as a gas at 5 years, e 0.21 % high; radium's bone at 15 years.

@@ -722,11 +722,11 @@ function renderSize() {
   if (d.info.external) { renderSizeExternal(d); return; }
   const z = d.info.size, n = ages().length * z.perAge;
   $('dcSizeSum').textContent = `${count(z.nuclides, 'nuclide')} · ${count(z.compartments, 'compartment')} · ${count(z.equations, 'equation')}`;
-  const dropped = d.info.dropped || [];
+  const dropped = d.info.dropped || [], minor = d.info.minor || [];
   const targets = z.sexes === 2 ? `the ${z.regions} target regions of each sex`
     : z.sexes === 1 ? `the ${z.regions} target regions of one sex` : `the ${z.regions} target regions and the remainder`;
   const rows = [
-    ['Chain', `${d.info.members.map((m) => m.name).join(', ')}${dropped.length ? `; left out by the cut-off: ${dropped.join(', ')}` : ''}`],
+    ['Chain', `${d.info.members.map((m) => m.name).join(', ')}${dropped.length ? `; left out by the cut-off: ${dropped.join(', ')}` : ''}${minor.length ? `; not followed, as in the ICRP’s calculations: ${minor.join(', ')}` : ''}`],
     ['Transfers', `${count(z.transfers, 'transfer')} between compartments and ${count(z.decays, 'decay')} from one member to the next`],
     ['Equations', `${count(z.compartments, 'activity', 'activities')}, and ${z.perGroup === 1 ? 'the number of transformations in' : `${z.perGroup} integrals of activity for`} each of the ${count(z.groups, 'group')} of compartments that share a source region${z.perGroup === 1 ? '' : ` (${(z.perGroup * z.groups).toLocaleString('en')})`}; the doses to ${targets} follow from these`],
     ['Matrix', `${count(z.coefficients, 'coefficient')}: the transfer and decay rates, and the weights of the integrals`],
@@ -1848,10 +1848,11 @@ function renderChain() {
       ...(m.E || [null, null, null]).map((x) => h('td', {}, mev(x))),
       h('td', {}, r ? sci(perMember.get(m.name) || 0, 3) : '–'),
       h('td', { class: 'text' }, kindText[m.kind] || m.kind || '')))));
-  const dropped = first.dropped || [];
-  $('dcChainNote').textContent = dropped.length
-    ? `Left out by the cut-off: ${dropped.join(', ')}.`
-    : 'The whole chain is followed.';
+  const dropped = first.dropped || [], minor = first.minor || [];
+  $('dcChainNote').textContent = [
+    dropped.length ? `Left out by the cut-off: ${dropped.join(', ')}.` : '',
+    minor.length ? `Not followed, as in the ICRP’s calculations (what comes by them, their own energy and that of all after them, is under a thousandth of the chain’s over 50 years): ${minor.join(', ')}.` : '',
+  ].filter(Boolean).join(' ') || 'The whole chain is followed.';
   // How decay data made from ENSDF were read for these members, where it took a rule of the page's.
   const decayNotes = members.filter((m) => m.decayNotes?.length);
   $('dcChainDecay').hidden = !s.decay;
@@ -2597,14 +2598,14 @@ const TOPICS = {
     const c = state.described?.info?.cutoffs?.find((x) => String(x.cutoff) === String(Number($('dcCutoff').value)));
     return {
       kicker: 'Setting', title: 'Decay chain cut-off',
-      lead: 'ICRP 103 system: progeny are followed down the chain until they carry less than this share of the energy that the chain emits over 100 years after 1 Bq of the parent (alpha energy weighted by 20). Those left out are listed on the Decay chain tab.',
+      lead: 'ICRP 103 system: progeny are followed down the chain until they carry less than this share of the energy that the chain emits over 100 years after 1 Bq of the parent (alpha energy weighted by 20). Unless none is chosen, the chain is also followed as the ICRP’s own calculations follow it, way by way: a way to a member is followed only if what comes by it, that member’s energy and that of all made through it, is a thousandth of the chain’s over 50 years. Those left out are listed on the Decay chain tab.',
       facts: [
         ['Chosen', `${$('dcCutoff').selectedOptions[0]?.dataset.text || $('dcCutoff').selectedOptions[0]?.textContent || ''}${c && state.entry ? `: ${c.nuclides} nuclides of the chain of ${state.entry.name}` : ''}`],
         ['Default', '0.01 %'],
       ],
       sections: [
         { heading: 'Choosing', list: [
-          'none: every member of the chain, as the publications do; slowest for the long chains (Th-232, U-238, Ra-226).',
+          'none: every member of the chain, also those the ICRP’s calculations do not follow; slowest for the long chains (Th-232, U-238, Ra-226).',
           '0.001 %, 0.01 % or 0.1 %: members that carry so little of the energy are left out, and the coefficient changes by about as much or less.',
           'Each option in the list says how many nuclides it keeps of the chosen radionuclide’s chain.',
         ] },

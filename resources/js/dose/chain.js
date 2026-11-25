@@ -19,12 +19,28 @@
   out this way carries less than `cutoff` of the 100-year energy, so the dose
   it would have added is of that order or smaller.
 
-  A member reached along two ways (sidePaths): the way that brings less than
-  that share of the chain's 50-year energy, with the alpha energy weighted by
-  20 and without, is not followed, as in the calculations behind the published
-  coefficients, which follow a chain way by way. 209Pb after 213Bi is made by
-  213Po (97.91 %) and by 209Tl (2.09 %): what 209Tl leaves is 0.0004 of the
-  chain's energy, and the annex of Publication 158 has 213Bi without it.
+  The calculations behind the published coefficients follow a chain way by
+  way (sidePaths with minor: waysByEnergy below). A way from one member to the
+  next is followed if the energy that comes by it -- the next member's own and
+  that of everything after it that is made through it -- is at least a
+  thousandth of what the chain emits in 50 years, with the alpha energy
+  weighted by 20 or without. What the coefficients show:
+  - a lesser way to a member is not followed: 209Pb after 213Bi is made by
+    213Po (97.91 %) and by 209Tl (2.09 %); what 209Tl leaves is 0.0004 of the
+    chain's energy, and the annex of Publication 158 has 213Bi without it;
+  - a member that no followed way reaches is no member: 195mHg after 195mPb
+    is made by 0.34 % of 195Tl, and it and all it leaves emit 0.0006 of the
+    chain's energy. It lives 42 hours and gathers in the kidneys: followed,
+    it gave 0.7 % of the kidney dose, 0.3 % of the gonads' and 0.2 % of the
+    liver's, which is what the page was above the annex there;
+  - a chain ends where what is left is too little, though members before it
+    emit less: after 235U the OIR Data Viewer has 231Th, 231Pa, 227Ac, 227Th
+    and 223Ra (231Pa, 227Th and 223Ra with 0.0006, 0.0003 and 0.0003 of the
+    energy) but not 219Rn, 215Po, 211Pb and 211Bi (0.0009 together). With
+    all of them e was 1.0008 of the viewer's, with none after 231Th 0.9987,
+    so 1.0000 and every organ dose to its four figures.
+  With sidePaths alone (minor not 'drop'), only the lesser ways are cut
+  (lesserWays), as the page did before it left members out.
 */
 
 export const LN2 = Math.LN2;
@@ -33,8 +49,10 @@ export const LN2 = Math.LN2;
  * @param {object} index  nuclide name -> {T (days), d: [[daughter, branch]...], E: [Ea, Ee, Ep]}
  * @param {string} parent
  * @param {object} [opt]  {last: number|null, cutoff: 1e-3, horizonDays: 36525, keep: (name) => bool,
- *                        sidePaths: 0 | share (1e-3) below which a lesser way to a member is cut}
- * @returns {{members: Array<{name, T, lambda, E}>, branches: Array<{from, to, b}>, dropped: string[], cut: Array<[from, to]>}}
+ *                        sidePaths: 0 | share (1e-3) below which a lesser way to a member is cut,
+ *                        minor: 'drop' | null: leave out the minor members (not with `last`)}
+ * @returns {{members: Array<{name, T, lambda, E}>, branches: Array<{from, to, b}>, dropped: string[], cut: Array<[from, to]>, minor: string[]}}
+ *   dropped: left out by the cut-off (or `last`); minor: left out as minor members
  */
 export function buildChain(index, parent, opt = {}) {
   if (!index[parent]) throw new Error(`${parent} is not in the decay data`);
@@ -85,12 +103,68 @@ export function buildChain(index, parent, opt = {}) {
     for (const [d, b] of index[n].d || []) if (at.has(d) && b > 0) branches.push({ from: i, to: at.get(d), b });
   });
   const cut = [];
+  if (opt.minor === 'drop' && !opt.last && opt.sidePaths > 0) {
+    // way by way: the lesser ways and the members that no followed way reaches
+    const { lost, keep } = waysByEnergy(index, names, branches, opt.sidePaths);
+    branches = branches.filter((x) => !lost.includes(x));
+    for (const x of lost) if (keep.has(names[x.from]) && keep.has(names[x.to])) cut.push([names[x.from], names[x.to]]);
+    if (keep.size < names.length) {
+      const left = names.filter((n) => keep.has(n)), to = new Map(left.map((n, i) => [n, i]));
+      return {
+        members: members.filter((m) => keep.has(m.name)),
+        branches: branches.filter((x) => keep.has(names[x.from]) && keep.has(names[x.to])).map((x) => ({ from: to.get(names[x.from]), to: to.get(names[x.to]), b: x.b })),
+        dropped, cut, minor: names.filter((n) => !keep.has(n)),
+      };
+    }
+    return { members, branches, dropped, cut, minor: [] };
+  }
   if (opt.sidePaths > 0) {
     const lesser = lesserWays(index, names, branches, opt.sidePaths);
     for (const x of lesser) cut.push([names[x.from], names[x.to]]);
     if (lesser.length) branches = branches.filter((x) => !lesser.includes(x));
   }
-  return { members, branches, dropped, cut };
+  return { members, branches, dropped, cut, minor: [] };
+}
+
+/**
+ * A chain followed way by way, from the parent down: a way is followed if the
+ * energy that comes by it -- the member's own and that of everything after it
+ * that is made through it -- is at least `share` of what the whole chain
+ * emits over `horizon` days, with the alpha energy weighted by 20 or without.
+ * A member's ways are judged with everything below still in place. Where
+ * several ways lead to a member and together bring that much, the one that
+ * brings most is followed whatever it brings. A member that no followed way
+ * reaches is no member of the chain.
+ * @returns {{lost: Array<branch>, keep: Set<string>}}
+ */
+function waysByEnergy(index, names, branches, share, horizon = 18262.5) {
+  const energy = (skipped) => {
+    const u = batemanTransformations(index, names, horizon, skipped.size ? (j, i) => skipped.has(`${j},${i}`) : null);
+    let plain = 0, weighted = 0;
+    names.forEach((n, i) => { const [a, e, p] = index[n].E; plain += u[i] * (a + e + p); weighted += u[i] * (20 * a + e + p); });
+    return [plain, weighted];
+  };
+  const key = (x) => `${x.from},${x.to}`;
+  const skipped = new Set(), lost = [], keep = new Set([names[0]]);
+  const whole = energy(skipped);
+  let now = whole;
+  const brings = (extra) => { const [p, w] = energy(new Set([...skipped, ...extra])); return Math.max(whole[0] > 0 ? (now[0] - p) / whole[0] : 0, whole[1] > 0 ? (now[1] - w) / whole[1] : 0); };
+  for (let i = 1; i < names.length; i++) {
+    const ways = branches.filter((x) => x.to === i);
+    const open = ways.filter((x) => keep.has(names[x.from]));
+    for (const x of ways) if (!open.includes(x)) { skipped.add(key(x)); lost.push(x); }
+    if (!open.length) continue;
+    const all = brings(open.map(key));
+    if (all < share) { for (const x of open) { skipped.add(key(x)); lost.push(x); } now = energy(skipped); continue; }
+    keep.add(names[i]);
+    if (open.length < 2) continue;
+    const each = open.map((x) => brings([key(x)]));
+    const most = each.indexOf(Math.max(...each));
+    let any = false;
+    open.forEach((x, k) => { if (k !== most && each[k] < share) { skipped.add(key(x)); lost.push(x); any = true; } });
+    if (any) now = energy(skipped);
+  }
+  return { lost, keep };
 }
 
 /**

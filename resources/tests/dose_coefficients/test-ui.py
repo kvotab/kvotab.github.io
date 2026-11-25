@@ -363,13 +363,13 @@ async def main():
           i.dispatchEvent(new Event('change', { bubbles: true }));
           const r = document.querySelector('input[name="dcRoute"][value="ingestion"]'); r.checked = true;
           r.dispatchEvent(new Event('change', { bubbles: true })); })()""")
-        shown = await p.until("!document.getElementById('dcSize').hidden && /12 nuclides/.test(document.getElementById('dcSizeSum').textContent)", 30)
+        shown = await p.until("!document.getElementById('dcSize').hidden && /9 nuclides/.test(document.getElementById('dcSizeSum').textContent)", 30)
         summ = await p.ev("document.getElementById('dcSizeSum').textContent")
-        check(f'choosing Ra-226 sums up its model before any run: {summ}', shown and '491 compartments' in summ and '768 equations' in summ)
+        check(f'choosing Ra-226 sums up its model before any run: {summ}', shown and '367 compartments' in summ and '571 equations' in summ)
         opts = await p.ev("[...document.getElementById('dcCutoff').options].map(o => o.textContent)")
-        check('each cut-off says how many nuclides it keeps (whole chain 14, 0.01 % 12)', bool(opts) and opts[0].endswith('(14 nuclides)') and any(o.startswith('0.01 %') and o.endswith('(12 nuclides)') for o in opts))
+        check('each cut-off says how many nuclides it keeps (whole chain 14, 0.01 % 9: At-218, Rn-218 and Tl-210 not followed)', bool(opts) and opts[0].endswith('(14 nuclides)') and any(o.startswith('0.01 %') and o.endswith('(9 nuclides)') for o in opts))
         body = await p.ev("(() => { document.getElementById('dcSize').open = true; return document.getElementById('dcSizeBody').innerText; })()")
-        check('the details name the chain, the transfers, the equations and the runs', all(w in (body or '') for w in ('Po-210', '654 transfers', '277 groups', '43 target regions of each sex', '2,289 coefficients', 'integrations')))
+        check('the details name the chain, the transfers, the equations and the runs', all(w in (body or '') for w in ('Po-210', 'not followed, as in the ICRP’s calculations: At-218, Rn-218, Tl-210', '535 transfers', '204 groups', '43 target regions of each sex', '1,747 coefficients', 'integrations')))
         await p.ev("document.getElementById('dcSize').open = false")
         await p.ev("document.querySelector('.dc-tabs button[data-tab=\"model\"]').click()")
         await asyncio.sleep(0.6)
@@ -380,7 +380,9 @@ async def main():
               bool(got) and not got['row'] and got['show'] == 'model' and [o[1] for o in got['options']] == [False, True, True] and all(o[2].endswith('(after Calculate)') for o in got['options'][1:]))
         await p.ev("document.querySelector('.dc-tabs button[data-tab=\"chain\"]').click()")
         await asyncio.sleep(0.6)
-        check('the Decay chain tab lists its 12 nuclides before any run', await p.ev("document.querySelectorAll('#dcChainTable tbody tr').length"), 12)
+        check('the Decay chain tab lists its 9 nuclides before any run', await p.ev("document.querySelectorAll('#dcChainTable tbody tr').length"), 9)
+        note = await p.ev("document.getElementById('dcChainNote').textContent")
+        check('and names the members that are not followed, as in the ICRP\u2019s calculations: At-218, Rn-218, Tl-210', 'Not followed, as in the ICRP\u2019s calculations' in (note or '') and 'At-218, Rn-218, Tl-210' in (note or ''), True)
         await p.ev("document.querySelector('.dc-tabs button[data-tab=\"coef\"]').click()")
         # Stop ends a run whose ages are in several workers at once; the next run (Cs-137) starts afresh.
         await p.ev("document.getElementById('dcRun').click()")

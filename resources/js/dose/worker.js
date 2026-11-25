@@ -29,7 +29,7 @@
 import { loadSystem, fetchIO } from './data.js';
 import { coefficients60, AGES_60, TISSUES_60, W_60, REMAINDER_60 } from './dose60.js';
 import { recipe60, f1Table, assemble60 } from './model60.js';
-import { assemble103, sexSpecific103, OPTIONS103 } from './model103.js';
+import { assemble103, sexSpecific103, OPTIONS103, chainOptions103 } from './model103.js';
 import { TARGETS_60 } from './see60.js';
 import { LUNG_REGIONS, CONTENTS, regionOf, key } from './regions.js';
 import { coefficients103, AGES_103, TISSUES_103, W_103, W_REMAINDER_103, REMAINDER_103 } from './dose103.js';
@@ -155,6 +155,7 @@ function systemSummary(sys, data, S) {
     members: S.members.map((m, j) => ({ name: m.name, T: m.T, lambda: m.lambda, E: S.chain.members[j]?.E || null, kind: m.kind || (m.ownModel === false ? 'shared' : m.ownModel ? 'own model' : null), model: m.model || m.bio || null, of: m.of ?? null, other: otherName(m.name), decayNotes: data.decaySource.notesOf?.(m.name) || [] })),
     branches: S.chain.branches,
     dropped: S.chain.dropped,
+    minor: S.chain.minor || [],
     models: sys === '60' ? models60(data, S) : models103(data, S),
     progenyShare: progenyShare(data, S),
     intake: sys === '60' ? intake60(data, S) : S.intake,
@@ -210,7 +211,7 @@ function describe(sys, data, spec, age0) {
   };
   // How many nuclides each cut-off keeps (ICRP 103; the ICRP 60 system cuts as DCAL did).
   const cutoffs = sys === '60' ? null : CUTOFFS.map((c) => ({
-    cutoff: c, nuclides: buildChain(data.index, spec.nuclide, { cutoff: c, last: spec.last, horizonDays: 36525 }).members.length,
+    cutoff: c, nuclides: buildChain(data.index, spec.nuclide, chainOptions103({ ...spec, cutoff: c }, { ...OPTIONS103, ...(spec.rules || {}) })).members.length,
   }));
   return { ...systemSummary(sys, data, S), size, cutoffs, describedAge: age0 };
 }

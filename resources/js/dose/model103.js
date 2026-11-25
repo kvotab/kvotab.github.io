@@ -233,6 +233,23 @@ export const OPTIONS103 = {
                           // formed from 238Pu, 230Th from 234U and 239Pu from 243Cm are followed here but
                           // were left out there, and with their skin counted as named the adult female's
                           // skin dose was 1.20 to 1.21 of the OIR Data Viewer's; false = every member's
+  minorMembers: 'drop',   // the chain is followed way by way (chain.js waysByEnergy): a way is followed if
+                          // what comes by it, the next member's energy and that of all made through it, is
+                          // a thousandth of the chain's over 50 years (the alpha energy weighted by 20, or
+                          // not); a member no followed way reaches is no member. Not where the cut-off is
+                          // none. 'keep' = every member the cut-off keeps, the lesser ways alone cut
+                          // (sidePaths). The annex of Publication 158 shows it: 195mHg after 195mPb (0.34 %
+                          // of 195Tl, 0.0006 of the energy with what it leaves) gave 0.7 % of the kidney
+                          // dose, 0.3 % of the gonads' and 0.2 % of the liver's, what the page was above
+                          // the annex; without it the annex asks -0.71 to -0.48 % of the kidneys at the
+                          // six ages and gets -0.69 to -0.49; 104Ag after 104mAg, 211Po after 223Ra, 199Pb
+                          // after 203Po and 97mTc after 97Ru likewise (rms of their organ doses against
+                          // the annex 0.099 -> 0.031 %, 0.118 -> 0.053, 0.034 -> 0.013, 0.014 -> 0.008).
+                          // And the OIR Data Viewer: 235U, which ends at 223Ra, 1.0008 -> 1.0000 in e and
+                          // every organ dose to its four figures, as are 243Am, 234U, 238U, 141Pm and six
+                          // more; of 34 nuclides that move, 28 towards it. Against it stands 228Pa, whose
+                          // 216At (0.0009 with what it leaves) the viewer has: rms 0.17 -> 0.37 %.
+                          // 122 of 1,252 chains lose a member
   sidePaths: 'cut',       // a member made along two ways: 'cut' = the lesser way is not followed where it
                           // brings less than a thousandth of the chain's energy over 50 years, with the
                           // alpha energy weighted by 20 and without (chain.js lesserWays); 'follow' = every
@@ -374,6 +391,16 @@ export function sexSpecific103(data, spec) {
  * @param {object} spec  {nuclide, route: 'ingestion'|'inhalation'|'injection', form, amad (um), intakeAge (d),
  *                        cutoff, last, sex ('M'|'F', for sex-specific models)}
  */
+/* What buildChain gets for a case: the page's cut-off, and the two rules of the published calculations (the lesser
+   ways; the minor members, which stay where the cut-off is none: the whole chain was asked for). */
+export function chainOptions103(spec, rules = OPTIONS103) {
+  const cutoff = spec.cutoff ?? 1e-4;
+  return {
+    cutoff, last: spec.last, horizonDays: 36525, sidePaths: rules.sidePaths === 'cut' ? 1e-3 : 0,
+    minor: rules.minorMembers === 'drop' && cutoff !== 0 && !spec.last ? 'drop' : null,
+  };
+}
+
 export function assemble103(data, spec) {
   const { index, elements } = data;
   const notes = [];
@@ -381,7 +408,7 @@ export function assemble103(data, spec) {
   const E0 = elements[parentEl];
   if (!E0) throw new Error(`no ICRP 103 model for ${parentEl}`);
   const rules = { ...OPTIONS103, ...(spec.rules || {}) };
-  const chain = buildChain(index, spec.nuclide, { cutoff: spec.cutoff ?? 1e-4, last: spec.last, horizonDays: 36525, sidePaths: rules.sidePaths === 'cut' ? 1e-3 : 0 });
+  const chain = buildChain(index, spec.nuclide, chainOptions103(spec, rules));
   const route = spec.route;
   const adultAge = E0.adultAge || 7300;
   const hatmAges = [100, 365, 1825, 3650, 5475, rules.tractAdult === 'twenty' ? 7300 : adultAge];
