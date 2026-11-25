@@ -434,7 +434,11 @@
               from the lungs is absorbed with f<sub>r</sub>·f<sub>A</sub>, and activity secreted from tissues with the
               highest reference f<sub>A</sub>. An injection puts the activity into the systemic model’s blood at once.</li>
             <li><b>Systemic models</b>: transcribed from each element’s section of Publication 158 and of the Part 2
-              and Part 3 drafts, with their age-specific transfer coefficients. The adult’s values apply from 20 years, from
+              and Part 3 drafts, with their age-specific transfer coefficients. Those tables print three figures; where
+              Publication 134 or 137 prints a rate with four, the four are used (iodide to the urinary bladder at
+              11.84 d<sup>−1</sup>, uranium at 15.43, barium to the adult’s colon at 20.16, and others, in seventeen elements), at every
+              age where the rate is the same or a plain multiple of the adult’s. The ICRP’s coefficients are those of the
+              four figures: with 11.8, every dose of every iodine isotope comes out 0.2 to 0.3 % above the annex’s. The adult’s values apply from 20 years, from
               25 years for the alkaline earths, lead and the actinides (Publication 158 para 13) and, as the ICRP’s own
               coefficients show, for yttrium, zirconium, niobium, hafnium, tantalum, francium, aluminium and the lanthanides
               (the actinides being actinium to fermium). In a chain every member has its adult values from the adult age
@@ -451,7 +455,15 @@
               individuals (newborn, 1, 5, 10 and 15 years, adult; male and female), with the radiations of Publication 107
               (or of the decay data chosen),
               interpolated in energy and in age as Publication 158 prescribes (PCHIP; a weighted linear interpolation
-              in the first year), and with 1 MeV taken as 1.6 × 10<sup>−13</sup> J, the rounded factor the ICRP’s
+              in the first year). In age each kind of radiation is interpolated by itself, photons, electrons, alpha
+              particles and neutrons: the spline of a sum is not the sum of the splines, and from bone and marrow to the
+              bone surface the photons’ absorbed fractions rise from the newborn to the 1-year-old where the electrons’
+              fall (with one spline for their sum, a 1-year-old’s bone surface dose comes out 5 % below the annex’s after
+              <sup>133</sup>Ba and 5 % above it after <sup>91</sup>Nb). A beta spectrum gives a target the integral of
+              energy × spectrum × absorbed fraction, taken as the cubic (PCHIP) through that product at the spectrum’s
+              tabulated energies; summed there by the trapezoidal rule, tritium comes out 0.15 % and <sup>92</sup>Y 0.3 %
+              above the annex’s, and the nose and throat after inhaled tritium particles, which only the top of the
+              spectrum reaches, 1 to 1.5 % below. All this with 1 MeV taken as 1.6 × 10<sup>−13</sup> J, the rounded factor the ICRP’s
               coefficients carry (with the exact 1.602 × 10<sup>−13</sup> every dose would be 0.136 % higher than
               theirs).</li>
             <li><b>Effective dose</b>: the tissue weighting factors of Publication 103 applied to the average of the male
@@ -527,7 +539,13 @@
             ICRP’s coefficients for ruthenium tetroxide have it), which for an element with a higher value in food is
             that of its other soluble forms, as the ICRP’s coefficients have it: antimony formed from
             <sup>124n</sup>Sb is absorbed with 0.05 and not with the 0.1 of antimony in food (with 0.1 the doses to
-            the brain and the thyroid after ingestion come out 1.5 to 1.75 times the annex’s); isotopes of the parent’s element share its model. How a progeny of another element
+            the brain and the thyroid after ingestion come out 1.5 to 1.75 times the annex’s); isotopes of the parent’s element share its model.
+            The ground state formed from an isomer that was taken in is the exception: where the parent’s section gives its
+            element a model as a progeny, it has that model, and the parent’s soft-tissue pools are no more its own than
+            any progeny’s. <sup>235</sup>U formed from <sup>235m</sup>U has the skin, spleen, marrow and gonads of uranium
+            as a progeny (on the parent’s kinetics the female’s skin dose comes out 6 % below the ICRP’s for workers), and
+            with <sup>242</sup>Am formed from <sup>242m</sup>Am kept in the parent’s pools, skin and the tissues of the rest of
+            the body come out 3 % above the ICRP’s for workers. How a progeny of another element
             moves once it is formed in the body is set by the parent element’s section of the OIR series (Publications 134,
             137, 141 and 151, “Treatment of radioactive progeny”), the same for every chain that element heads, and this page
             carries those sections’ models:</p>
@@ -568,7 +586,10 @@
               as the annex’s <sup>225</sup>Ra has them. Radium formed in thorium’s bone volume leaves as from non-exchangeable
               bone (para 812) and stays in the compartment it was formed in, so that the actinium and thorium it decays to
               are in their own bone volume and pass the marrow on their way out (joined to radium’s own bone instead, the
-              red marrow dose of <sup>232</sup>Th comes out 4.5 % lower);</li>
+              red marrow dose of <sup>232</sup>Th comes out 4.5 % lower). Plutonium formed after uranium
+              (<sup>239</sup>U, <sup>240</sup>U) follows the model Publication 137 para 921 gives it there, with 30 % of what
+              leaves blood going to a soft-tissue pool that returns it and 60 % of the rest to the liver, not plutonium’s own
+              (with that, the liver dose after <sup>240</sup>U comes out 7 % below the ICRP’s for workers);</li>
             <li><b>the other actinides</b> (Publication 141 section 18.2.10): each element’s model with skin and spleen added,
               which empty as its intermediate soft tissue does, plutonium without its fast blood compartment. Americium
               formed in plutonium’s slowest liver compartment, which no other actinide’s model has, stays in the liver, in
@@ -659,7 +680,11 @@
             the polonium formed from <sup>210</sup>Bi, the tissues its model does not name come out 5 to 8 % lower, by the
             bone’s share of the mass at each age). A model with the marrow of trabecular and cortical bone has all the marrow
             there, so that its rest of the body has none (counted twice, the tissues outside actinium’s named ones after
-            <sup>225</sup>Ra come out up to 5 % lower). And the tissues that count as the chain’s are those of the members
+            <sup>225</sup>Ra come out up to 5 % lower). Where a chain has such a model, the marrow’s share of another member’s
+            rest of the body is in those two regions and not in red and yellow marrow: the mass is the same, divided
+            otherwise, and the dose per transformation to the bone surface and the tissues near bone differs (as red and
+            yellow marrow, the bone surface dose after <sup>238</sup>U, whose thorium has that marrow, comes out 3 % below
+            the ICRP’s for workers, and a 10-year-old’s thymus dose after <sup>72</sup>Zn 2 % below the annex’s). And the tissues that count as the chain’s are those of the members
             the ICRP’s calculations carry, which this page takes as those that emit a thousandth of the chain’s energy
             over 50 years, with the alpha energy weighted by 20 or without, and what leads to those, where a thousandth of
             them comes that way: the <sup>218</sup>At on a branch of 0.02 % of <sup>218</sup>Po is none (with astatine’s
@@ -706,7 +731,12 @@
             continuous calculation is low for 3-month-olds by an amount that grows with the half-life — 0.1 % at
             6 hours, 0.3 % at 17 hours, 1 % at 3 days, 1.2 to 1.8 % from 5 days on — by 0.2 to 0.35 % for 1-year-olds
             and 0.1 % for 5-year-olds, which is what holding the values for the first days and following them half a step
-            late afterwards gives; the step that closes the gap is 9.0 to 9.1 days at each of the three ages. Where the
+            late afterwards gives; the step that closes the gap is 9.0 to 9.1 days at each of the three ages. Three
+            elements are the exception: the ICRP’s coefficients for calcium and polonium taken in before the age of
+            1 year, and for zinc before 5 years, are those of steps of one day, and so they are calculated here (the step
+            that reproduces them is 1.0 to 1.5 days for 3-month-olds and 1.1 to 1.3 for zinc at 1 year, against 8.9 to
+            9.3 days for 23 other elements; in the nine-day steps their 3-month-olds come out 0.7 to 1.4 % above the
+            annex’s). No rule was found that tells these cases from the others. Where the
             rates change with age they are held too: <sup>90</sup>Sr at 3 months is 1.3 % low with both continuous, 0.8 %
             with the dose per transformation in steps alone, 0.05 % with both in steps. The integrator then carries each
             group’s number of transformations, and a dose grows over a step by the step’s dose per transformation times
@@ -775,16 +805,16 @@
             </tbody></table></div>
             <p class="dc-note"><sup>*</sup> ICRP InMoP Electronic Annex v.1.23.2.2, dataset v.1.2 (2025.08.25), © ICRP, accompanying the ICRP
             publication series on dose coefficients for intakes of radionuclides by members of the public. The comparisons read it
-            from a local copy; none of its values are part of this page.</p><p>Against the annex the agreement is closer than the table’s 5 % asks: of its 10,026 effective
-            doses 99.5 % are within 0.5 % and 99.9 % within 1 %, and of the organ doses 99.6 % are within 1 %
-            and 100.0 % within 2 %.</p><p>For adults the page was also compared with the ICRP’s coefficients for workers, which rest on the same systemic
+            from a local copy; none of its values are part of this page.</p><p>Against the annex the agreement is far closer than the table’s 5 % asks: of its 10,026 effective
+            doses 97.9 % are within 0.1 %, 99.3 % within 0.2 % and all within 0.5 %; of the 536,798 organ doses
+            95.4 % are within 0.1 %, 99.9 % within 1 % and all within 5 % (331 are more than 1 % off and 33 more
+            than 2 %, most of them after radon, thoron and <sup>226</sup>Ra, whose kidneys come out 3 to 4 % low).</p><p>For adults the page was also compared with the ICRP’s coefficients for workers, which rest on the same systemic
             models: the OIR Data Viewer for Publications 134, 137 and 141<sup>†</sup> gives, for an injection into blood, the effective dose
             and the equivalent doses to the organs of both sexes for 572 nuclides, the lanthanides and actinides among them, for which the
             publications for the public print effective doses only. Where a nuclide is in the annex too, the viewer’s values are the annex’s
-            for adults to four figures, unless the model for the public differs. Of the 572 effective doses 99.1 % are within 0.5 % and
-            99.8 % within 1 %, and of the 32,032 organ doses 99.5 % are within 2 % and 99.8 % within 5 %. Further off are
-            <sup>80</sup>Sr to <sup>83</sup>Sr, whose rubidium the calculation for the public treats otherwise, the liver after
-            <sup>240</sup>U and the female’s skin after <sup>235m</sup>U.</p>
+            for adults to four figures, unless the model for the public differs. Of the 572 effective doses 97.7 % are within 0.1 %, 99.1 % within 0.5 % and
+            99.8 % within 1 %, and of the 32,032 organ doses 99.7 % are within 2 % and 99.8 % within 5 %. Further off are
+            <sup>80</sup>Sr to <sup>83</sup>Sr, whose rubidium the calculation for the public treats otherwise.</p>
             <p class="dc-note"><sup>†</sup> OIR Data Viewer for ICRP Publications 134, 137 and 141 (Occupational Intakes of Radionuclides, Parts 2 to 4),
             © ICRP. The comparisons read it from a local copy; none of its values are part of this page.</p><p>In the ICRP 60 system the few values outside 10 % are single ages here and there (rounding and the
             interpolations of the first year) and these, more than 10 % off at two ages or more (– where Publication 119 gives

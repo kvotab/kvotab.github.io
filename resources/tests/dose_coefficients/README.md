@@ -972,9 +972,10 @@ Still open:
 - **Bone surface of 3-month-olds and 1-year-olds** after nuclides that emit
   X-rays of 6 to 35 keV: Fe-55 and Ni-59 0.98 and 0.97, Ba-133 0.98 and
   0.95, Nb-91 1.02 and 1.05 (1.06 inhaled as Type M). From 5 years on all
-  are 1.000. It is in the photon SAFs to endosteum of the newborn and the
-  1-year phantom, which are 5 to 10 times the 5-year phantom's at these
-  energies, and not in how they are interpolated.
+  are 1.000. (This entry went on to say that the cause lay in the photon
+  SAFs themselves "and not in how they are interpolated". That was wrong: it
+  was read off the wrong rows of the SAF files. The cause is the
+  interpolation in age; see the next section.)
 - **3-month-olds of calcium, polonium and zinc.** Ca-41, Ca-45 and Ca-47
   1.010–1.015 in e, every tissue 1.00–1.02 (strontium, barium and radium,
   with the same structure, are right); Po-206 to Po-210 1.009–1.014, the
@@ -993,3 +994,188 @@ Still open:
   here), **uranium's bone** (238U, 235U and 233U: bone surface 0.97–0.98),
   every uranium value 0.2 % high; **iodine and tritium** 0.3 % and 0.15 %
   high at every age.
+
+## How the reference calculates, not what it models (2026-11-25, later)
+
+What the pass above left open, taken up again. Two of the finds are in the
+progeny models; the others are in how the published calculation was done:
+how it interpolates in age, how it integrates a beta spectrum, how long its
+steps are and how many figures its rates have. The annex as a whole: organ
+doses more than 5 % off 2 → 0, more than 2 % off 113 → 37, more than 1 %
+off 2,259 → 349 of 561,420. Effective doses: none of the 10,026 is more
+than 0.5 % off (47 were, 14 of them more than 1 %); within 0.1 % are
+97.9 %, where 78.0 % were; the worst is Pb-210 by injection at 5 years,
+0.37 % low. The OIR Data Viewer: e within 0.1 % for 486 → 559 of 572
+nuclides, organ doses outside 2 % 157 → 98 and outside 5 % 64 → 60 of
+32,032, all 60 of them Sr-80 to Sr-83. Printed values that the page's round
+to: 98.9 % of 4,104 (97.4 % before; 67 more round to the printed value, 6
+no longer do) and 98.5 % of 1,146 (97.6 %; 14 more, 3 no longer). Those
+that no longer do are within 0.1 % of the rounding edge.
+
+| step | organ doses more than 1 % off | more than 2 % | more than 5 % | e within 0.1 % |
+| --- | --- | --- | --- | --- |
+| as committed (c7774f07) | 2,259 | 113 | 2 | 78.0 % |
+| S by age, each radiation type on its own spline | 2,010 | 65 | 0 | 78.4 % |
+| the marrow's share as trabecular and cortical marrow | 1,950 | 56 | 0 | 78.6 % |
+| plutonium after uranium; the ground state of an isomer (viewer only) | 1,950 | 56 | 0 | 78.6 % |
+| beta spectra by the cubic through the product | 1,820 | 57 | 0 | 93.2 % |
+| steps of one day for calcium, polonium and zinc | 353 | 35 | 0 | 93.9 % |
+| iodide to urine 11.84, barium to the adult's colon 20.16 | 353 | 35 | 0 | 97.8 % |
+| the other four-figure rates of Publications 134 and 137 | 349 | 37 | 0 | 97.9 % |
+
+- **S by age: each radiation type on its own spline**
+  (`OPTIONS103.ageSpline`, dose103.js `colsFor`, solve.js `slopesOf`). From
+  1 year on, S is the PCHIP of the reference ages (Publication 158 para
+  174). The spline is not additive: the spline of photons plus electrons is
+  not the sum of their splines, and the two differ where the two radiations
+  change with age in opposite directions. Publication 155's photon SAFs
+  from bone surfaces and marrow to the endosteum are several times lower in
+  the newborn than at 1 year (T-bone-S to Endost-BS at 10–30 keV: 1.1
+  against 11 kg⁻¹ for electrons), the electrons' higher; the total's spline
+  then starts off level at 1 year where the electrons' own falls. With one
+  spline for the sum, the bone surface after an intake at 1 year was 0.972
+  (Fe-55), 0.974 (Ni-59), 0.953 (Ba-133) and 1.047 (Nb-91) of the annex's,
+  and 0.98–1.02 at 3 months; type by type all are 1.000. Twenty-three
+  nuclides moved, all towards the annex (Ru-106 inhaled as Type S, whose
+  spleen was 0.98–1.03, among them).
+
+  The pass above listed this as open and said that it lay "in the photon
+  SAFs to endosteum of the newborn and the 1-year phantom … and not in how
+  they are interpolated". That was wrong, and so is the same sentence in the
+  message of commit c7774f07. The scripts that printed SAF rows for that
+  note took row `target × nS + source`, where the files have
+  `source × nT + target`; they showed other pairs' values. With the right
+  rows the SAFs are as said here, and the cause is the interpolation in age.
+
+- **The marrow's share of another member's rest of the body**
+  (`OPTIONS103.marrowShare`, dose103.js `otherParts`). Where a member's
+  model has the marrow of trabecular and cortical bone, the chain names
+  those two source regions; another member's "Other" then gives the marrow
+  its share as T-marrow and C-marrow and not as red and yellow marrow. The
+  mass is the same (adult male 3.371 + 0.279 kg against 1.17 + 2.48), the
+  S to bone surfaces and to what lies near bone are not. Uranium's "Other"
+  beside thorium's marrow: the bone surface after U-238, U-235 and U-233
+  was 0.97–0.98 of the viewer's and the female's red marrow 0.98; zinc's
+  beside gallium's and calcium's beside scandium's: the thymus after Zn-72
+  and Ca-47 at 10 and 15 years 0.97–0.98 of the annex's, the thyroid
+  0.98–0.99. All 1.00 now.
+
+- **Plutonium formed after uranium follows Publication 137 para 921**, the
+  reduced model that paragraph gives for it (of what leaves blood 30 % to
+  ST0, and of the rest 60 % to the liver and 30 % to bone surfaces), not
+  plutonium's own model with skin and spleen added. Only U-239 and U-240
+  have it: liver 0.968 and 0.934 of the viewer's → 1.001 and 1.002.
+
+- **The ground state formed from an isomer that was taken in is a progeny**
+  (`OPTIONS103.sameElement`). Isotopes of one element share kinetics
+  elsewhere in a chain; the daughter of the nuclide taken in itself, where
+  the parent's section gives its element a model as a progeny, has that
+  model and finds the parent's soft-tissue pools foreign. U-235 after
+  U-235m then has the skin, marrow and gonads of uranium as a progeny: the
+  female's skin 0.944 of the viewer's and the bone surface 0.98–0.99 on
+  the parent's kinetics, every tissue 1.000 so. Am-242 after Am-242m: skin
+  and the tissues of the rest of the body 1.03 → 0.99–1.01. (With the
+  daughter a progeny but its pools identified with the parent's, Am-242m's
+  muscle came out 8.7 times the viewer's.)
+
+- **A beta spectrum is integrated as the cubic through its product with the
+  SAF** (`OPTIONS103.betaSpectrum`, see103.js `spectrumOnGrid`,
+  `pchipIntegral`): E·N(E)·SAF(E) at the spectrum's tabulated energies, the
+  integral of the monotone cubic (PCHIP) through those values. ICRP 107's
+  spectra have some 100 energies, few where a spectrum bends most; the
+  trapezoidal rule over them is 0.14 % off in a spectrum's energy in the
+  root mean square over the 955 spectra and up to 0.5 % in one, against the
+  mean energies the same data list (the cubic 0.05 % and 0.27 %). The annex
+  has five figures and shows which rule is the reference's. By injection, e
+  for adults by the trapezoidal rule and by the cubic: H-3 1.0016 and 1.0000
+  of the annex's, Y-92 1.0028 and 1.0000, Y-93 0.9985 and 1.0000, Ni-63
+  1.0006 and 1.0000. Scaling the trapezoidal sum to the listed mean energy is not it:
+  Ru-106, whose Rh-106 spectrum integrates to 0.11 % above its listed mean,
+  is then 0.9987 and by the cubic 0.9998. And one case tells the cubic
+  through the product from every rule that integrates the spectrum alone.
+  Tritium particles held under the lining of the nose and throat (inhaled
+  as Type S) reach its basal cells only with the top of the spectrum: the
+  SAF from ET2-seq to ET2-bas is 0 at 10 keV, 0.08 kg⁻¹ at 15 keV and 2.4
+  at 20 keV, and the spectrum ends at 18.6 keV. Relative to the trapezoidal
+  sum that S is 1.037 by the cubic through the product, 1.047 by parabola
+  weights at the tabulated energies, 1.11–1.12 by the cubic through N(E)
+  alone integrated finely, 1.26 with N(E) linear; the annex's ET dose needs
+  1.036–1.037 at every age (0.984–0.993 of the annex's by the trapezoidal
+  rule, 1.02–1.04 by the cubic through N(E), 1.000 now).
+
+- **Steps of one day for calcium, polonium and zinc**
+  (`OPTIONS103.shortSteps`). The step of the published calculation was read
+  off the annex as the step that makes a continuous calculation agree
+  (solve.js): 9.0 to 9.1 days. Done again for every injection case with the
+  closer engine, the medians of 23 elements lie between 8.9 and 9.3 days at
+  3 months (caesium's at 7.0, with fits from 6.4 to 8.1 that follow the
+  half-life: something else). Three elements stand apart: calcium at 3
+  months 1.0, 1.4 and 1.5 days (Ca-47, Ca-45, Ca-41) and at 1 year 8.3–8.9;
+  polonium 1.0–1.1 days (Po-206, Po-208, Po-210) and at 1 year 8.7–10;
+  zinc 1.0 day (Zn-65, Zn-69m, Zn-72), at 1 year 1.1–1.3 days, at 5 years
+  the step of all. In the nine-day steps their 3-month-olds were 0.7–1.4 %
+  above the annex in e, with bone surface, muscle, skin and gonads apart
+  from the rest — the list of open cases the passes before could not
+  explain by any change of a transfer rate (the best single rate halved the
+  spread). In steps of one day every tissue is within 0.1 %, by injection,
+  ingestion and inhalation: the nuclides of the three elements had 1,467
+  organ doses more than 1 % off, now none. No rule was found that
+  tells these cases from the others: not the rates' change with age
+  (strontium's change as calcium's do), not f_A (1, 0.6 and 0.2 at 3
+  months; all three have 0.5 at 1 year in food, and nothing else in the
+  annex has), not the date or the program in the annex's files (one
+  program for all; calcium and zinc dated December 2021 with most others,
+  polonium October 2023 with lead, bismuth and radium, which have the nine
+  days). The table lists them as found: by the element taken in, the age at
+  intake before which the steps are one day (calcium and polonium 1 year,
+  zinc 5 years).
+
+- **Rates with four figures.** Publication 158's tables print three. Where
+  Publication 134 or 137 prints the adult's rate with four, the published
+  coefficients are those of the four. Iodide to the urinary bladder is
+  11.84 d⁻¹ in Publication 137 Table 5.4 and 1.18E+01 in Publication 158
+  Table 25.3: with 11.8 every tissue of every iodine nuclide was 0.16–0.31 %
+  above the annex at every age, growing with the half-life (and Te-131,
+  Te-133 0.15 %, by their iodine); with 11.84 they are 1.000. Uranium to the
+  bladder is 15.43 (Table 15.4), printed 15.4: every uranium value was
+  0.16–0.24 % above the viewer's, now 0.00–0.08 %. Barium to the adult's
+  colon is 20.16 (Table 7.3), printed 20.2: adult e of Ba-133 and Ba-140
+  0.9986 and 0.9988 → 1.000. The same was then done for every rate that the
+  two publications' tables print with four figures (56 rates in fifteen
+  elements: tritium, carbon, phosphorus, calcium, yttrium, technetium,
+  ruthenium, antimony, tellurium, lead, bismuth, polonium, radium, thorium,
+  uranium), at every age where the rate is the same at every age or a plain
+  multiple of the adult's that the printed values confirm (carbon and
+  tritium: 4, 2.5, 2.5, 2 and 1.2 times; yttrium: two thirds and five
+  sixths), else for the adult alone. Each new value was checked to round to
+  the printed one. Their effect is small: organ doses within 0.1 % of the
+  annex 94.3 → 95.2 %. The rates of the other ages are three-figure
+  roundings of products that are printed nowhere; barium's were tried by
+  the scale the printed values suggest and left (15 years 0.6 % high).
+
+Tried and not kept: the spectrum as a cubic through N(E) with Gauss points
+between the tabulated energies (the tritium case above 2–3.5 % high);
+scaling the trapezoidal sum to the listed mean energy (Ru-106 0.13 % low);
+other caps than 0.99 on f_A = 1 (caesium and technetium fit 0.99, to 0.1 %
+per 0.001); caesium adult from 25 years (15 years 0.6 % low);
+the adult age of the progeny's own element for Ra-226's kidneys (no
+change).
+
+Still open:
+
+- **Radon's kidneys.** 0.96–0.97 after the gas at every age, 0.98 by
+  ingestion; 1.02 after thoron at 3 months and 15 years. Ra-226's kidneys,
+  which the radon formed in the body brings, 0.96 for intakes at 15 years
+  and 0.98–0.99 at the other ages. Of the 349 organ doses more than 1 % off,
+  244 are these three nuclides'.
+- **Mo-93 and Tc-97 at 3 months and 1 year** (muscle 1 % low), **Sr-82**
+  (kidneys 0.98–1.02 by age), **Sb-119, Ag-115, Se-70** (a few values
+  1.0–1.3 % off), **Bi-214 and Pb-214 by ingestion** (gonads 0.984–0.997).
+- **Effective doses 0.2–0.4 % off:** Pb-210 at every age but 15 years
+  (0.3 % low), Pb-202 and Pb-205 at 15 years (0.3 % high), caesium at 3
+  months, 1 year and 15 years (0.2–0.3 % high), barium and radium from 5 to
+  15 years (0.2 % high), Ni-59 (0.2 % low at every age), Ag-115. The
+  children's rates of these elements are three-figure roundings.
+- Against the viewer only: Sb-124 and Sb-125 (e 0.4 and 0.6 % high; the
+  annex's own values for adults are matched to 0.01 %, so the two
+  references differ there) and Sr-80 to Sr-83 (the public's rubidium).

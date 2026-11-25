@@ -65,6 +65,8 @@
   are held too: strontium-90 at 3 months is 1.3 % low with continuous rates
   and S, 0.8 % with S in steps alone, 0.05 % with both (barium-133 1.6, 0.9,
   0.1; radium-226 1.4, 0.8, 0.06; caesium-137 1.35 low, 0.2 high, 0.03).
+  For three elements the same reading gives a step of one day, at the ages
+  model103.js lists (OPTIONS103.shortSteps): the step is the caller's.
 
   With a step, each dose group carries one integral, its transformations,
   and a dose grows over a step by the step's own S times the transformations
@@ -212,8 +214,17 @@ export function integrate(sys, dose, opt) {
   }
   const G = dg.length;
   const N = n + G * M;
-  // PCHIP slopes of each group's SEE over the phantom ages, per target.
+  // PCHIP slopes of each group's SEE over the phantom ages, per target. Where
+  // the columns come with each radiation type's own (cols.byType), the
+  // spline is taken type by type: the slopes are the sum of the types' own.
+  // The spline is not additive, so that is another curve than the spline of
+  // the sum wherever the types change differently with age.
   const slopesOf = (cols) => {
+    if (cols.byType) {
+      const sum = new Float64Array(pa.length * nT);
+      for (const part of cols.byType) { const one = slopesOf(part); for (let i = 0; i < sum.length; i++) sum[i] += one[i]; }
+      return sum;
+    }
     const v = new Float64Array(pa.length), d = new Float64Array(pa.length), out = new Float64Array(pa.length * nT);
     for (let T = 0; T < nT; T++) {
       for (let p = 0; p < pa.length; p++) v[p] = cols[p][T];

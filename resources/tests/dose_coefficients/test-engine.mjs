@@ -41,9 +41,9 @@ const { loadSystem } = await import(path.join(JS, 'data.js'));
 const { coefficients60, AGES_60 } = await import(path.join(JS, 'dose60.js'));
 const { parentModelName, f1FileName, recipe60, assemble60 } = await import(path.join(JS, 'model60.js'));
 const { coefficients103, AGES_103 } = await import(path.join(JS, 'dose103.js'));
-const { emissionWeights, sAllRows, pchipSlopes, pchipEval, spectrumLines, MEV } = await import(path.join(JS, 'see103.js'));
+const { emissionWeights, sAllRows, pchipSlopes, pchipEval, pchipIntegral, spectrumLines, MEV } = await import(path.join(JS, 'see103.js'));
 const { firstYearWeight, dcalWeight } = await import(path.join(JS, 'solve.js'));
-const { deposition103, assemble103 } = await import(path.join(JS, 'model103.js'));
+const { deposition103, assemble103, OPTIONS103 } = await import(path.join(JS, 'model103.js'));
 const { buildChain, carriedMembers } = await import(path.join(JS, 'chain.js'));
 const { catalog60, catalog103 } = await import(path.join(JS, 'catalog.js'));
 const { detriment103, detriment60, nominalDetriment } = await import(path.join(JS, 'risk.js'));
@@ -68,6 +68,7 @@ for (const sys of ['icrp60', 'icrp103']) {
   const index = JSON.parse(fs.readFileSync(path.join(DATA, sys, 'decay/index.json'), 'utf8')).nuclides;
   const byEl = {};
   let bad = 0, spectra = 0, worstSpec = 0, n = 0, offSpec = 0;
+  const cubic = { n: 0, sum2: 0, worst: 0 }, trap = { sum2: 0 };
   const offNames = [];
   for (const [name, x] of Object.entries(index)) {
     const el = name.split('-')[0];
@@ -83,7 +84,16 @@ for (const sys of ['icrp60', 'icrp103']) {
       const I = spectrumLines(em.bs).reduce((a, [, w]) => a + w, 0);
       const off = Math.abs(I / s('b') - 1);
       if (off >= 0.01) { offSpec++; offNames.push(name); } else worstSpec = Math.max(worstSpec, off);
+      // the same integral by the cubic through E N at the tabulated energies (see103.js spectrumOnGrid)
+      const x = Float64Array.from(em.bs[0]), g = Float64Array.from(em.bs[0], (e, k) => e * em.bs[1][k]);
+      const offC = pchipIntegral(x, g) / s('b') - 1;
+      cubic.n++; cubic.sum2 += offC * offC; cubic.worst = Math.max(cubic.worst, Math.abs(offC)); trap.sum2 += (I / s('b') - 1) ** 2;
     }
+  }
+  if (sys === 'icrp103') {
+    const rms = (v) => 100 * Math.sqrt(v.sum2 / cubic.n);
+    check(`${sys}: the cubic through E N integrates the ${cubic.n} beta spectra to their listed mean energies within 0.3 % each, 0.05 % in the root mean square (the trapezoidal rule 0.14 %)`,
+      cubic.worst < 0.003 && rms(cubic) < 0.05 && rms(trap) > 0.13 && rms(trap) < 0.16, `worst ${(100 * cubic.worst).toFixed(3)} %, rms ${rms(cubic).toFixed(4)} %, trapezoid ${rms(trap).toFixed(4)} %`);
   }
   check(`${sys}: the lines of all ${n} nuclides add up to the index energies`, bad === 0, `${bad} do not`);
   // ICRP 38's spectrum file covers only part of the beta emission of a few
@@ -114,7 +124,12 @@ const d103 = await loadSystem('103', io);
       let s = 0;
       for (const [E, Y] of em.r.p || []) s += E * Y * val('photon', E);
       for (const [E, Y] of em.r.e || []) s += E * Y * val('electron', E);
-      for (const [E, w] of em.bs ? spectrumLines(em.bs) : (em.r.b || []).map(([E, Y]) => [E, E * Y])) s += w * val('electron', E);
+      if (em.bs) {
+        // a beta spectrum: E N SAF at its tabulated energies, the integral of the monotone cubic through them
+        // (slopes first, then the Hermite sums: not the engine's one pass)
+        const x = Float64Array.from(em.bs[0]), g = Float64Array.from(em.bs[0], (E, k) => E * em.bs[1][k] * val('electron', E)), dg = pchipSlopes(x, g);
+        for (let k = 0; k + 1 < x.length; k++) { const h = x[k + 1] - x[k]; s += h * (g[k] + g[k + 1]) / 2 + h * h * (dg[k] - dg[k + 1]) / 12; }
+      } else for (const [E, Y] of em.r.b || []) s += E * Y * val('electron', E);
       for (const [E, Y] of em.r.a || []) s += 20 * E * Y * val('alpha', E);
       for (const [E, Y] of [...(em.r.ar || []), ...(em.r.ff || [])]) s += 20 * E * Y * val('alpha', 2.0);
       s *= MEV;
@@ -122,6 +137,38 @@ const d103 = await loadSystem('103', io);
     }
   }
   check('see103: S of every sampled pair equals brute-force PCHIP (5 nuclides, adult male)', worst < 1e-6, `worst ${worst.toExponential(2)}`);
+  {
+    // The integral of the monotone cubic in one pass against slopes and Hermite sums, on data of every shape
+    // (zeros, plateaux, changes of sign), read from a position on as the engine reads the spectra.
+    let seed = 12345, off = 0;
+    const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+    for (let trial = 0; trial < 5000; trial++) {
+      const n = 2 + Math.floor(rnd() * 9), from = Math.floor(rnd() * 3);
+      const x = new Float64Array(n + 3), g = new Float64Array(n);
+      let t = rnd();
+      for (let k = 0; k < n + 3; k++) { x[k] = t; t += 0.01 + rnd(); }
+      for (let k = 0; k < n; k++) { const u = rnd(); g[k] = u < 0.25 ? 0 : u < 0.5 ? Math.round(rnd() * 3) : rnd() * 10 - 3; }
+      const xs = x.slice(from, from + n), d = pchipSlopes(xs, g);
+      let ref = 0;
+      for (let k = 0; k + 1 < n; k++) { const h = xs[k + 1] - xs[k]; ref += h * (g[k] + g[k + 1]) / 2 + h * h * (d[k] - d[k + 1]) / 12; }
+      off = Math.max(off, Math.abs(pchipIntegral(x, g, n, from) - ref) / (1 + Math.abs(ref)));
+    }
+    check('see103: the one-pass integral of the monotone cubic equals its slopes and Hermite sums (5,000 random series)', off < 1e-13, `worst ${off.toExponential(2)}`);
+    // The rule of the beta spectra (OPTIONS103.betaSpectrum). Tritium's particles held under the lining of the
+    // nose and throat reach its basal cells only with the top of the spectrum, where the SAF rises from nothing
+    // (0 at 10 keV, 0.08 kg-1 at 15 keV, 2.4 at 20 keV; the spectrum ends at 18.6 keV): there the two rules differ
+    // most, and the annex of Publication 158 has the cubic's value.
+    await d103.prepare('H-3');
+    const h3 = d103.emissions('H-3');
+    const cub = sAllRows(ph, emissionWeights(h3, idx.energies, 'H-3')), tra = sAllRows(ph, emissionWeights(h3, idx.energies, 'H-3', 'trapezoid'));
+    const row = (T, S) => idx.sources.indexOf(S) * idx.targets.length + idx.targets.indexOf(T);
+    const top = cub[row('ET2-bas', 'ET2-seq')] / tra[row('ET2-bas', 'ET2-seq')], self = cub[row('Liver', 'Liver')] / tra[row('Liver', 'Liver')];
+    check('see103: tritium by the cubic rule -- 1.037 of the trapezoidal rule\'s S from the particles held in ET2 to its basal cells, 0.9985 of it within the liver',
+      near(top, 1.0366, 5e-4) && near(self, 0.9985, 1e-4), `${top.toFixed(4)}, ${self.toFixed(4)}`);
+    let threw = false;
+    try { emissionWeights(h3, idx.energies, 'H-3', 'simpson'); } catch { threw = true; }
+    check('see103: a beta rule that is not known is refused', threw);
+  }
   const pu = d103.emissions('Pu-239');
   const Ea = [...(pu.r.a || []), ...(pu.r.ar || [])].reduce((a, [e, y]) => a + e * y, 0);
   const S = sAllRows(ph, emissionWeights(pu, idx.energies, 'Pu-239'));
@@ -308,7 +355,7 @@ if (!SYSTEM || SYSTEM === '103') {
     ['103', { nuclide: 'Tb-148', route: 'injection' }, 7300, 8.9667e-11],
     ['103', { nuclide: 'Gd-148', route: 'injection' }, 7300, 8.0939e-5, 'Liver'],
     ['103', { nuclide: 'Np-238', route: 'injection' }, 7300, 1.2198e-9, 'Spleen'],
-    ['103', { nuclide: 'Zn-72', route: 'injection' }, 365, 1.1444e-8, 'Bone surface'],
+    ['103', { nuclide: 'Zn-72', route: 'injection' }, 365, 1.1364e-8, 'Bone surface'],
     ['103', { nuclide: 'Th-229', route: 'injection' }, 7300, 4.2619e-5, 'Muscle'],
     ['103', { nuclide: 'Pu-241', route: 'injection' }, 7300, 1.4874e-5, 'Liver'],
     ['103', { nuclide: 'Np-241', route: 'injection' }, 7300, 1.8710e-12, 'Muscle'],
@@ -372,13 +419,13 @@ if (!SYSTEM || SYSTEM === '103') {
     // (OPTIONS103.ancestorTissues): arsenic formed after selenium has no pancreas, spleen or gonads in its model, and
     // what it spreads from plasma does not go there (the annex of Publication 158); nor does what barium and
     // caesium spread after 129La go to lanthanum's liver, kidneys, marrow and gonads (the OIR Data Viewer: salivary
-    // glands 0.84 and testes 1.09 of these with them shared)
+    // glands 0.77 and testes 1.09 of these with them shared)
     ['103', { nuclide: 'Se-70', route: 'injection' }, 7300, 4.4283e-11, 'Pancreas'],
     ['103', { nuclide: 'Se-70', route: 'injection', rules: { ancestorTissues: 'shared' } }, 7300, 4.6425e-11, 'Pancreas'],
     ['103', { nuclide: 'Se-72', route: 'injection' }, 7300, 8.1717e-9, 'Spleen'],
     ['103', { nuclide: 'Se-72', route: 'injection', rules: { ancestorTissues: 'shared' } }, 7300, 8.4821e-9, 'Spleen'],
     ['103', { nuclide: 'La-129', route: 'injection' }, 7300, 1.5539e-12, 'Salivary glands'],
-    ['103', { nuclide: 'La-129', route: 'injection', rules: { ancestorTissues: 'shared' } }, 7300, 1.3096e-12, 'Salivary glands'],
+    ['103', { nuclide: 'La-129', route: 'injection', rules: { ancestorTissues: 'shared' } }, 7300, 1.2032e-12, 'Salivary glands'],
     ['103', { nuclide: 'La-129', route: 'injection' }, 7300, 1.4803e-12, 'Gonads'],
     ['103', { nuclide: 'La-129', route: 'injection', rules: { ancestorTissues: 'shared' } }, 7300, 1.6081e-12, 'Gonads'],
     // barium formed on lanthanum's bone surfaces is on barium's, and caesium formed there leaves as caesium does
@@ -391,7 +438,45 @@ if (!SYSTEM || SYSTEM === '103') {
     ['103', { nuclide: 'Ni-56', route: 'injection' }, 7300, 1.0040e-9, 'Kidneys'],
     // scandium formed after calcium follows scandium's own model by age (47Ca at 3 months: the liver had 0.96 of
     // this with the adult's model at every age)
-    ['103', { nuclide: 'Ca-47', route: 'injection' }, 100, 4.2852e-9, 'Liver'],
+    ['103', { nuclide: 'Ca-47', route: 'injection' }, 100, 4.2247e-9, 'Liver'],
+    // S by age, each radiation type on its own spline (OPTIONS103.ageSpline): from bone surfaces and marrow to the
+    // endosteum the photons' SAFs rise from the newborn to 1 year where the electrons' fall; with one spline for
+    // their sum the 1-year-old's bone surface has 0.954 of this after 133Ba and 1.047 after 91Nb
+    ['103', { nuclide: 'Ba-133', route: 'injection' }, 365, 4.8624e-8, 'Bone surface'],
+    ['103', { nuclide: 'Ba-133', route: 'injection', rules: { ageSpline: 'total' } }, 365, 4.6377e-8, 'Bone surface'],
+    ['103', { nuclide: 'Nb-91', route: 'injection' }, 365, 2.9024e-8, 'Bone surface'],
+    ['103', { nuclide: 'Nb-91', route: 'injection', rules: { ageSpline: 'total' } }, 365, 3.0397e-8, 'Bone surface'],
+    // the marrow's share of another member's rest of the body, where a member has the marrow of trabecular and
+    // cortical bone (OPTIONS103.marrowShare): as red and yellow marrow the bone surface after 238U has 0.973 of
+    // this (thorium's marrow) and a 10-year-old's thymus after 72Zn 0.980 (gallium's)
+    ['103', { nuclide: 'U-238', route: 'injection' }, 7300, 7.1746e-6, 'Bone surface'],
+    ['103', { nuclide: 'U-238', route: 'injection', rules: { marrowShare: 'red-yellow' } }, 7300, 6.9839e-6, 'Bone surface'],
+    ['103', { nuclide: 'Zn-72', route: 'injection' }, 3650, 1.0445e-9, 'Thymus'],
+    ['103', { nuclide: 'Zn-72', route: 'injection', rules: { marrowShare: 'red-yellow' } }, 3650, 1.0236e-9, 'Thymus'],
+    // the ground state formed from an isomer taken in is a progeny (OPTIONS103.sameElement): 235U after 235mU has
+    // the skin of uranium as a progeny (the female's had 0.944 of this on the parent's kinetics), 242Am after
+    // 242mAm finds the parent's soft-tissue pools foreign (the skin had 1.043 of this)
+    ['103', { nuclide: 'U-235m', route: 'injection' }, 7300, 2.7685e-16, 'Skin', 'F'],
+    ['103', { nuclide: 'U-235m', route: 'injection', rules: { sameElement: 'parent' } }, 7300, 2.6136e-16, 'Skin', 'F'],
+    ['103', { nuclide: 'Am-242m', route: 'injection' }, 7300, 1.4557e-6, 'Skin'],
+    ['103', { nuclide: 'Am-242m', route: 'injection', rules: { sameElement: 'parent' } }, 7300, 1.5182e-6, 'Skin'],
+    // plutonium formed after uranium follows Publication 137 para 921 (the liver after 240U had 0.934 of this with
+    // plutonium's own model)
+    ['103', { nuclide: 'U-240', route: 'injection' }, 7300, 3.1962e-10, 'Liver'],
+    // beta spectra by the cubic rule (OPTIONS103.betaSpectrum): the 3-month-old's nose and throat after tritium
+    // inhaled as Type S has 0.986 of this by the trapezoidal rule
+    ['103', { nuclide: 'H-3', route: 'inhalation', form: 'S' }, 100, 2.6333e-12, 'Extrathoracic region'],
+    ['103', { nuclide: 'H-3', route: 'inhalation', form: 'S', rules: { betaSpectrum: 'trapezoid' } }, 100, 2.5955e-12, 'Extrathoracic region'],
+    // steps of one day where the published calculation has them (OPTIONS103.shortSteps): calcium and polonium for
+    // 3-month-olds, zinc to 5 years; in the steps of all, e is 1.010, 1.011 and (zinc at 1 year) 1.002 of these
+    ['103', { nuclide: 'Ca-45', route: 'injection' }, 100, 1.1916e-8],
+    ['103', { nuclide: 'Ca-45', route: 'injection', rules: { shortSteps: false } }, 100, 1.2033e-8],
+    ['103', { nuclide: 'Po-210', route: 'injection' }, 100, 2.2660e-5],
+    ['103', { nuclide: 'Po-210', route: 'injection', rules: { shortSteps: false } }, 100, 2.2906e-5],
+    ['103', { nuclide: 'Zn-65', route: 'injection' }, 365, 2.9530e-8],
+    // iodide to the urinary bladder at 11.84 d-1 and barium's adult colon rate 20.16, as Publication 137 has them
+    ['103', { nuclide: 'I-131', route: 'injection' }, 7300, 3.6853e-7, 'Thyroid'],
+    ['103', { nuclide: 'Ba-133', route: 'injection' }, 7300, 4.2019e-9],
     ['60', { nuclide: 'Po-210', route: 'ingestion' }, 7300, 1.206e-6],
   ];
   for (const [sys, spec, age, want, tissue, sex = 'M'] of pins) {
@@ -403,6 +488,22 @@ if (!SYSTEM || SYSTEM === '103') {
     const how = spec.rules ? ` with ${JSON.stringify(spec.rules).replace(/"/g, '')}` : '';
     check(`pinned: ${sys} ${spec.nuclide} ${spec.route} ${spec.form || ''}${how} at ${age} d${tissue ? `, ${tissue} (${sex === 'F' ? 'female' : 'male'}),` : ''} is ${want.toExponential(3)}`, near(got, want, 0.002), got.toExponential(4));
   }
+  // Rules whose effect is of the size the pins allow: each as the ratio of the rule switched off to the rule.
+  const eOf = async (nuclide, age, rules) => { await d103.prepare(nuclide); return coefficients103(d103, { nuclide, route: 'injection', cutoff: 1e-4, rules }, [age])[0].E; };
+  const ratio = async (nuclide, age, rules) => (await eOf(nuclide, age, rules)) / (await eOf(nuclide, age));
+  const beta = [await ratio('H-3', 7300, { betaSpectrum: 'trapezoid' }), await ratio('Y-92', 7300, { betaSpectrum: 'trapezoid' }), await ratio('Ni-63', 7300, { betaSpectrum: 'trapezoid' })];
+  check('103: by the trapezoidal rule e of 3H, 92Y and 63Ni by injection is 1.0015, 1.0028 and 1.0006 of the cubic rule\'s',
+    near(beta[0], 1.0015, 2e-4) && near(beta[1], 1.0028, 2e-4) && near(beta[2], 1.0006, 2e-4), beta.map((x) => x.toFixed(4)).join(', '));
+  const zn = await ratio('Zn-65', 365, { shortSteps: false });
+  check('103: zinc at 1 year in the steps of all has e 1.0020 of the one-day steps\'', near(zn, 1.0020, 2e-4), zn.toFixed(4));
+  const same = [await ratio('Zn-65', 1825, { shortSteps: false }), await ratio('Ca-45', 365, { shortSteps: false }), await ratio('Sr-90', 100, { shortSteps: false })];
+  check('103: the one-day steps end where the table says -- zinc at 5 years, calcium at 1 year and strontium at 3 months are untouched', same.every((x) => x === 1), same.join(', '));
+  check('103: OPTIONS103.shortSteps lists calcium and polonium before 1 year and zinc before 5, in steps of one day',
+    JSON.stringify(OPTIONS103.shortSteps) === JSON.stringify({ step: 1, before: { Ca: 365, Po: 365, Zn: 1825 } }), JSON.stringify(OPTIONS103.shortSteps));
+  const rate = (el, a, b) => d103.elements[el].systemic.default.transfers.find((x) => x[0] === a && x[1] === b)[2];
+  check('103 data: iodide goes to the urinary bladder at 11.84 d-1 at every age, barium to the adult\'s colon at 20.16 (Publication 137)',
+    rate('I', 'Blood iodide', 'UB contents').every((x) => x === 11.84) && rate('Ba', 'Blood', 'RC contents')[5] === 20.16 && rate('Ba', 'Blood', 'RC contents')[0] === 6.72,
+    `${rate('I', 'Blood iodide', 'UB contents')}; ${rate('Ba', 'Blood', 'RC contents')}`);
 }
 
 /* ---- ICRP 103 chains: the members that count, and the models progeny follow --------------- */
@@ -433,6 +534,21 @@ if (!SYSTEM || SYSTEM === '103') {
   check('plutonium as a progeny: the added spleen and skin leave as ST1 does, to Blood 2 at 0.00139 d-1',
     near(rate(pu, 'Spleen', 'Blood 2')?.at(-1), 0.00139, 1e-6) && near(rate(pu, 'Skin', 'Blood 2')?.at(-1), 0.00139, 1e-6) && near(rate(pu, 'ST1', 'Blood 2')?.at(-1), 0.00139, 1e-6),
     `${JSON.stringify(rate(pu, 'Spleen', 'Blood 2'))} ${JSON.stringify(rate(pu, 'Spleen', 'Blood 1'))}`);
+  const puU = await modelOf('U-240', 'Pu-240');
+  check('plutonium formed after uranium follows Publication 137 para 921: blood to Liver 1 at 0.42 d-1 and to the soft tissue ST0 at 0.3, the spleen and skin carved from ST1',
+    near(rate(puU, 'Blood', 'Liver 1')?.at(-1), 0.42, 1e-9) && near(rate(puU, 'Blood', 'ST0')?.at(-1), 0.3, 1e-9)
+    && near(rate(puU, 'Blood', 'Spleen')?.at(-1), 0.0007, 1e-9) && near(rate(puU, 'Blood', 'Skin')?.at(-1), 0.0021, 1e-9),
+    JSON.stringify(puU?.transfers.filter(([x]) => x === 'Blood').map((t) => [t[1], t[2].at(-1)])));
+  {
+    // The ground state formed from the isomer taken in (OPTIONS103.sameElement).
+    await d103.prepare('U-235m');
+    const spec = { nuclide: 'U-235m', route: 'injection', cutoff: 1e-4, intakeAge: 9125 };
+    const asProgeny = assemble103(d103, spec).members.find((m) => m.name === 'U-235');
+    const asParent = assemble103(d103, { ...spec, rules: { sameElement: 'parent' } }).members.find((m) => m.name === 'U-235');
+    check('235U formed from 235mU has the model of uranium as a progeny, with skin and marrow; on the parent\'s kinetics it mirrors the parent',
+      asProgeny.kind === 'spec' && near(rate(asProgeny.progeny?.model, 'Plasma', 'Skin')?.at(-1) ?? rate(asProgeny.progeny?.model, 'Blood', 'Skin')?.at(-1), 0.09, 1e-9)
+      && asParent.kind === 'mirror' && asParent.of === 0, `${asProgeny.kind}, ${asParent.kind} of ${asParent.of}`);
+  }
   const ga = await modelOf('Zn-72', 'Ga-72');
   check('gallium formed from zinc: blood to the bone surfaces 0.75 d-1 before adulthood, 0.5 for adults, the total outflow 5 d-1 at every age',
     ga.ages.length === 6 && near(rate(ga, 'Blood', 'Trab bone surf')[0], 0.75, 1e-9) && near(rate(ga, 'Blood', 'Trab bone surf')[5], 0.5, 1e-9)

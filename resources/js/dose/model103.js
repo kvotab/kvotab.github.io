@@ -137,6 +137,35 @@ export const OPTIONS103 = {
                           // member's rest of the body by the reference male's masses, for both sexes
                           // (dose103.js otherParts; needs ageStep); false = all of it spread by the
                           // masses of the sex whose dose it is
+  ageSpline: 'types',     // S between the reference ages from 1 year on (the PCHIP of Publication 158 para
+                          // 174): 'types' = a spline for each radiation type's S (photons, electrons, alpha
+                          // particles, neutrons) and their sum, as the calculations have it; 'total' = one
+                          // spline for the sum. The spline is not additive, and the two differ where
+                          // photons and electrons change differently with age: Publication 155's photon
+                          // SAFs from bone surfaces and marrow to the endosteum are several times lower in
+                          // the newborn than at 1 year while the electrons' are higher, so the total's
+                          // spline starts off level at 1 year where the electrons' own falls. The annex of
+                          // Publication 158: with one spline the bone surface dose after an intake at 1
+                          // year was 0.972 (55Fe), 0.974 (59Ni), 0.953 (133Ba) and 1.047 (91Nb) of the
+                          // annex's, 0.98-1.02 at 3 months, and 1.000 type by type; 23 nuclides moved, all
+                          // towards the annex (dose103.js colsFor, solve.js slopesOf)
+  betaSpectrum: 'cubic',  // how a beta spectrum is integrated with the SAFs (see103.js spectrumOnGrid):
+                          // 'cubic' = the monotone cubic (PCHIP) through E N(E) SAF(E) at the spectrum's
+                          // tabulated energies, as the published coefficients have it; 'trapezoid' = the
+                          // trapezoidal rule there. The tables have some 100 energies, few where a spectrum
+                          // bends most, and the trapezoidal rule is up to 0.5 % off in a spectrum's energy
+                          // (0.14 % in the root mean square over ICRP 107's 955 spectra, the cubic 0.05 %,
+                          // against the mean energies the same data list). The annex of Publication 158,
+                          // adults by injection: 3H 1.0016 of the annex's e by the trapezoidal rule and
+                          // 1.0000 by the cubic, 92Y 1.0028 and 1.0000, 93Y 0.9985 and 1.0000, 63Ni 1.0006
+                          // and 1.0000; of all its effective doses 79 % were within 0.1 %, 93 % so. Scaling
+                          // a spectrum to its listed mean energy is not it (106Ru, whose 106Rh spectrum is
+                          // 0.11 % above its listed mean: 0.9987 scaled, 0.9998 by the cubic), nor is a
+                          // cubic through N(E) alone: tritium particles held in ET2 reach its basal cells
+                          // only with the top of the spectrum, where the SAF rises from nothing, and
+                          // the dose to the nose and throat after tritium inhaled as Type S is 0.984-0.993
+                          // of the annex's by the trapezoidal rule, 1.02-1.04 with a cubic through N(E),
+                          // 1.000 with the cubic through the product
   ancestorTissues: 'apart', // a member's rest of the body leaves out the tissues that only the members it
                           // descends from name: they hold what is formed there, nothing of what the
                           // member's own model spreads from blood (dose103.js namedBefore, with what the
@@ -154,6 +183,24 @@ export const OPTIONS103 = {
   marrowNamed: true,      // a model with the marrow of trabecular and cortical bone names red and yellow
                           // marrow with it: no marrow in its "Other" (below, where the members' named
                           // regions are set, with what the annex and the printed coefficients show)
+  sameElement: 'progeny', // an isotope of the parent's element formed from the nuclide taken in itself (the
+                          // ground state of an isomer): 'progeny' = where the parent's section gives the
+                          // element a model as a progeny it has that model, and the parent's soft-tissue
+                          // pools are as foreign to it as to any progeny; 'parent' = it shares the parent's
+                          // kinetics, as isotopes of one element do elsewhere in a chain. The OIR Data
+                          // Viewer: 235mU, whose 235U then has the skin, marrow and gonads of uranium as a
+                          // progeny: the female's skin 0.944 and the bone surface 0.98-0.99 of the viewer's
+                          // with the parent's kinetics, every tissue 1.000 so; 242mAm: skin and the tissues
+                          // of the rest 1.03, 0.99-1.01 so
+  marrowShare: 'named',   // the marrow's share of another member's rest of the body, where a member's model
+                          // has the marrow of trabecular and cortical bone: 'named' = as those two regions
+                          // (the same mass as red and yellow marrow, divided otherwise, with other S), as
+                          // the calculations have it; 'red-yellow' = as red and yellow marrow. Uranium's
+                          // "Other" beside thorium's marrow: the bone surface after 238U, 235U and 233U was
+                          // 0.97-0.98 of the OIR Data Viewer's and the female's red marrow 0.98, now as
+                          // every other tissue; zinc's beside gallium's and calcium's beside scandium's:
+                          // the thymus after 72Zn and 47Ca at 10 and 15 years 0.97-0.98 of the annex of
+                          // Publication 158, the thyroid 0.98-0.99 (dose103.js otherParts)
   progenyBoneVolume: true, // a progeny model that progeny.json marks boneVolume names bone volume whether
                           // or not the chain puts anything there (below: 210Po formed from 210Bi)
   carried: true,          // the tissues a chain names are those of the members the published calculations
@@ -182,6 +229,22 @@ export const OPTIONS103 = {
                           // intake on, each at its start, as in the calculation behind the published
                           // coefficients (solve.js has what was read off them); 0 = both continuous
                           // in age, as Publication 158 describes them (para 13, eqs. 2.15-2.16)
+  shortSteps: { step: 1, before: { Ca: 365, Po: 365, Zn: 1825 } },
+                          // days: where the published calculation moved in shorter steps than ageStep --
+                          // by the element taken in, the age at intake before which it did. Read off the
+                          // annex of Publication 158 as ageStep was (solve.js), each case by the step that
+                          // makes e the annex's, by injection: calcium for 3-month-olds 1.0, 1.4 and
+                          // 1.5 d (47Ca, 45Ca, 41Ca) and for 1-year-olds 8.3 to 8.9 d; polonium 1.0 to
+                          // 1.1 d (206Po, 208Po, 210Po) and 8.7 to 10 d; zinc 1.0 d (65Zn, 69mZn, 72Zn)
+                          // and at 1 year 1.1 to 1.3 d, at 5 years the step of all; 23 other elements
+                          // 8.9 to 9.3 d at 3 months (their medians; caesium's 7.0, with fits that
+                          // follow the half-life and so are no step's). With the step of all, e for
+                          // 3-month-olds was 0.7 to 1.4 % above the annex's for these three elements,
+                          // bone surface, muscle and skin apart from the rest; in steps of one day
+                          // every tissue is within 0.1 %, by injection, ingestion and inhalation. No
+                          // rule was found that tells these cases from the others (the annex's files
+                          // name one program for all): they are listed as they were found. false = the
+                          // step of all everywhere
 };
 const GAS_EXHALE = GAS_PROGENY.exhale;
 export const elementOf = (nuclide) => nuclide.split('-')[0];
@@ -310,9 +373,15 @@ export function assemble103(data, spec) {
     const i = parentsOf[j][0];
     const p = members[i];
     if (NOBLE.has(m.el)) { m.kind = 'gas'; m.model = null; return; }
-    if (m.el === p.el && p.model) { m.kind = 'mirror'; m.of = i; m.model = p.model; return; }
     // The model the parent's element section gives this element (OIR series).
     const pspec = rules.progeny === false ? null : progenySpec(data.progeny, parentEl, m.el);
+    // An isotope of the element it is formed from shares that member's
+    // kinetics -- but formed from the nuclide taken in itself (an isomer's
+    // ground state: 235U from 235mU, 242Am from 242mAm) it is a progeny like
+    // any other where the section gives its element a model as a progeny
+    // (sameElement).
+    const asProgeny = i === 0 && rules.sameElement === 'progeny' && pspec && !pspec.decayAtSite;
+    if (m.el === p.el && p.model && !asProgeny) { m.kind = 'mirror'; m.of = i; m.model = p.model; return; }
     if (pspec) {
       m.spec = pspec;
       if (pspec.decayAtSite) { m.kind = 'decay'; m.model = null; return; }
@@ -577,7 +646,10 @@ export function assemble103(data, spec) {
     // parent's pools, keep them apart).
     const same = spec.sameName ?? true;
     const sameOther = spec.sameOther === 'progeny' ? (place.member ?? src.member) !== 0 : (spec.sameOther ?? rules.sameOther);
-    const pooled = src.region === 'Other' && place.el !== m.el && !sameOther;
+    // (The pools of the nuclide taken in are foreign even to an isotope of its
+    // own element that is formed from it as a progeny: sameElement.)
+    const own = place.el === m.el && !(rules.sameElement === 'progeny' && src.member === 0 && place.member === 0);
+    const pooled = src.region === 'Other' && !own && !sameOther;
     if (id === undefined && !(pooled && same === true) && (same === true || (Array.isArray(same) && same.includes(place.name))) && S.sys.has(place.name)) {
       return S.sys.get(place.name);
     }

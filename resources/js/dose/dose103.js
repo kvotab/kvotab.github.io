@@ -24,7 +24,7 @@
   for females).
 */
 import { assemble103, sexSpecific103, OPTIONS103 } from './model103.js';
-import { emissionWeights, sAllRows, sForRegions } from './see103.js';
+import { emissionWeights, sAllRows, sRowsByType, sForRegions, S_TYPES } from './see103.js';
 import { integrate } from './solve.js';
 
 export const AGES_103 = [100, 365, 1825, 3650, 5475, 7300];
@@ -109,7 +109,8 @@ function chainRegions(sys) {
   spread over the remaining regions by the masses of the sex whose dose it
   is. For the male the parts add up to the whole at the phantoms' ages; the
   female's skin, say, holds the male's share. The regions in `apart` (those
-  only the members before it name, namedBefore) are no part of it. Null
+  only the members before it name, namedBefore) are no part of it; marrow
+  takes its share as the regions the chain names it by (marrowShare). Null
   where nothing of it is named by another member. colsFor(region, named)
   gives the S columns.
 */
@@ -141,13 +142,19 @@ function namedBefore(sys) {
   });
 }
 
-function otherParts(saf, named, chainNamed, colsFor, sharesOf = 'M', apart = null) {
+function otherParts(saf, named, chainNamed, colsFor, sharesOf = 'M', apart = null, marrowShare = 'red-yellow') {
   // The individual whose masses give the shares: the reference male, or, where the model is the female's own (radon), her.
   const male = PHANTOMS_103[sharesOf].map((id) => saf.phantoms[id]), female = PHANTOMS_103[sharesOf === 'M' ? 'F' : 'M'].map((id) => saf.phantoms[id]);
   const src = male[0].sources;
   const mine = (ph, s) => ph.other[s] && !named.has(src[s]) && !(apart && apart.has(src[s]));
-  const X = [];
+  let X = [];
   src.forEach((r, s) => { if (chainNamed.has(r) && (mine(male[0], s) || mine(female[0], s))) X.push(s); });
+  // Marrow that the chain names as the marrow of trabecular and cortical bone
+  // takes its share as those two regions, not as red and yellow marrow: the
+  // same mass divided otherwise, with other S (OPTIONS103.marrowShare).
+  const RY = ['R-marrow', 'Y-marrow'];
+  const marrowTC = marrowShare === 'named' && (chainNamed.has('T-marrow') || chainNamed.has('C-marrow')) && X.some((s) => RY.includes(src[s]));
+  if (marrowTC) X = [...X.filter((s) => !RY.includes(src[s])), src.indexOf('T-marrow'), src.indexOf('C-marrow')];
   // Left out: what the members before it name (either sex's organs).
   const cut = apart ? src.filter((r, s) => apart.has(r) && (male[0].other[s] || female[0].other[s]) && !named.has(r)) : [];
   if (!X.length && !cut.length) return null;
@@ -157,7 +164,7 @@ function otherParts(saf, named, chainNamed, colsFor, sharesOf = 'M', apart = nul
     mass: male.map((ph, p) => (ph.masses.sources[s] > 0 ? ph.masses.sources[s] : female[p].masses.sources[s] || 0)),
     cols: colsFor(src[s], named),
   }));
-  const rest = new Set([...named, ...cut, ...X.map((s) => src[s])]);
+  const rest = new Set([...named, ...cut, ...X.map((s) => src[s]), ...(marrowTC ? RY : [])]);
   parts.push({ region: 'Other', mass: total.map((M, p) => M - parts.reduce((a, x) => a + x.mass[p], 0)), cols: colsFor('Other', rest) });
   for (const x of parts) x.total = total;
   return parts;
@@ -175,17 +182,28 @@ export function coefficients103(data, spec, ages = AGES_103, opt = {}) {
   const nT = saf.index.targets.length;
   const T = Object.fromEntries(saf.index.targets.map((t, i) => [t, i]));
   // S of every pair, per nuclide and phantom: the same for all ages at intake.
+  // {all: the sum over the radiation types, types: each type's own (null where the nuclide emits none of it)}
   const sCache = data.sCache || (data.sCache = new Map());
-  const sRows = (name, id) => {
-    const key = `${name}|${id}`;
+  const betaSpectrum = spec.rules?.betaSpectrum ?? OPTIONS103.betaSpectrum;
+  const sOf = (name, id) => {
+    const key = betaSpectrum === OPTIONS103.betaSpectrum ? `${name}|${id}` : `${name}|${id}|${betaSpectrum}`;
     if (!sCache.has(key)) {
       const ph = saf.phantoms[id];
-      const w = emissionWeights(data.emissions(name), saf.index.energies, name);
-      sCache.set(key, sAllRows(ph, w));
+      const w = emissionWeights(data.emissions(name), saf.index.energies, name, betaSpectrum);
+      const types = sRowsByType(ph, w);
+      sCache.set(key, { all: sAllRows(ph, w, types), types });
     }
     return sCache.get(key);
   };
+  const sRows = (name, id) => sOf(name, id).all;
   const step = spec.rules?.ageStep ?? OPTIONS103.ageStep;
+  // The step of an intake: one day where the published calculation of the element taken in has it at that age
+  // (OPTIONS103.shortSteps), else the step of all. A step asked for by rule is taken as it is.
+  const short = spec.rules?.ageStep == null ? (spec.rules?.shortSteps ?? OPTIONS103.shortSteps) : null;
+  const shortBefore = (short && short.before[spec.nuclide.split('-')[0]]) || 0;
+  const stepAt = (age0) => (step > 0 && age0 < shortBefore ? short.step : step);
+  const ageSpline = spec.rules?.ageSpline ?? OPTIONS103.ageSpline;
+  const marrowShare = spec.rules?.marrowShare ?? OPTIONS103.marrowShare;
   // Shares of the rest of the body need the steps: a share and an S each at
   // a step's start. A set of progeny.json may say that its parents' chains
   // do without ("*shares": false).
@@ -207,14 +225,27 @@ export function coefficients103(data, spec, ages = AGES_103, opt = {}) {
       const which = sex ? [sex] : ['M', 'F'];
       // S columns: per compartment, per reference age, the targets of each sex in turn.
       const colCache = new Map(), splitCache = new Map();
-      const colsFor = (name, region, named) => PHANTOM_AGES_103.map((pa, p) => {
+      const colsOf = (rowsOf) => (name, region, named) => PHANTOM_AGES_103.map((pa, p) => {
         const col = new Float64Array(which.length * nT);
         which.forEach((x, k) => {
           const id = PHANTOMS_103[x][p];
-          col.set(sForRegions(saf.phantoms[id], sRows(name, id), [region], named)[region], k * nT);
+          const rows = rowsOf(name, id);
+          if (rows) col.set(sForRegions(saf.phantoms[id], rows, [region], named)[region], k * nT);
         });
         return col;
       });
+      const colsAll = colsOf(sRows);
+      // S at the phantoms' ages, and with it each radiation type's own S
+      // where S is interpolated in age type by type (ageSpline; solve.js
+      // takes the slopes of the age spline from `byType`).
+      const colsFor = (name, region, named) => {
+        const cols = colsAll(name, region, named);
+        if (ageSpline === 'types') {
+          const present = S_TYPES.map((_, ty) => ty).filter((ty) => which.some((x) => PHANTOMS_103[x].some((id) => sOf(name, id).types[ty])));
+          if (present.length > 1) cols.byType = present.map((ty) => colsOf((n, id) => sOf(n, id).types[ty])(name, region, named));
+        }
+        return cols;
+      };
       const keyOf = (c) => `${c.member}|${c.region}|${c.region === 'Other' ? (c.otherOf ?? c.member) : -1}`;
       const columns = sys.comps.map((c) => {
         const key = keyOf(c);
@@ -235,7 +266,7 @@ export function coefficients103(data, spec, ages = AGES_103, opt = {}) {
         if (splitCache.has(key)) return splitCache.get(key);
         const named = new Set(sys.members[c.otherOf ?? c.member].named);
         const parts = otherParts(saf, named, chainNamed, (region, set) => colsFor(sys.members[c.member].name, region, set),
-          sex === 'F' && sexShares === 'own' ? 'F' : 'M', before ? before[c.otherOf ?? c.member] : null);
+          sex === 'F' && sexShares === 'own' ? 'F' : 'M', before ? before[c.otherOf ?? c.member] : null, marrowShare);
         splitCache.set(key, parts);
         return parts;
       }) : undefined;
@@ -258,7 +289,7 @@ export function coefficients103(data, spec, ages = AGES_103, opt = {}) {
         while (b.kind === 'mirror' && sys.comps[b.of]) b = sys.comps[b.of];
         return { ...g, kind: c.kind, base: b.kind, name: c.name, place: c.place || null };
       };
-      const res = integrate(sys, { phantomAges: PHANTOM_AGES_103, columns, split, nTargets: which.length * nT, groups, interp: 'icrp103', step, functionals, byCompartment: !!opt.outputs },
+      const res = integrate(sys, { phantomAges: PHANTOM_AGES_103, columns, split, nTargets: which.length * nT, groups, interp: 'icrp103', step: stepAt(age0), functionals, byCompartment: !!opt.outputs },
         { intakeAge, period, outputs: opt.outputs, rtol: opt.rtol });
       which.forEach((x, k) => saf.index.targets.forEach((t, i) => { Ht[x][t] = res.H[k * nT + i]; }));
       runs.push({ sys, res, groupKeys, which, doseGroups: opt.outputs ? res.doseGroups.map(kindOf) : null });
