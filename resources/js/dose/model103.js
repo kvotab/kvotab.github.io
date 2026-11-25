@@ -251,6 +251,16 @@ export const OPTIONS103 = {
                           // and thorium formed from 228Ra in thorium's bone volume follow their own bone
                           // volume, to marrow: the OIR Data Viewer's 232Th by injection has red marrow
                           // 1.00 so, 0.95 otherwise); 'own' = it joins the progeny's own compartment
+  tractAdult: 'twenty',   // the alimentary tract (its transit rates and the absorbed fractions) has its adult
+                          // values from 20 years, also where the element's systemic model has its own from
+                          // 25 (the annex of Publication 158: lead that the liver secretes into the small
+                          // intestine is absorbed again by 0.3 at 15 years and by 0.2 in adults; with that
+                          // change spread to 25 years every tissue after 202Pb, 205Pb and 210Pb taken in at
+                          // 15 years was 0.2 % above the annex's, alike, and e 1.0023; from 20 years e is
+                          // 1.0000-1.0003. Only lead shows it: of the elements adult at 25 it alone has an
+                          // absorbed fraction that changes after 15 years and a secretion above the
+                          // colon; no other nuclide of the annex moves); 'element' = from the element's
+                          // adult age
   chainAdult: 'parent',   // the age from which a progeny's model has its adult rates: 'parent' = the adult
                           // age of the element taken in, as the calculations have it (the annex of
                           // Publication 158: niobium formed from 93Mo, molybdenum adult from 20 years and
@@ -374,7 +384,7 @@ export function assemble103(data, spec) {
   const chain = buildChain(index, spec.nuclide, { cutoff: spec.cutoff ?? 1e-4, last: spec.last, horizonDays: 36525, sidePaths: rules.sidePaths === 'cut' ? 1e-3 : 0 });
   const route = spec.route;
   const adultAge = E0.adultAge || 7300;
-  const hatmAges = [100, 365, 1825, 3650, 5475, adultAge];
+  const hatmAges = [100, 365, 1825, 3650, 5475, rules.tractAdult === 'twenty' ? 7300 : adultAge];
   // Bone turnover, at which progeny formed in bone volume leave it: adult from
   // the adult age of the element taken in, as the progeny's own rates are
   // (chainAdult); otherwise from 25 years, the age of the adult skeleton.

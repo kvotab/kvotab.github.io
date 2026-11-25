@@ -1613,3 +1613,44 @@ Still open:
 - The 65 organ doses more than 0.5 % off: Rn-222 15, Pb-195m, Pb-197m and
   Ag-115 10 each, Pb-200 5, Bi-214, Ra-224 and Te-131 4 each, Rn-220 2,
   Ag-101 1.
+
+## Lead at 15 years: the tract is adult from 20 (2026-11-25, last)
+
+Against the annex: effective doses more than 0.2 % off 6 → 1 of 10,026
+(thoron as a gas at 5 years), within 0.1 % 99.6 → 99.7 %; organ doses more
+than 0.2 % off 2,361 → 1,792 of 561,420, within 0.1 % 98.2 → 98.4 %. Lead's
+values more than 0.1 % off: Pb-202 248 → 0, Pb-205 298 → 12, Pb-210 273 → 0.
+OIR Data Viewer and the printed coefficients unchanged.
+
+**The alimentary tract has its adult values from 20 years for every element,
+also where the systemic model has its own from 25** (`OPTIONS103.tractAdult`,
+model103.js). The transit rates and the absorbed fractions were taken to
+their adult values at the element's adult age, 25 years for the alkaline
+earths, lead and the actinides. Lead is the one element where that can be
+seen: its absorbed fraction changes after 15 years (0.3, then 0.2 for the
+adult) and its liver secretes into the small intestine, from where lead is
+absorbed again. With the change spread to 25 years a little more comes back
+between 15 and 25, and every tissue after Pb-202, Pb-205 and Pb-210 taken in
+at 15 years was 0.2 % above the annex's, alike; e 1.0023, 1.0024 and 1.0015,
+now 1.0002, 1.0003 and 1.0000.
+
+How it was found: single changes at 15 years, each for its signature.
+The red cells' rate with more figures and ST0's: nothing. Bone surface to
+blood against bone volume: bone one way, soft tissue the other. Everything
+adult from 20: the adult's own doses off by 2 to 10 %. Excretion from plasma
+1 % faster: every tissue −0.29 %, alike, with −0.04 at 10 years, the shape
+asked. Secreted lead absorbed by 0.2 from 15 years on: −2.3 %, alike. So it
+is what comes back from the gut, and a tenth of that step. The adult age of
+the tract gives it with no number to choose: after Pb-205 the annex asked
+−0.22, −0.20, −0.23, −0.20, −0.17 and −0.27 % of kidneys, liver, muscle, red
+marrow, bone surface and colon and gets −0.20, −0.20, −0.21, −0.21, −0.20
+and −0.18; after Pb-210 −0.19, −0.19, −0.20, −0.11, −0.16, −0.21 and gets
+−0.16, −0.16, −0.16, −0.15, −0.20, −0.16. At 10 years it gives −0.03 to
+−0.06 where up to −0.03 was asked (e of Pb-205 0.9996 there, from 1.0000).
+
+No other nuclide of the annex moves by 0.003 % in the rms of its organ doses:
+radium, barium, strontium and calcium leave blood for the colon, below
+where anything is absorbed, and the actinides' and lanthanides' absorbed
+fractions are the same at 15 years and after.
+
+Still open: the last list but for lead.

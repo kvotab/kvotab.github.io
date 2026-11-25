@@ -541,6 +541,12 @@ if (!SYSTEM || SYSTEM === '103') {
     ['103', { nuclide: 'Ba-133', route: 'injection' }, 1825, 6.3509e-9],
     ['103', { nuclide: 'Ba-140', route: 'injection' }, 5475, 2.1122e-8, 'Red marrow'],
     ['103', { nuclide: 'Pb-210', route: 'injection' }, 3650, 1.0439e-5, 'Kidneys'],
+    // the alimentary tract has its adult values, the absorbed fractions among them, from 20 years, also for lead,
+    // whose systemic model has them from 25 (OPTIONS103.tractAdult): lead that the liver secretes is absorbed again
+    // by 0.3 at 15 years and by 0.2 in adults, and with that change spread to 25 years every tissue after 202Pb,
+    // 205Pb and 210Pb taken in at 15 years was 0.2 % above the annex's
+    ['103', { nuclide: 'Pb-205', route: 'injection' }, 5475, 4.9310e-10],
+    ['103', { nuclide: 'Pb-210', route: 'ingestion', form: 'all' }, 5475, 6.8737e-7],
     // calcium absorbed by 0.499 at 1 to 15 years (with the stated 0.5, 1.0020 of this, as it was of the annex's)
     ['103', { nuclide: 'Ca-45', route: 'ingestion', form: 'all' }, 1825, 1.3565e-9],
     ['60', { nuclide: 'Po-210', route: 'ingestion' }, 7300, 1.206e-6],
@@ -566,6 +572,13 @@ if (!SYSTEM || SYSTEM === '103') {
   check('103: the one-day steps end where the table says -- zinc at 5 years, calcium at 1 year and strontium at 3 months are untouched', same.every((x) => x === 1), same.join(', '));
   check('103: OPTIONS103.shortSteps lists calcium and polonium before 1 year and zinc before 5, in steps of one day',
     JSON.stringify(OPTIONS103.shortSteps) === JSON.stringify({ step: 1, before: { Ca: 365, Po: 365, Zn: 1825 } }), JSON.stringify(OPTIONS103.shortSteps));
+  const pbTract = [await ratio('Pb-205', 5475, { tractAdult: 'element' }), await ratio('Pb-205', 3650, { tractAdult: 'element' }), await ratio('Pb-205', 9125, { tractAdult: 'element' }), await ratio('Cs-137', 5475, { tractAdult: 'element' })];
+  await d103.prepare('Pb-205');
+  const pbAges = (rules) => { const s = assemble103(d103, { nuclide: 'Pb-205', route: 'injection', cutoff: 1e-4, intakeAge: 5475, rules }); return [s.intake.ages.at(-1), s.spec.adultAge]; };
+  check('103: the alimentary tract is adult from 20 years where lead\'s systemic model is from 25 -- with the tract adult from 25 too, e of 205Pb is 1.0021 of this at 15 years, 1.0004 at 10, the same for adults, and caesium (adult at 20) is untouched',
+    near(pbTract[0], 1.0021, 2e-4) && near(pbTract[1], 1.0004, 2e-4) && pbTract[2] === 1 && pbTract[3] === 1
+    && pbAges().join() === '7300,9125' && pbAges({ tractAdult: 'element' }).join() === '9125,9125' && OPTIONS103.tractAdult === 'twenty',
+    `${pbTract.map((x) => x.toFixed(4)).join(' ')}; tract and systemic adult ages ${pbAges().join(' ')}`);
   const rate = (el, a, b) => d103.elements[el].systemic.default.transfers.find((x) => x[0] === a && x[1] === b)[2];
   check('103 data: iodide goes to the urinary bladder at 11.84 d-1 at every age, barium to the adult\'s colon at 20.16 (Publication 137)',
     rate('I', 'Blood iodide', 'UB contents').every((x) => x === 11.84) && rate('Ba', 'Blood', 'RC contents')[5] === 20.16 && rate('Ba', 'Blood', 'RC contents')[0] === 6.72,
