@@ -1179,3 +1179,71 @@ Still open:
 - Against the viewer only: Sb-124 and Sb-125 (e 0.4 and 0.6 % high; the
   annex's own values for adults are matched to 0.01 %, so the two
   references differ there) and Sr-80 to Sr-83 (the public's rubidium).
+
+## Radon formed in the body: its progeny in blood (2026-11-25, last)
+
+The kidneys after radon and after Ra-226 were the last organ doses more than
+2 % off. Ra-226's are solved; radon's own are narrowed down and still open.
+The annex as a whole: organ doses more than 2 % off 37 → 25, more than 1 %
+off 349 → 311 of 561,420; the effective doses do not move.
+
+- **A progeny formed from a noble gas in the gas's blood is in its own blood
+  at once** (`OPTIONS103.gasBlood`, model103.js `placeSpec`). Radon, xenon
+  and krypton formed in the body have the generic model's one blood
+  compartment, from which they are exhaled at 1000 d⁻¹ (Publication 137
+  para 711). What they decay to there was moved to its own blood at 1000 d⁻¹,
+  as "produced in a blood compartment that is not identifiable with a blood
+  compartment" of its model (para 484 for polonium). Only Po-218 (3.1 min)
+  tells the two readings apart: a quarter of it decays before such a
+  transfer, and polonium entering blood is in Plasma 2, from which a fifth
+  goes straight to the kidneys. Ra-226 by injection: the kidneys were 0.989,
+  0.996, 0.995, 0.982, 0.963 and 0.987 of the annex's at the six ages, and
+  the shortfall followed, age by age, the part of the kidney dose that this
+  Po-218 brings (most at 15 years, where radium's own uptake to kidneys is
+  least); at once they are 1.002, 1.002, 1.002, 1.000, 1.004 and 1.001, by
+  ingestion and inhalation alike, and no other tissue moves (every tissue,
+  six ages, both sexes: 0.41 % rms → 0.13 %). The OIR Data Viewer says the
+  same for the adult: Ra-226's kidneys 0.987 → 1.001. Ra-224, Ra-223 and
+  Ra-228, whose polonium lives a fraction of a second, do not notice.
+
+  Radon that is itself taken in has the two blood compartments of its own
+  model (arterial, venous), for which Publication 137 para 654 gives the
+  transfer of progeny to plasma at 1000 d⁻¹ in so many words. There the
+  transfer is kept: with the progeny of both in plasma at once the kidneys
+  after inhaled Rn-222 come out 5–6 % above the annex, where they are 3–4 %
+  below it now.
+
+Still open, radon taken in (Rn-222 as a gas: kidneys 0.963–0.971 at every
+age and liver 0.987–0.992; by ingestion kidneys 0.980–0.984; thoron's
+kidneys are right). What is known:
+
+- Of the kidney dose after the gas, Po-214 gives 67 %, Po-218 20 % and
+  radon itself 4 %; a further 6 % comes from activity in blood by the
+  kidneys' own blood content, 1.5 % from Po-210. Only a seventh of it is
+  radon decaying in the kidneys with its progeny held there. The rest
+  arrives: Po-218 formed in radon's blood and taken up from Plasma 2 (29 %
+  of the dose, 34 % by ingestion), and Bi-214 taken up from plasma, which
+  comes from the Bi-214 formed in radon's "Other" (42 % of what passes
+  plasma), from bismuth's own fast soft-tissue pool (42 %) and from Pb-214
+  in plasma (14 %).
+- What the annex asks is a redistribution, not a loss: for the adult
+  kidneys +3.9 % and liver +1.3 %, the unnamed tissues −0.3 %, which is
+  about the same energy.
+- No single reading gives it at every age by both routes. Polonium leaving
+  radon's "Other" at about 9 d⁻¹ instead of with a half-time of 7 d fits
+  the gas at every age (kidneys within 0.6 %) and a fifth to four fifths of
+  ingestion, by age;
+  bismuth held 7–14 % less in its fast soft-tissue pool fits ingestion (all
+  tissues 0.86 % rms → 0.28 %) and half of the gas, but the same pool is
+  right to 0.1 % where lead or bismuth is the nuclide taken in. Bismuth
+  leaving radon's "Other" at 85–100 d⁻¹ instead of 66.54, which the pass
+  before had as a candidate, is out: skin and gonads, which radon's "Other"
+  holds, would then be 2 % low. Neither is polonium from arterial blood at
+  once, the absorption of the progeny formed in the gut (lead's f_A is
+  right to 1 %: the kidneys of a 3-month-old move by 28 % for 20 % of it),
+  or fixed fractions of the plasma outflow for the compartments added to
+  lead as a progeny (the gonads of children 2–7 % high).
+- A second, smaller pattern is shared by radon, thoron and the radium
+  isotopes whose lead is formed in the body: at 3 months and at 15 years
+  the soft tissues are 1–2 % high and bone surface and red marrow 1–2.5 %
+  low; at the other ages 0.3–0.6 %.

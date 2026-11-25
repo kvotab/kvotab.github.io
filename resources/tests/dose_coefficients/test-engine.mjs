@@ -477,6 +477,12 @@ if (!SYSTEM || SYSTEM === '103') {
     // iodide to the urinary bladder at 11.84 d-1 and barium's adult colon rate 20.16, as Publication 137 has them
     ['103', { nuclide: 'I-131', route: 'injection' }, 7300, 3.6853e-7, 'Thyroid'],
     ['103', { nuclide: 'Ba-133', route: 'injection' }, 7300, 4.2019e-9],
+    // a progeny formed from a noble gas in the gas's blood is in its own blood at once (OPTIONS103.gasBlood): the
+    // 218Po formed from the radon that 226Ra leaves in blood is in polonium's Plasma 2, a fifth of which goes to
+    // the kidneys; moved there at 1000 d-1, a quarter decays on the way and the kidneys of a 15-year-old have 0.959
+    // of this (0.963 of the annex's)
+    ['103', { nuclide: 'Ra-226', route: 'injection' }, 5475, 1.0172e-6, 'Kidneys'],
+    ['103', { nuclide: 'Ra-226', route: 'injection', rules: { gasBlood: 'transfer' } }, 5475, 9.7553e-7, 'Kidneys'],
     ['60', { nuclide: 'Po-210', route: 'ingestion' }, 7300, 1.206e-6],
   ];
   for (const [sys, spec, age, want, tissue, sex = 'M'] of pins) {
@@ -534,6 +540,23 @@ if (!SYSTEM || SYSTEM === '103') {
   check('plutonium as a progeny: the added spleen and skin leave as ST1 does, to Blood 2 at 0.00139 d-1',
     near(rate(pu, 'Spleen', 'Blood 2')?.at(-1), 0.00139, 1e-6) && near(rate(pu, 'Skin', 'Blood 2')?.at(-1), 0.00139, 1e-6) && near(rate(pu, 'ST1', 'Blood 2')?.at(-1), 0.00139, 1e-6),
     `${JSON.stringify(rate(pu, 'Spleen', 'Blood 2'))} ${JSON.stringify(rate(pu, 'Spleen', 'Blood 1'))}`);
+  {
+    // Radon formed in the body is in the generic model's one blood compartment; what it decays to there is in its
+    // own blood (polonium: Plasma 2). Radon taken in has its own two blood compartments, and the rule is not theirs.
+    await d103.prepare('Ra-226');
+    const born = (rules) => {
+      const sys = assemble103(d103, { nuclide: 'Ra-226', route: 'injection', cutoff: 1e-4, intakeAge: 9125, rules });
+      const nm = (c) => `${sys.members[sys.comps[c].member].name}/${sys.comps[c].name}`;
+      return sys.decays.filter((x) => nm(x.from) === 'Rn-222/Blood' && /^Po-218\//.test(nm(x.to))).map((x) => nm(x.to));
+    };
+    const own = born(), moved = born({ gasBlood: 'transfer' });
+    check('226Ra: 218Po formed from radon in blood is in polonium\'s Plasma 2 at once; with the transfer it is in a compartment of its own there',
+      own.length === 1 && own[0] === 'Po-218/Plasma 2' && moved.length === 1 && /\(Rn-222\)$/.test(moved[0]), `${own} | ${moved}`);
+    await d103.prepare('Rn-222');
+    const rn = (rules) => coefficients103(d103, { nuclide: 'Rn-222', route: 'inhalation', form: 'gas', cutoff: 1e-4, rules }, [7300])[0].H.M.Kidneys;
+    // (to the last digits: the 218Rn on a branch of 0.02 % is such a gas, and its 214Po decays where it is formed either way)
+    check('222Rn taken in: the rule leaves the progeny formed in its arterial and venous blood as they were', near(rn(), rn({ gasBlood: 'transfer' }), 1e-9), `${rn()} ${rn({ gasBlood: 'transfer' })}`);
+  }
   const puU = await modelOf('U-240', 'Pu-240');
   check('plutonium formed after uranium follows Publication 137 para 921: blood to Liver 1 at 0.42 d-1 and to the soft tissue ST0 at 0.3, the spleen and skin carved from ST1',
     near(rate(puU, 'Blood', 'Liver 1')?.at(-1), 0.42, 1e-9) && near(rate(puU, 'Blood', 'ST0')?.at(-1), 0.3, 1e-9)

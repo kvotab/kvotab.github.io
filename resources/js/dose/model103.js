@@ -112,6 +112,19 @@ export const OPTIONS103 = {
   shortLived: 0,          // days: progeny shorter-lived than this decay where produced
   gasEscape: 'oir',       // noble gas produced in soft tissue, to blood: 'oir' = the generic OIR model (half-time
                           // 30 min radon, 20 min xenon, 15 min krypton), a rate in d-1, or 'instant'
+  gasBlood: 'own',        // a progeny formed from a noble gas while the gas is in blood (the one blood
+                          // compartment of the generic model for radon, xenon and krypton formed in the
+                          // body, from which the gas is exhaled at 1000 d-1): 'own' = it is in its own
+                          // blood at once; 'transfer' = it moves there as from a blood compartment its
+                          // model lacks (at 1000 d-1 in the OIR sections). Only 218Po (3.1 min) tells the
+                          // two apart: a quarter of it decays before such a transfer, and polonium
+                          // entering blood is in Plasma 2, a fifth of which goes straight to the kidneys.
+                          // 226Ra by injection in the annex of Publication 158: with the transfer the
+                          // kidneys were 0.989, 0.996, 0.995, 0.982, 0.963 and 0.987 of the annex's at the
+                          // six ages, least where radium's own part of the kidney dose is least; at once,
+                          // all within 0.4 %, and no other tissue moves. (Radon that is itself taken in
+                          // has the two blood compartments of its own model, from which Publication 137
+                          // para 654 moves its progeny to plasma at 1000 d-1: progeny.json, the radon set.)
   boneShared: 'out',      // progeny produced in bone volume, where no OIR section gives their model:
                           // 'out' = the parent's rates out of bone volume only; 'turnover' = to blood
                           // at the bone turnover rate (the OIR sections' rule);
@@ -636,6 +649,9 @@ export function assemble103(data, spec) {
       if (k === undefined) throw new Error(`${m.name}: identified compartment ${id} is not in its model`);
       return k;
     }
+    // Formed from a noble gas while the gas is in blood (the one blood
+    // compartment of the generic model), it is in its own blood at once.
+    if (id === undefined && rules.gasBlood === 'own' && st[src.member].gasBlood === c) return S.entry;
     // A compartment of the same name is the same, except the unspecific soft
     // tissue pools (ST0-ST2, Other) of another element's model, unless the
     // section says the structures are the same (sameOther), or, with
