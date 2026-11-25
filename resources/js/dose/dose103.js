@@ -108,24 +108,56 @@ function chainRegions(sys) {
   the female has by her mass over his rest of the body --, and what is left,
   spread over the remaining regions by the masses of the sex whose dose it
   is. For the male the parts add up to the whole at the phantoms' ages; the
-  female's skin, say, holds the male's share. Null where no other member
-  names anything of it. colsFor(region, named) gives the S columns.
+  female's skin, say, holds the male's share. The regions in `apart` (those
+  only the members before it name, namedBefore) are no part of it. Null
+  where nothing of it is named by another member. colsFor(region, named)
+  gives the S columns.
 */
-function otherParts(saf, named, chainNamed, colsFor, sharesOf = 'M') {
+/*
+  The regions that the members a member descends from name and its own model
+  does not (OPTIONS103.ancestorTissues): its rest of the body leaves them
+  out. What is formed there stays where the progeny rules put it; what the
+  member's own model spreads from blood does not go there. Publication 151
+  describes progeny models so (Annex B: the characteristic model expanded by
+  the compartments the linked models need), and the ICRP's coefficients show
+  it: arsenic formed from 70Se and 72Se has no pancreas, spleen or gonads in
+  its model, selenium has, and with arsenic's "Other" spread there too those
+  tissues were 1.04-1.07 of the annex of Publication 158's (testes up to
+  1.06), left out 0.995-0.998; 129La, whose barium and caesium lack
+  lanthanum's liver, kidneys, marrow and gonads, had salivary glands at 0.84,
+  thymus 0.88, breast 0.89 and testes 1.09 of the OIR Data Viewer's, and
+  every tissue at 1.000-1.005 with them left out. Tissues that a later member
+  names still take their share (chainRegions).
+*/
+function namedBefore(sys) {
+  const anc = sys.members.map(() => new Set());
+  for (let pass = 0; pass < sys.members.length; pass++) {
+    for (const b of sys.chain.branches) { anc[b.to].add(b.from); for (const a of anc[b.from]) anc[b.to].add(a); }
+  }
+  return sys.members.map((m, j) => {
+    const own = new Set(m.named), out = new Set();
+    for (const i of anc[j]) { const a = sys.members[i]; if (a.carried !== false) for (const r of a.named) if (!own.has(r)) out.add(r); }
+    return out;
+  });
+}
+
+function otherParts(saf, named, chainNamed, colsFor, sharesOf = 'M', apart = null) {
   // The individual whose masses give the shares: the reference male, or, where the model is the female's own (radon), her.
   const male = PHANTOMS_103[sharesOf].map((id) => saf.phantoms[id]), female = PHANTOMS_103[sharesOf === 'M' ? 'F' : 'M'].map((id) => saf.phantoms[id]);
   const src = male[0].sources;
-  const mine = (ph, s) => ph.other[s] && !named.has(src[s]);
+  const mine = (ph, s) => ph.other[s] && !named.has(src[s]) && !(apart && apart.has(src[s]));
   const X = [];
   src.forEach((r, s) => { if (chainNamed.has(r) && (mine(male[0], s) || mine(female[0], s))) X.push(s); });
-  if (!X.length) return null;
+  // Left out: what the members before it name (either sex's organs).
+  const cut = apart ? src.filter((r, s) => apart.has(r) && (male[0].other[s] || female[0].other[s]) && !named.has(r)) : [];
+  if (!X.length && !cut.length) return null;
   const total = male.map((ph) => src.reduce((a, r, s) => a + (mine(ph, s) && ph.masses.sources[s] > 0 ? ph.masses.sources[s] : 0), 0));
   const parts = X.map((s) => ({
     region: src[s],
     mass: male.map((ph, p) => (ph.masses.sources[s] > 0 ? ph.masses.sources[s] : female[p].masses.sources[s] || 0)),
     cols: colsFor(src[s], named),
   }));
-  const rest = new Set([...named, ...X.map((s) => src[s])]);
+  const rest = new Set([...named, ...cut, ...X.map((s) => src[s])]);
   parts.push({ region: 'Other', mass: total.map((M, p) => M - parts.reduce((a, x) => a + x.mass[p], 0)), cols: colsFor('Other', rest) });
   for (const x of parts) x.total = total;
   return parts;
@@ -196,13 +228,14 @@ export function coefficients103(data, spec, ages = AGES_103, opt = {}) {
       // member's model names take their share of it by the reference male's
       // masses, each with its own S; what is left is spread as before.
       const chainNamed = otherShares ? chainRegions(sys) : null;
+      const before = otherShares && (spec.rules?.ancestorTissues ?? OPTIONS103.ancestorTissues) === 'apart' ? namedBefore(sys) : null;
       const split = otherShares ? sys.comps.map((c) => {
         if (c.region !== 'Other') return null;
         const key = keyOf(c);
         if (splitCache.has(key)) return splitCache.get(key);
         const named = new Set(sys.members[c.otherOf ?? c.member].named);
         const parts = otherParts(saf, named, chainNamed, (region, set) => colsFor(sys.members[c.member].name, region, set),
-          sex === 'F' && sexShares === 'own' ? 'F' : 'M');
+          sex === 'F' && sexShares === 'own' ? 'F' : 'M', before ? before[c.otherOf ?? c.member] : null);
         splitCache.set(key, parts);
         return parts;
       }) : undefined;

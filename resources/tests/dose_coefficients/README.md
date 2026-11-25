@@ -832,25 +832,164 @@ and for blood only. Read off the annex, variant by variant
   identifications and adds its own (it replaced them; astatine's polonium,
   the one spec that had both, repeated the lead set's).
 
+Still open: the list at the end of the next section.
+
+## The rest of the open list (2026-11-25)
+
+What the three passes before left open, taken largest first. The annex as a
+whole: organ doses more than 5 % off 336 → 2 (the bone surface of a
+1-year-old after inhaled Nb-91, both sexes), more than 2 % off 1,584 → 113,
+more than 1 % off 5,047 → 2,259 of 561,420. Effective doses more than 1 %
+off: 13 → 14 values, all of them 3-month-olds (Ca-41, Ca-47, Po-206,
+Po-210). The OIR Data Viewer: e within 0.5 % for 566 → 567 of 572 nuclides,
+organ doses outside 2 % 245 → 157 and outside 5 % 91 → 64 of 32,032, of
+which 61 are Sr-80 to Sr-83. Printed values that the page's round to: 97.4 %
+of 4,104 and 97.6 % of 1,146 as before (69 values moved; one more is off,
+Cs-137 ingested in insoluble form at 15 years, 1.451e-9 against a printed
+1.4e-9, where the annex gives 1.448e-9).
+
+| | organ doses more than 5 % off | more than 2 % off | what it was |
+| --- | --- | --- | --- |
+| Te-118 | 138 → 0 | 693 → 0 | antimony formed in tellurium's red cells |
+| Bi-214, Pb-214 | 65 and 35 → 0 | 234 and 86 → 0 | the pools of lead that is itself a progeny; the adult age of bone turnover |
+| Pb-197m, Pb-195m | 35 and 16 → 0 | 100 and 60 → 0 | mercury's model |
+| Se-70, Se-72 | 37 and 8 → 0 | 106 and 104 → 0 | the tissues that only the members before a progeny name |
+| Ni-56 | 0 | 30 → 0 | cobalt formed in nickel's kidneys |
+| Ca-47 | 0 | 20 → 3 | scandium's model by age |
+| Cs-137 | 0 | 8 → 0 (more than 1 %: 144 → 0) | 137mBa's pool in adipose tissue |
+| La-129 and the other eleven lanthanum nuclides (viewer) | 17 → 0 | 50 → 0 | barium and caesium on bone surfaces; the tissues only lanthanum names |
+
+One find is a rule of the engine for every chain; the others are in
+progeny.json.
+
+- **The tissues that only the members before a progeny name are no part of
+  its rest of the body** (`OPTIONS103.ancestorTissues`, dose103.js
+  `namedBefore`). They hold what is formed there; what the progeny's own
+  model spreads from blood does not go there. Publication 151 describes its
+  progeny models so (Annex B: the element's model with compartments added
+  for the tissues of the models it is linked to). Tissues that a later member
+  names still take their share of an earlier member's rest of the body, as
+  before. Two independent cases show it. Arsenic's model has no pancreas,
+  spleen or gonads, selenium's has: Se-70 by injection had pancreas
+  1.04–1.07, spleen 1.04–1.06 and testes up to 1.06 of the annex, Se-72
+  pancreas and spleen 1.03–1.05; with the rule 0.994–0.998, and e 1.000 and
+  0.998–0.999.
+  And La-129 against the viewer, whose Ba-129 and Cs-129 lack lanthanum's
+  liver, kidneys, marrow and gonads: salivary glands 0.84, thymus 0.88,
+  breast 0.89 and testes 1.09 without the rule (the bone surfaces already
+  set right, below), every tissue 1.000–1.005 with it. Nothing else in the
+  annex moves by it but radon (red marrow after ingested Rn-222 1.03 → 1.00
+  at 5 and 10 years; muscle and brain, 0.98–1.02 before, 1.00–1.02 now),
+  I-118 and I-119 (6 and 2 values more than 1 % off → 0) and Cs-137.
+- **137mBa formed from caesium has a pool in adipose tissue.** Publication
+  137 para 317 gives it "a set of compartments representing extracellular
+  fluids of each of the soft tissues addressed in the model for caesium" and
+  then lists 15 of them and other soft tissue; adipose tissue, with 5 % of
+  the cardiac output in its Table 6.4, is not on the list. With the adipose
+  tissue's 5 % in a pool of its own (9.2 d⁻¹; 7 %, 12.88 d⁻¹, to other soft
+  tissue), breast, salivary glands, thymus and gonads after Cs-137 are
+  1.000–1.006 of the annex; counted in the other soft tissue they were
+  0.979–0.994. (Left there under the new rule they come out 1.01–1.03: the
+  rule takes caesium's adipose tissue out of barium's rest of the body.)
+- **Lead's chains: the pools of a member that is itself a progeny**
+  (`sameOther: 'progeny'` for thallium, lead, bismuth and polonium of the
+  lead set, as the radium set has it). After ingested Bi-214 the Pb-210 it
+  leaves gives three quarters of the dose to the gonads, and that lead is a
+  progeny: its Bi-210, formed in lead's ST1 and ST2, was sent to blood as
+  from a place bismuth's model lacks and mostly excreted. Kept in bismuth's
+  own pools, Bi-214 by ingestion goes from 3.1 % rms (24 values more than
+  5 % off) to 0.4 % (0) and Pb-214 from 1.7 % to 0.2 %; testes 0.87–0.94 →
+  0.98–1.00. Where lead is the nuclide taken in (Pb-210) nothing changes,
+  and that agrees as before. The radon set starts from the lead set and has
+  the rule with it: the testes of boys after ingested Rn-222 0.95–0.96 →
+  0.99, skin 0.98–0.99 → 1.00, thoron's kidneys 1.03 → 1.02.
+- **Bone turnover is adult from the adult age of the element taken in**
+  (`OPTIONS103.chainAdult` now sets it with the progeny's own rates). After
+  ingested Bi-214, with bismuth adult from 20 years, the Bi-210 and Po-210
+  formed in lead's bone volume left it at a turnover rate still between the
+  15-year-old's and the adult's until 25: bone surface 0.990 at 15 years and
+  for adults, skin and gonads 1.02–1.03 at 15 years; now 0.999 and 0.99.
+- **Mercury formed after lead follows mercury's own model** (the lead set's
+  Hg: the divalent-mercury model of the Part 3 draft, 24 d⁻¹ out of Plasma
+  1 with 30 % to kidneys and the liver emptied to the small intestine with
+  a half-time of 4 d), without its brain compartments and with red marrow,
+  skin, testes and ovaries taking para 479's shares (3 %, 0.2 %, 0.03 %,
+  0.01 %) from Other 1. Pb-197m and Pb-195m are the annex's only lead
+  chains with mercury. With para 479's model (399 d⁻¹ out of plasma read
+  from its "16.636 h⁻¹", which it calls a half-time of 1 h; 35 % to kidneys;
+  spleen 0.6 %, bone surfaces 1 % each) Pb-197m inhaled as Type F had
+  kidneys 1.07–1.10, liver 1.04–1.07 and spleen 1.04–1.09, Pb-195m kidneys
+  1.10–1.14; now both are within 0.4 % by injection, ingestion and
+  inhalation but Pb-195m's kidneys (1.006–1.009) and the spleen (0.99–1.00).
+  Each part was tried alone: para 479's model at 16.636 d⁻¹ leaves the
+  kidneys at 1.06–1.09; a spleen compartment with 0.6 % puts the spleen
+  4–9 % high; bone surfaces put the bone surface up to 1.7 % and red marrow
+  up to 1 % high; the
+  brain compartments put a girl's brain 3 % off at 5 and 10 years; without
+  red marrow and gonads those are 3–7 % low. Gold formed in mercury's
+  kidneys or liver is in gold's own (paras 477 and 479 identify both with
+  lead's). The viewer has para 479's model: against it the page was within
+  0.2 % before and has liver and spleen 0.98 now. Thallium, mercury and
+  gold after lead are the same kind of case as rubidium after strontium:
+  the calculation for the public has the element's own model where the OIR
+  section gave a model made for the chain.
+- **Scandium formed after calcium follows scandium's own model by age** (the
+  Part 3 draft's Section 10; the model of Publication 134 paras 247–257 is
+  its adult column). A 3-month-old's bone surfaces lose scandium at the bone
+  turnover rate of that age, 0.0082 d⁻¹, and 3.7 % of the Sc-47 formed
+  there leaves before it decays; with the adult's rates none did. Ca-47's
+  liver, kidneys and spleen at 3 months 0.96–0.97 → 1.014–1.016, as its
+  other tissues there (calcium's own 1 % at 3 months, below); at 5 to 15
+  years 1.007–1.010 → 1.000–1.004.
+- **Cobalt formed in nickel's kidneys is in cobalt's kidneys**: nickel's
+  Kidneys 1 and Kidneys 2 are cobalt's urinary path and other kidney tissue.
+  As a place cobalt's model lacks, the Co-56 formed in Kidneys 1 went back
+  to blood at 0.099 d⁻¹: Ni-56's kidneys 1.030–1.038, liver 1.008, e
+  1.005–1.006; now 1.000 throughout.
+- **Antimony formed in tellurium's red cells is in antimony's red cells**
+  (Publication 137 para 177 calls only tellurium's liver and other soft
+  tissue ambiguous), and tellurium formed in antimony's is in tellurium's
+  (para 134). Sent to plasma, Sb-118 (3.6 min) left the blood with the
+  plasma's antimony: Te-118 by injection had the bladder at 1.10–1.19, lungs
+  and spleen 0.94–0.95 and e 0.987 for adults, in the annex and the viewer
+  alike. Te-118 3.98 % rms → 0.07 %, Te-119m 0.60 → 0.06 %, Sb-127 0.72 →
+  0.02 %.
+- **Barium formed on a lanthanide's bone surfaces is on barium's own**, and
+  caesium formed on barium's leaves at caesium's rate, as the barium set has
+  it (Publication 141 para 86 sends both to blood at 1000 d⁻¹). La-129's
+  bone surface 0.81 of the viewer's → 1.00.
+
+Tried and not kept: gallium's own model of the Part 3 draft for gallium
+formed from zinc (Zn-72's red marrow 0.65–1.07); a spleen compartment for
+mercury with 0.05 % of the outflow, which would fit (no source for the
+number); for polonium, reabsorbing what the liver secretes with f_A 0.1 at 3
+months instead of 0.2 (right for Po-206, 4 % low for Po-210); other
+interpolations of the photon SAFs in energy for the bone surface of infants
+(linear, log-log, PCHIP in ln E: none gives the signs below).
+
 Still open:
 
-- **Radon's kidneys.** 0.96–0.97 after the gas at every age, 0.98 by
-  ingestion; 1.01–1.03 after thoron. And the testes of boys after ingested
-  Rn-222, 0.95–0.96.
-- **Bi-214 and Pb-214 by ingestion and inhalation.** Testes 0.87–0.94 and
-  ovaries 0.90–0.94; by injection 0.99–1.00.
+- **Bone surface of 3-month-olds and 1-year-olds** after nuclides that emit
+  X-rays of 6 to 35 keV: Fe-55 and Ni-59 0.98 and 0.97, Ba-133 0.98 and
+  0.95, Nb-91 1.02 and 1.05 (1.06 inhaled as Type M). From 5 years on all
+  are 1.000. It is in the photon SAFs to endosteum of the newborn and the
+  1-year phantom, which are 5 to 10 times the 5-year phantom's at these
+  energies, and not in how they are interpolated.
 - **3-month-olds of calcium, polonium and zinc.** Ca-41, Ca-45 and Ca-47
-  1.010–1.012 (strontium, barium and radium are right); Po-206 and Po-210
-  1.011–1.014; Zn-65 1.007.
-- **Te-118** (Sb-118, 3.6 min): bladder 1.10–1.19, e 0.987 for adults, in
-  the annex and in the viewer alike.
-- **Se-70** (As-70): spleen and pancreas 1.04–1.07; Se-72.
-- **Pb-197m and Pb-195m** (a few tissues; the annex and the viewer differ
-  there by 2 % and 0.6 %), **Nb-91**.
-- Against the viewer only: **129La** (bone surface 0.81; its 129Ba),
-  **240U** (liver 0.93), **235mU** (the female's skin 0.94: its 235U is of
-  the parent's element and has the parent's model here).
-- **Uranium's bone.** 238U, 235U and 233U: bone surface 0.97–0.98 and the
-  female's red marrow 0.98 with everything else at 1.002, where 234U and
-  236U are 1.002–1.003 throughout; every uranium value 0.2 % high.
-- **Iodine and tritium** (0.3 % and 0.15 % high at every age).
+  1.010–1.015 in e, every tissue 1.00–1.02 (strontium, barium and radium,
+  with the same structure, are right); Po-206 to Po-210 1.009–1.014, the
+  heart wall 1.02, skin and testes 1.01; Zn-65 1.007.
+- **Radon's kidneys.** 0.96–0.97 after the gas at every age, 0.98 by
+  ingestion; 1.02 after thoron at 3 months and 15 years. Ra-226's kidneys
+  0.96 for intakes at 15 years, 0.98 at 10 years.
+- **Zn-72 and Ca-47 at 10 and 15 years:** thymus 0.97–0.98, thyroid
+  0.98–0.99; Zn-72's red marrow 0.98 at 10 years and bone surface 1.01–1.02
+  from 5 to 15 years.
+- **Bi-214 and Pb-214 by ingestion:** gonads 0.984–0.997, skin 0.989–0.998.
+  Mercury's spleen after lead 0.4–0.9 % low; Pb-195m's kidneys 1.006–1.009.
+- **Ru-106 inhaled as Type S:** spleen 0.98–1.03 (not looked at).
+- Against the viewer only: **240U** (liver 0.93), **235mU** (the female's
+  skin 0.94: its 235U is of the parent's element and has the parent's model
+  here), **uranium's bone** (238U, 235U and 233U: bone surface 0.97–0.98),
+  every uranium value 0.2 % high; **iodine and tritium** 0.3 % and 0.15 %
+  high at every age.

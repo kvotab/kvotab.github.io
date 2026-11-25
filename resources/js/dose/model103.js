@@ -137,6 +137,12 @@ export const OPTIONS103 = {
                           // member's rest of the body by the reference male's masses, for both sexes
                           // (dose103.js otherParts; needs ageStep); false = all of it spread by the
                           // masses of the sex whose dose it is
+  ancestorTissues: 'apart', // a member's rest of the body leaves out the tissues that only the members it
+                          // descends from name: they hold what is formed there, nothing of what the
+                          // member's own model spreads from blood (dose103.js namedBefore, with what the
+                          // annex of Publication 158 and the OIR Data Viewer show: arsenic after 70Se and
+                          // 72Se, barium and caesium after 129La); 'shared' = they take their share of it
+                          // like any tissue the chain names
   sexShares: 'male',      // where an element has a model for each sex (radon), the female's shares of the
                           // rest of the body: 'male' = by the male's masses, as where one model serves
                           // both (220Rn in the annex of Publication 158); 'own' = by her own, which a
@@ -167,7 +173,11 @@ export const OPTIONS103 = {
                           // Publication 158: niobium formed from 93Mo, molybdenum adult from 20 years and
                           // niobium from 25: with niobium's own age the bone surface was 0.86 and red
                           // marrow 0.94 of the annex's for intakes at 15 years and by adults, 1.00 with
-                          // molybdenum's); 'own' = its own element's
+                          // molybdenum's); 'own' = its own element's. The bone turnover rate at which
+                          // progeny leave bone volume follows the same age (210Bi and 210Po formed from
+                          // the 210Pb of 214Bi, bismuth adult from 20 years: with turnover adult from 25
+                          // the bone surface was 0.990 of the annex's for intakes at 15 years and by
+                          // adults, and skin and gonads 1.02-1.03 at 15 years; 0.999 and 0.99 so)
   ageStep: 365 / 40,      // days: the transfer rates and S are held over steps of this length from the
                           // intake on, each at its start, as in the calculation behind the published
                           // coefficients (solve.js has what was read off them); 0 = both continuous
@@ -266,7 +276,10 @@ export function assemble103(data, spec) {
   const route = spec.route;
   const adultAge = E0.adultAge || 7300;
   const hatmAges = [100, 365, 1825, 3650, 5475, adultAge];
-  const turnoverAges = [100, 365, 1825, 3650, 5475, Math.max(adultAge, 9125)];
+  // Bone turnover, at which progeny formed in bone volume leave it: adult from
+  // the adult age of the element taken in, as the progeny's own rates are
+  // (chainAdult); otherwise from 25 years, the age of the adult skeleton.
+  const turnoverAges = [100, 365, 1825, 3650, 5475, rules.chainAdult === 'parent' ? adultAge : Math.max(adultAge, 9125)];
 
   // The form of the intake.
   let form = null, gas = null, ingest = null;

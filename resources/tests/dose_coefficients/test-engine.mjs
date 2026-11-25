@@ -232,7 +232,7 @@ if (!SYSTEM || SYSTEM === '103') {
 /* ---- pinned results (this page's own) ------------------------------------------------ */
 {
   const pins = [
-    ['103', { nuclide: 'Cs-137', route: 'ingestion', form: 'soluble' }, 7300, 1.3519e-8],
+    ['103', { nuclide: 'Cs-137', route: 'ingestion', form: 'soluble' }, 7300, 1.3554e-8],
     ['103', { nuclide: 'Sr-90', route: 'inhalation', form: 'F' }, 100, 2.3703e-7],
     ['103', { nuclide: 'Pb-212', route: 'ingestion', form: 'all' }, 7300, 5.5951e-9],
     ['103', { nuclide: 'Pb-210', route: 'injection' }, 7300, 1.5749e-6],
@@ -323,25 +323,25 @@ if (!SYSTEM || SYSTEM === '103') {
     ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas' }, 7300, 2.4362e-10, 'Liver'],
     ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas' }, 100, 8.6922e-10, 'Liver'],
     ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas' }, 7300, 7.4573e-10, 'Kidneys'],
-    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas' }, 7300, 5.9194e-10, 'Red marrow'],
+    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas' }, 7300, 5.8741e-10, 'Red marrow'],
     ['103', { nuclide: 'Rn-220', route: 'inhalation', form: 'gas' }, 7300, 1.7681e-10],
     ['103', { nuclide: 'Rn-220', route: 'inhalation', form: 'gas' }, 100, 3.0529e-11, 'Breast'],
     // progeny formed in the stomach move on with its contents, at radon's own rate (OPTIONS103.contentsTransit):
     // 15.2 d-1 in the female from 15 years; at the tract's 20.6 her stomach has 0.87 of this and her small intestine 1.11
-    ['103', { nuclide: 'Rn-222', route: 'ingestion', form: 'gas' }, 5475, 1.8957e-9, 'Stomach', 'F'],
-    ['103', { nuclide: 'Rn-222', route: 'ingestion', form: 'gas', rules: { contentsTransit: 'own' } }, 5475, 1.6535e-9, 'Stomach', 'F'],
-    ['103', { nuclide: 'Rn-222', route: 'ingestion', form: 'gas' }, 5475, 4.0706e-10, 'Small intestine', 'F'],
-    ['103', { nuclide: 'Rn-222', route: 'ingestion', form: 'gas', rules: { contentsTransit: 'own' } }, 5475, 4.5146e-10, 'Small intestine', 'F'],
+    ['103', { nuclide: 'Rn-222', route: 'ingestion', form: 'gas' }, 5475, 1.8995e-9, 'Stomach', 'F'],
+    ['103', { nuclide: 'Rn-222', route: 'ingestion', form: 'gas', rules: { contentsTransit: 'own' } }, 5475, 1.6577e-9, 'Stomach', 'F'],
+    ['103', { nuclide: 'Rn-222', route: 'ingestion', form: 'gas' }, 5475, 4.1076e-10, 'Small intestine', 'F'],
+    ['103', { nuclide: 'Rn-222', route: 'ingestion', form: 'gas', rules: { contentsTransit: 'own' } }, 5475, 4.5561e-10, 'Small intestine', 'F'],
     // the female's shares where she has a model of her own (OPTIONS103.sexShares; "*sexShares" of the radon set):
     // by her own masses after 222Rn, by the male's after 220Rn, as the annex has each
-    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas' }, 7300, 1.3269e-10, 'Gonads', 'F'],
-    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas', rules: { sexShares: 'male' } }, 7300, 1.0500e-10, 'Gonads', 'F'],
+    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas' }, 7300, 1.3406e-10, 'Gonads', 'F'],
+    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas', rules: { sexShares: 'male' } }, 7300, 1.0637e-10, 'Gonads', 'F'],
     ['103', { nuclide: 'Rn-220', route: 'inhalation', form: 'gas' }, 7300, 1.9339e-11, 'Gonads', 'F'],
     ['103', { nuclide: 'Rn-220', route: 'inhalation', form: 'gas', rules: { sexShares: 'own' } }, 7300, 2.3714e-11, 'Gonads', 'F'],
-    // 218At, on a branch of 0.02 %, is no member whose tissues count: with astatine's thyroid counted a 3-month-old's
-    // thyroid has 1.05 of this
-    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas' }, 100, 4.2783e-10, 'Thyroid'],
-    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas', rules: { carried: false } }, 100, 4.4966e-10, 'Thyroid'],
+    // 218At, on a branch of 0.02 %, is no member whose tissues count: with astatine's thyroid counted, the members
+    // after it leave the thyroid out of their rest of the body and a 3-month-old's thyroid has 0.90 of this
+    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas' }, 100, 4.2830e-10, 'Thyroid'],
+    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas', rules: { carried: false } }, 100, 3.8420e-10, 'Thyroid'],
     // antimony formed in the gut takes the fA of its forms other than in food (OPTIONS103.giProgenyFA); with the
     // highest, the brain has 1.5 times this
     ['103', { nuclide: 'Sb-124n', route: 'ingestion', form: 'food' }, 7300, 5.3939e-14, 'Brain'],
@@ -349,6 +349,49 @@ if (!SYSTEM || SYSTEM === '103') {
     // radium's chains: thorium's spleen follows ST1 by age; lead-chain members formed in another progeny's soft tissue take their own pools
     ['103', { nuclide: 'Ra-228', route: 'injection' }, 365, 1.5242e-5, 'Spleen'],
     ['103', { nuclide: 'Ra-225', route: 'injection' }, 7300, 3.5647e-7, 'Kidneys'],
+    // antimony formed in tellurium's red cells is in antimony's red cells (Publication 137 para 177 calls only the
+    // liver and the other soft tissue ambiguous): sent to plasma, 118Sb (3.6 min) left the blood with the plasma's,
+    // and the bladder had 1.10 to 1.19 times the annex's
+    ['103', { nuclide: 'Te-118', route: 'injection' }, 7300, 1.3003e-9, 'Bladder'],
+    ['103', { nuclide: 'Te-118', route: 'injection' }, 7300, 1.5494e-9],
+    // lead's chains (progeny.json, the lead set): bismuth formed in the soft-tissue pools of lead that is itself a
+    // progeny keeps bismuth's own pools (214Bi and 214Pb by ingestion: the testes had 0.89 and 0.93 of these with
+    // the 210Bi sent to blood); and bone turnover is adult from the adult age of the element taken in
+    // (OPTIONS103.chainAdult), bismuth's 20 years
+    ['103', { nuclide: 'Bi-214', route: 'ingestion', form: 'all' }, 7300, 2.9287e-12, 'Gonads'],
+    ['103', { nuclide: 'Pb-214', route: 'ingestion', form: 'all' }, 3650, 6.6441e-11, 'Gonads'],
+    ['103', { nuclide: 'Bi-214', route: 'ingestion', form: 'all' }, 5475, 1.9256e-11, 'Bone surface'],
+    ['103', { nuclide: 'Bi-214', route: 'ingestion', form: 'all', rules: { chainAdult: 'own' } }, 5475, 1.7948e-11, 'Bone surface'],
+    // mercury formed after lead follows mercury's own model, with red marrow, skin and gonads added (197mPb inhaled
+    // as Type F: the kidneys had 1.07 of this and the spleen 1.05 with the model of Publication 137 para 479); gold
+    // formed in mercury's kidneys is in its own
+    ['103', { nuclide: 'Pb-197m', route: 'inhalation', form: 'F' }, 7300, 1.4204e-11, 'Kidneys'],
+    ['103', { nuclide: 'Pb-197m', route: 'inhalation', form: 'F' }, 7300, 5.2299e-12, 'Spleen'],
+    ['103', { nuclide: 'Pb-195m', route: 'injection' }, 7300, 1.7699e-11, 'Kidneys'],
+    // a member's rest of the body leaves out the tissues that only the members before it name
+    // (OPTIONS103.ancestorTissues): arsenic formed after selenium has no pancreas, spleen or gonads in its model, and
+    // what it spreads from plasma does not go there (the annex of Publication 158); nor does what barium and
+    // caesium spread after 129La go to lanthanum's liver, kidneys, marrow and gonads (the OIR Data Viewer: salivary
+    // glands 0.84 and testes 1.09 of these with them shared)
+    ['103', { nuclide: 'Se-70', route: 'injection' }, 7300, 4.4283e-11, 'Pancreas'],
+    ['103', { nuclide: 'Se-70', route: 'injection', rules: { ancestorTissues: 'shared' } }, 7300, 4.6425e-11, 'Pancreas'],
+    ['103', { nuclide: 'Se-72', route: 'injection' }, 7300, 8.1717e-9, 'Spleen'],
+    ['103', { nuclide: 'Se-72', route: 'injection', rules: { ancestorTissues: 'shared' } }, 7300, 8.4821e-9, 'Spleen'],
+    ['103', { nuclide: 'La-129', route: 'injection' }, 7300, 1.5539e-12, 'Salivary glands'],
+    ['103', { nuclide: 'La-129', route: 'injection', rules: { ancestorTissues: 'shared' } }, 7300, 1.3096e-12, 'Salivary glands'],
+    ['103', { nuclide: 'La-129', route: 'injection' }, 7300, 1.4803e-12, 'Gonads'],
+    ['103', { nuclide: 'La-129', route: 'injection', rules: { ancestorTissues: 'shared' } }, 7300, 1.6081e-12, 'Gonads'],
+    // barium formed on lanthanum's bone surfaces is on barium's, and caesium formed there leaves as caesium does
+    // (the bone surface after 129La had 0.81 of this with both sent to blood at once)
+    ['103', { nuclide: 'La-129', route: 'injection' }, 7300, 7.4995e-12, 'Bone surface'],
+    // 137mBa has a pool in adipose tissue with its 5 % of the blood flow (the adult female's breast after 137Cs had
+    // 0.98 of this with adipose tissue left in barium's other soft tissue)
+    ['103', { nuclide: 'Cs-137', route: 'injection' }, 7300, 5.8080e-9, 'Breast', 'F'],
+    // nickel's two kidney compartments are cobalt's (56Ni: the kidneys had 1.03 of this with the 56Co sent to blood)
+    ['103', { nuclide: 'Ni-56', route: 'injection' }, 7300, 1.0040e-9, 'Kidneys'],
+    // scandium formed after calcium follows scandium's own model by age (47Ca at 3 months: the liver had 0.96 of
+    // this with the adult's model at every age)
+    ['103', { nuclide: 'Ca-47', route: 'injection' }, 100, 4.2852e-9, 'Liver'],
     ['60', { nuclide: 'Po-210', route: 'ingestion' }, 7300, 1.206e-6],
   ];
   for (const [sys, spec, age, want, tissue, sex = 'M'] of pins) {
@@ -431,6 +474,47 @@ if (!SYSTEM || SYSTEM === '103') {
   const nbAges = mo.transfers.filter((t) => mo.comps[t.from].member === 1 && mo.comps[t.from].kind === 'sys' && t.ages.length === 6).map((t) => t.ages.at(-1));
   check('niobium formed from 93Mo: its rates by age end at 20 years, molybdenum\'s adult age (its own is 25)',
     nbAges.length > 0 && nbAges.every((a) => a === 7300) && d103.elements.Nb.adultAge === 9125, [...new Set(nbAges)].join(' '));
+  // Lead's chains. The soft-tissue pools of a member that is itself a progeny are the next member's own pools; those
+  // of the nuclide taken in are not. Bone turnover is adult from the adult age of the element taken in.
+  const asm = async (n, rules) => { await d103.prepare(n); return assemble103(d103, { nuclide: n, route: 'injection', cutoff: 1e-4, intakeAge: d103.elements[n.split('-')[0]].adultAge || 7300, rules }); };
+  const places = (sys, member) => sys.comps.filter((x) => sys.members[x.member].name === member && x.kind === 'shadow').map((x) => x.name);
+  const bi214 = await asm('Bi-214'), pb210 = await asm('Pb-210');
+  check('210Bi formed in the ST pools of 210Pb: a place of its own there where the lead was taken in, bismuth\'s own pools where the lead is a progeny (214Bi)',
+    ['ST0', 'ST1', 'ST2'].every((q) => places(pb210, 'Bi-210').includes(`${q} (Pb-210)`)) && !places(bi214, 'Bi-210').some((x) => /^ST\d \(Pb-210\)/.test(x))
+    && ['Tl', 'Pb', 'Bi', 'Po'].every((el) => d103.progeny.sets.lead[el].sameOther === 'progeny'),
+    `${places(pb210, 'Bi-210').join(', ')} | ${places(bi214, 'Bi-210').join(', ')}`);
+  const turnAges = (sys) => [...new Set(sys.transfers.filter((t) => /bone turnover/.test(t.origin || '')).map((t) => t.ages.at(-1)))];
+  check('bone turnover for the progeny of 214Bi: adult from 20 years, bismuth\'s adult age; from 25 with chainAdult own',
+    turnAges(bi214).join() === '7300' && turnAges(await asm('Bi-214', { chainAdult: 'own' })).join() === '9125', `${turnAges(bi214).join(' ')}`);
+  const hg = await modelOf('Pb-197m', 'Hg-197');
+  check('mercury formed after lead: mercury\'s own model (24 d-1 out of Plasma 1, 30 % of it to kidneys) without its brain, with red marrow, skin, testes and ovaries; no spleen, no bone',
+    near(hg.transfers.filter(([x]) => x === 'Plasma 1').reduce((q, t) => q + t[2].at(-1), 0), 24.004, 1e-6) && near(rate(hg, 'Plasma 1', 'Kidneys').at(-1), 7.2, 1e-9)
+    && near(rate(hg, 'Plasma 1', 'Red marrow').at(-1), 0.72, 1e-9) && near(rate(hg, 'Red marrow', 'Plasma 1').at(-1), 0.03466, 1e-9)
+    && ['Red marrow', 'Skin', 'Testes', 'Ovaries'].every((c) => c in hg.compartments) && !Object.values(hg.compartments).some((r) => r === 'Brain' || r === 'Spleen' || /bone/.test(r)),
+    Object.keys(hg.compartments).join(' '));
+  const as = await modelOf('Se-70', 'As-70');
+  check('arsenic formed after selenium: its own model, without compartments for selenium\'s pancreas, spleen or gonads; formed there it leaves at 0.08 d-1',
+    !['Pancreas', 'Spleen', 'Testes', 'Ovaries'].some((c) => c in as.compartments) && ['Pancreas', 'Spleen', 'Testes', 'Ovaries'].every((c) => d103.progeny.sets.selenium.As.unid.byRegion[c] === 0.08),
+    Object.keys(as.compartments).join(' '));
+  const ba137 = await modelOf('Cs-137', 'Ba-137m');
+  check('137mBa formed from caesium: a pool in adipose tissue with 5 % of the flow to soft tissue (9.2 d-1) and 7 % to other soft tissue, 184 d-1 in all',
+    ba137.compartments['Adipose ECF'] === 'Adipose' && near(rate(ba137, 'Blood', 'Adipose ECF').at(-1), 9.2, 1e-9) && near(rate(ba137, 'Blood', 'Other ECF').at(-1), 12.88, 1e-9)
+    && near(ba137.transfers.filter(([x, y]) => x === 'Blood' && / ECF$/.test(y)).reduce((q, t) => q + t[2].at(-1), 0), 184, 1e-6),
+    `${rate(ba137, 'Blood', 'Adipose ECF')} ${rate(ba137, 'Blood', 'Other ECF')}`);
+  const la129 = await asm('La-129');
+  check('barium formed on lanthanum\'s bone surfaces is on barium\'s own; caesium formed on barium\'s has a place of its own there',
+    !places(la129, 'Ba-129').some((x) => /bone surf/.test(x)) && places(la129, 'Cs-129').some((x) => /^Trab bone surf \(Ba-129\)/.test(x)),
+    `${places(la129, 'Ba-129').join(', ')} | ${places(la129, 'Cs-129').join(', ')}`);
+  const ni56 = await asm('Ni-56');
+  check('cobalt formed in nickel\'s kidneys is in cobalt\'s own kidneys: its places of its own are nickel\'s blood and soft tissue',
+    !places(ni56, 'Co-56').some((x) => x.startsWith('Kidneys')) && places(ni56, 'Co-56').includes('ST1 (Ni-56)'), places(ni56, 'Co-56').join(', '));
+  const sc = await modelOf('Ca-47', 'Sc-47');
+  check('scandium formed after calcium: scandium\'s own model by age, 15 % of the outflow to each bone surface at 3 months and 10 % for adults, lost again at the bone turnover rate of the age',
+    sc.ages.length === 6 && near(rate(sc, 'Blood 1', 'Trab surface')[0], 0.225, 1e-9) && near(rate(sc, 'Blood 1', 'Trab surface')[5], 0.15, 1e-9) && near(rate(sc, 'Trab surface', 'Blood 1')[0], 0.00822, 1e-9),
+    JSON.stringify(rate(sc, 'Blood 1', 'Trab surface')));
+  const te118 = await asm('Te-118');
+  check('antimony formed in tellurium\'s red cells is in antimony\'s: its only places of its own are tellurium\'s liver and other tissue',
+    places(te118, 'Sb-118').join() === 'Liver (Te-118),Other (Te-118)', places(te118, 'Sb-118').join(', '));
 }
 
 /* ---- Other in chains with independent kinetics (ICRP 60; ORNL/TM-2001/190, 9.3.1) ---------- */
