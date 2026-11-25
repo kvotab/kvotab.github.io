@@ -29,11 +29,12 @@ const MODEL_LOOKS = new Set(['name', 'description', 'author', 'app']);
 
 /**
  * Fields of the model that are the diagram: where the blocks are drawn, what
- * it shows, the shapes on it. Not listed at all -- moving a block is not an
- * edit that leaves results behind, and renaming one moves its place on the
- * diagram to the new name, which is the rename said a second time.
+ * it shows, the shapes on it, the groups its blocks are sorted into. Not
+ * listed at all -- moving a block is not an edit that leaves results behind,
+ * and renaming one moves its place on the diagram to the new name, which is
+ * the rename said a second time.
  */
-const DIAGRAM = new Set(['layout', 'view', 'shapes']);
+const DIAGRAM = new Set(['layout', 'view', 'shapes', 'groups']);
 
 /**
  * Simulation settings that change no number in a deterministic run: the ones a
@@ -77,7 +78,9 @@ const sameSwitch = (a, b) => (a !== false) === (b !== false);
 function fieldChanges(a, b) {
 	const out = [];
 	for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {
-		if (key === 'name' || key === 'system') continue;
+		// Which group a block is filed under is the diagram's business, as its
+		// place on it is: see `DIAGRAM`.
+		if (key === 'name' || key === 'system' || key === 'group') continue;
 		const from = a[key];
 		const to = b[key];
 		if (key === 'enabled' ? sameSwitch(from, to) : text(from) === text(to)) continue;

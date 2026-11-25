@@ -23,7 +23,7 @@
  */
 
 import * as ed from '../domain/edit.js';
-import { parentOf, scopeChain, isWithin } from '../domain/systems.js';
+import { parentOf, scopeChain, isWithin, systemOf } from '../domain/systems.js';
 import { blockIcon, sampleMark } from './icons.js';
 import { symbolNodes, symbolText } from './symbol.js';
 import { hasSymbol } from '../domain/symbol.js';
@@ -135,7 +135,27 @@ export function renderBlockTree(host, project, selection, hooks = {}, filter = n
 	// primary would drag the panel away from what is being done to the group.
 	const chasing = !!selection?.name && selection.name !== lastRevealed
 		&& pickedNames.length <= 1;
-	if (chasing) for (const s of scopeChain(parentOf(selection.name))) state.open.add(s);
+	if (chasing) {
+		for (const s of scopeChain(parentOf(selection.name))) state.open.add(s);
+		// ...and the groups it is filed under, at every level on the way.
+		const index = ed.groupIndex(project);
+		if (index.size) {
+			const found = ed.findBlock(project, selection.name);
+			const name = ed.isGroupId(selection.name) ? null : selection.name;
+			if (name) {
+				for (const c of ed.containersOf(project, name, index, { block: found?.block ?? null })) {
+					if (ed.isGroupId(c)) state.open.add(c);
+				}
+			} else {
+				for (const g of ed.groupChain(index, index.get(selection.name)?.parent ?? null)) state.open.add(g);
+				const system = ed.groupSystem(selection.name);
+				for (const s of scopeChain(system)) state.open.add(s);
+				for (const c of system ? ed.containersOf(project, system, index) : []) {
+					if (ed.isGroupId(c)) state.open.add(c);
+				}
+			}
+		}
+	}
 
 	const draw = () => {
 		// Expanding a node redraws the tree under the keyboard, so the row
@@ -154,7 +174,7 @@ export function renderBlockTree(host, project, selection, hooks = {}, filter = n
 		// leaves, and pruning the sub-systems that hold none of it.
 		const root = ed.blockTree(project, narrowed
 			? { ...filter, only: (filter?.only ?? [...narrowed]).filter((n) => narrowed.has(n)) }
-			: filter ?? {}, { group: state.group });
+			: filter ?? {}, { group: state.group, groups: true });
 		// Expand all and Collapse are not drawn here: they sit in the row of
 		// Add tabs above the tree (`treeTools`), because anything put between
 		// that row and this box parts the tabs from the edge they stand on.
@@ -501,20 +521,25 @@ export function renderBlockTree(host, project, selection, hooks = {}, filter = n
 		};
 
 		const addChildren = (node, depth) => {
-			// Sub-systems first, then blocks: the containers are the map, and
-			// the blocks are what is on it.
+			// Sub-systems first, then the model's groups, then blocks: the
+			// containers are the map, and the blocks are what is on it.
 			for (const s of node.systems) addSystem(s, depth);
+			for (const g of node.groups ?? []) addGroup(g, depth);
+			addBlocks(node.blocks, node.path, depth);
+		};
+
+		const addBlocks = (blocks, path, depth) => {
 			if (!state.group) {
-				for (const b of node.blocks) addBlock(b, depth);
+				for (const b of blocks) addBlock(b, depth);
 				return;
 			}
 			// Grouped: the blocks arrive sorted by kind, so one run of a kind
 			// is one heading.
-			for (let i = 0; i < node.blocks.length;) {
-				const { collection, kind } = node.blocks[i];
+			for (let i = 0; i < blocks.length;) {
+				const { collection, kind } = blocks[i];
 				let j = i;
-				while (j < node.blocks.length && node.blocks[j].collection === collection) j++;
-				const key = groupKey(node.path, collection);
+				while (j < blocks.length && blocks[j].collection === collection) j++;
+				const key = groupKey(path, collection);
 				const open = expanded(key);
 				row(depth, {
 					key,
@@ -527,10 +552,63 @@ export function renderBlockTree(host, project, selection, hooks = {}, filter = n
 					onOpen: (want) => { toggle(state, key, want); draw(); },
 					onPick: () => { toggle(state, key, !open); draw(); },
 				});
-				if (open) for (let k = i; k < j; k++) addBlock(node.blocks[k], depth + 1);
+				if (open) for (let k = i; k < j; k++) addBlock(blocks[k], depth + 1);
 				i = j;
 			}
 		};
+
+		/**
+		 * One of the model's groups: a folder of the blocks of a sub-system,
+		 * which keep their names. Selected, dragged and dropped on as a
+		 * sub-system's row is; a drop on it files what was dropped under it.
+		 */
+		function addGroup(g, depth) {
+			if (!room()) { hidden += g.deep; return; }
+			const open = expanded(g.id);
+			const selected = picked.has(g.id);
+			order.push({ name: g.id, kind: 'group' });
+			const r = row(depth, {
+				key: g.id,
+				kind: 'group',
+				name: g.name,
+				count: g.deep,
+				expandable: g.deep > 0 || g.groups.length > 0 || g.systems.length > 0,
+				open,
+				selectable: true,
+				cls: `trow-mgroup${selected ? ' is-selected' : ''}`,
+				onOpen: (want) => { toggle(state, g.id, want); draw(); },
+				onPick: (ev) => choose({ name: g.id, kind: 'group' }, ev, order, pickedNames, hooks),
+				// Shown on the diagram, as a sub-system's row opens it there.
+				onOpen2: () => hooks.onShowGroup?.(g.id),
+				onMenu: (ev) => {
+					if (!picked.has(g.id)) hooks.onSelect?.({ kind: 'group', name: g.id }, [g.id]);
+					hooks.onContextMenu?.(g.id, ev);
+				},
+				onDragStart: () => (picked.has(g.id) && pickedNames.length > 1
+					? [...pickedNames]
+					: [g.id]),
+				onDrop: (names) => hooks.onGroupTo?.(names, g.id),
+				// What is on the group's own canvas and not already in it; a
+				// group not into itself.
+				canDrop: (names) => names.every((n) => n !== g.id && canvasOf(n) === g.system)
+					&& names.some((n) => ed.groupOf(project, n) !== g.id),
+			});
+			if (selected) r.setAttribute('aria-selected', 'true');
+			if (g.id === selection?.name) r.classList.add('is-primary');
+			r.title = `Group ${g.name}${g.system ? ` in ${g.system}` : ''} — ${g.deep} block`
+				+ `${g.deep === 1 ? '' : 's'}, which keep their names. Double-click to show it on the diagram.`;
+			if (!open) return;
+			for (const s of g.systems) addSystem(s, depth + 1);
+			for (const inner of g.groups) addGroup(inner, depth + 1);
+			addBlocks(g.blocks, g.id, depth + 1);
+		}
+
+		/** The canvas a block, a sub-system or a group is drawn on. */
+		function canvasOf(name) {
+			if (ed.isGroupId(name)) return ed.groupSystem(name);
+			const found = ed.findBlock(project, name);
+			return found ? systemOf(found.block) : parentOf(name);
+		}
 
 		function addSystem(node, depth) {
 			if (!room()) { hidden += node.deep; return; }
@@ -605,11 +683,24 @@ export function renderBlockTree(host, project, selection, hooks = {}, filter = n
 				// sub-system, which is the half a diagram cannot offer: on the
 				// canvas you can drop a block onto a container, but there is
 				// nothing to drop it on to take it back out.
-				onDrop: (names) => hooks.onMoveTo?.(names, node.path),
-				// Something already here has nowhere to go, and a sub-system
-				// cannot be dropped into itself or into anything inside it.
-				canDrop: (names) => names.some((n) => parentOf(n) !== node.path)
-					&& !names.some((n) => isWithin(node.path, n)),
+				//
+				// Something already here that is in a group comes out of it: the
+				// row of its own sub-system is the way out of a group, as the
+				// root row is the way out of a sub-system. A group goes nowhere
+				// else -- moving one would rename everything in it.
+				onDrop: (names) => {
+					const here = names.filter((n) => canvasOf(n) === node.path);
+					const away = names.filter((n) => canvasOf(n) !== node.path && !ed.isGroupId(n));
+					if (here.length) hooks.onGroupTo?.(here, null);
+					if (away.length) hooks.onMoveTo?.(away, node.path);
+				},
+				// Something already here has nowhere to go, unless it is in a
+				// group; and a sub-system cannot be dropped into itself or into
+				// anything inside it.
+				canDrop: (names) => !names.some((n) => isWithin(node.path, n))
+					&& names.some((n) => (canvasOf(n) === node.path
+						? !!ed.groupOf(project, n)
+						: !ed.isGroupId(n))),
 			});
 			if (selected) r.setAttribute('aria-selected', 'true');
 			r.title = node.path

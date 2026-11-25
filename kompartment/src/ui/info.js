@@ -220,6 +220,9 @@ export function renderInfo(host, project, selection, hooks = {}) {
 	} else if (selection?.kind === 'system' && selection.name) {
 		nav.append(action('Open', `Show ${selection.name} on the diagram`,
 			() => hooks.onOpenSystem?.(selection.name)));
+	} else if (selection?.kind === 'group' && ed.groupIndex(project).has(selection.name)) {
+		nav.append(action('Show', 'Show the group on the diagram',
+			() => hooks.onShowGroup?.(selection.name)));
 	} else if (selection?.kind === 'system') {
 		// The top level, which is not somewhere to be taken: the same rule the
 		// bar follows with nothing selected. A door to a room you are already
@@ -296,6 +299,11 @@ export function renderInfo(host, project, selection, hooks = {}) {
 				'The sub-system the diagram is showing. Click a block for its own page, '
 				+ 'or Up for the model around it.'));
 		}
+		return;
+	}
+
+	if (selection?.kind === 'group' && ed.groupIndex(project).has(selection.name)) {
+		renderGroupInfo(host, project, selection.name, hooks, { owner: `group:${selection.name}`, again });
 		return;
 	}
 
@@ -421,6 +429,8 @@ export function renderInfo(host, project, selection, hooks = {}) {
 			el('span', { className: 'info-label' }, 'In'),
 			el('span', { className: 'info-value' }, path)));
 	}
+	const filed = groupLine(project, ed.groupOf(project, qname), hooks);
+	if (filed) host.append(filed);
 
 	// The name is already in the title, before the symbol; what this row adds
 	// is the qualified spelling, which is what an equation outside the block's
@@ -1105,6 +1115,8 @@ function renderSystemInfo(host, project, path, hooks, more) {
 		up.addEventListener('click', () => hooks.onOpenSystem?.(parent));
 		host.append(line('In', up));
 	}
+	const filed = path ? groupLine(project, ed.groupOf(project, path), hooks) : null;
+	if (filed) host.append(filed);
 	// Off, and said first, as it is for a block: it changes how everything
 	// below reads. A sub-system is a block too and has a block's switch;
 	// one switched off by a sub-system further out names that one.
@@ -1215,6 +1227,155 @@ function renderSystemInfo(host, project, path, hooks, more) {
 	if (!deep.length) {
 		host.append(el('p', { className: 'info-none' },
 			'Empty. Drop a block on it, or add one inside.'));
+	}
+}
+
+/** A group, as something to click to go there. */
+function groupLink(project, id, hooks) {
+	const b = el('button', {
+		className: 'info-link', type: 'button', title: `Group ${ed.groupName(id)}`,
+	}, blockIcon('group'), el('span', {}, ed.groupName(id)));
+	b.addEventListener('click', () => hooks.onSelect?.({ kind: 'group', name: id }));
+	menuOn(b, id, 'group', hooks);
+	return b;
+}
+
+/**
+ * The `Group` line of a block's or a sub-system's page: the group it is filed
+ * under, and the groups that one is in, outermost first.
+ */
+function groupLine(project, id, hooks) {
+	if (!id) return null;
+	const chain = ed.groupChain(ed.groupIndex(project), id);
+	const out = [];
+	chain.forEach((g, i) => {
+		if (i) out.push(el('span', { className: 'info-dim' }, ' › '));
+		out.push(groupLink(project, g, hooks));
+	});
+	return line('Group', ...out);
+}
+
+/**
+ * A group: where it is, what it holds, and what crosses its edge -- the
+ * sub-system's page, for the set of blocks a group is. Its blocks are listed
+ * by name, since a group is a way of finding them; and a group changes no
+ * name, so there is no `Named` to say.
+ */
+function renderGroupInfo(host, project, id, hooks, more) {
+	const index = ed.groupIndex(project);
+	const info = index.get(id);
+	const link = (name) => {
+		const target = ed.findBlock(project, name);
+		if (!target) return el('span', { className: 'info-gone' }, name);
+		const b = el('button', { className: 'info-link', type: 'button', title: name });
+		b.append(blockIcon(target.kind));
+		b.append(el('span', {}, hasSymbol(target.block)
+			? symbolNodes(target.block.symbol)
+			: [document.createTextNode(target.block.name)]));
+		b.addEventListener('click', () => hooks.onSelect?.({ kind: target.kind, name }));
+		menuOn(b, name, target.kind, hooks);
+		return b;
+	};
+	const head = el('div', { className: 'info-head is-openable' },
+		blockIcon('group'),
+		el('b', { className: 'info-name' }, info.name),
+		el('span', { className: 'info-kind' }, 'group'));
+	head.title = 'Double-click to show it on the diagram';
+	head.addEventListener('dblclick', (ev) => {
+		ev.preventDefault();
+		hooks.onShowGroup?.(id);
+	});
+	host.append(head);
+
+	const where = el('button', {
+		className: 'info-link info-system', type: 'button',
+		title: `Show ${info.system || 'the top level'} on the diagram`,
+	}, blockIcon('system'), el('span', {}, info.system || 'the top level'));
+	where.addEventListener('click', () => hooks.onOpenSystem?.(info.system));
+	host.append(line('In', where));
+	const outer = groupLine(project, info.parent, hooks);
+	if (outer) host.append(outer);
+	if (info.decl.collapsed === true) {
+		host.append(el('p', { className: 'info-note' },
+			'Folded up on the diagram: what it holds is drawn as one node.'));
+	}
+
+	const direct = ed.groupMembers(project, id, index);
+	const deep = ed.groupMembers(project, id, index, { deep: true });
+	const inSystems = deep.systems.flatMap((p) => ed.blocksIn(project, p, { deep: true })
+		.map((b) => ed.qualifiedName(b)));
+	const all = [...deep.blocks, ...inSystems];
+	host.append(line('Holds', el('span', {},
+		`${direct.blocks.length} here, ${all.length} in all`)));
+	const blocks = ed.allBlocks(project);
+	const wanted = new Set(all);
+	const kinds = kindBreakdown('By kind', blocks.filter((b) => wanted.has(ed.qualifiedName(b))));
+	if (kinds) host.append(kinds);
+	if (direct.groups.length) {
+		const box = el('div', { className: 'info-refs' },
+			el('div', { className: 'info-label' }, `Groups in it (${direct.groups.length})`));
+		for (const g of direct.groups) {
+			const n = ed.groupMembers(project, g, index, { deep: true }).blocks.length;
+			box.append(el('div', { className: 'info-ref' }, groupLink(project, g, hooks),
+				el('span', { className: 'info-ref-what' }, String(n))));
+		}
+		host.append(box);
+	}
+	if (direct.systems.length) {
+		const box = el('div', { className: 'info-refs' },
+			el('div', { className: 'info-label' }, `Sub-systems in it (${direct.systems.length})`));
+		for (const child of direct.systems) {
+			const b = el('button', {
+				className: 'info-link', type: 'button', title: `Show ${child} on the diagram`,
+			}, blockIcon(ed.isTransport(project, child) ? 'transport' : 'system'),
+			el('span', {}, ed.baseName(child)));
+			b.addEventListener('click', () => hooks.onOpenSystem?.(child));
+			box.append(el('div', { className: 'info-ref' }, b,
+				el('span', { className: 'info-ref-what' },
+					String(ed.blocksIn(project, child, { deep: true }).length))));
+		}
+		host.append(box);
+	}
+	if (direct.blocks.length) {
+		const box = el('div', { className: 'info-refs' },
+			el('div', { className: 'info-label' }, `Blocks (${direct.blocks.length})`));
+		longRows(box, direct.blocks, (name) => {
+			const found = ed.findBlock(project, name);
+			return el('div', { className: 'info-ref' }, link(name),
+				el('span', { className: 'info-ref-what' },
+					found ? summarise(found.collection, found.block) : ''));
+		}, more, 'blocks');
+		host.append(box);
+	}
+
+	// What crosses its edge, as for a sub-system: a transfer from a block in
+	// it to one that is not, or the other way.
+	const within = (name) => name != null && wanted.has(name);
+	const out = [];
+	const into = [];
+	for (const conn of [...(project.transfers ?? []), ...(project.inflows ?? [])]) {
+		const name = ed.qualifiedName(conn);
+		const from = conn.from ?? null;
+		const to = conn.to ?? null;
+		if (within(from) && !within(to)) out.push(name);
+		else if (!within(from) && within(to)) into.push(name);
+	}
+	for (const [title, names] of [['Flows out', out], ['Flows in', into]]) {
+		if (!names.length) continue;
+		const box = el('div', { className: 'info-refs' },
+			el('div', { className: 'info-label' }, `${title} (${names.length})`));
+		longRows(box, names, (name) => {
+			const found = ed.findBlock(project, name);
+			return el('div', { className: 'info-ref' }, link(name),
+				el('span', { className: 'info-ref-what' },
+					found ? summarise(found.collection, found.block) : ''));
+		}, more, title);
+		host.append(box);
+	}
+	if (!all.length && !deep.groups.length) {
+		host.append(el('p', { className: 'info-none' },
+			'Empty. Drag a block into its area on the diagram, or right-click a block '
+			+ 'for Put in group.'));
 	}
 }
 

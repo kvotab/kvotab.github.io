@@ -311,6 +311,31 @@ class Building(unittest.TestCase):
         self.assertFalse(m['Nearfield.Soil'].effectively_enabled)
         self.assertEqual(m.check(), [])
 
+    def test_groups(self):
+        # Edits that match the application's are compared with it in test_app_parity.py; here
+        # is what only the package says.
+        m = two_boxes()
+        m.add_system('Near')
+        m.move_blocks(['Soil', 'Well'], 'Near')
+        wells = m.add_group('Wells', 'Near', members='Near.Soil')  # one name will do for a list
+        self.assertEqual(wells, kp.group_id('Near', 'Wells'))
+        self.assertEqual(kp.split_group_id(wells), ('Near', 'Wells'))
+        self.assertTrue(kp.is_group_id(wells) and not kp.is_group_id('Near.Wells'))
+        self.assertEqual(m.groups, [wells])
+        self.assertEqual(m.group_of('Near.Soil_Well'), wells)  # filed with its donor, it came along
+        self.assertEqual(m.group_box(wells), {'x': None, 'y': None, 'w': None, 'h': None})
+        for bad in [lambda: m.set_group_box(wells, x='left'), lambda: m.set_group_box(wells, x=math.nan),
+                    lambda: m.set_group_box(wells, depth=3), lambda: m.shift_group(wells, math.inf, 0),
+                    lambda: m.shift_group(wells, True, 0)]:
+            with self.assertRaises(kp.EditError):
+                bad()
+        self.assertEqual(m.group_box(wells), {'x': None, 'y': None, 'w': None, 'h': None})
+        with self.assertRaisesRegex(kp.EditError, "as in 'group:Near.Wells'"):
+            m.rename_group('Near.Wells', 'Bores')  # a group is named by its id
+        # Ids stay as they were: a group is no namespace.
+        self.assertEqual(sorted(m.names()), ['Near.Soil', 'Near.Soil_Well', 'Near.Well', 'k'])
+        self.assertEqual(m.check(), [])
+
     def test_a_refusal_over_several_transport_parts_names_the_first_given(self):
         # In the order given, as the application names it. A set's order follows the string
         # hashes, which change from one process to the next, so the part named changed too.

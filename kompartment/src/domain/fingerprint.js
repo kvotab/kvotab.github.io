@@ -50,6 +50,9 @@ import * as tr from './transport.js';
 export const NOT_NUMERIC = new Set([
 	'comment', 'pdf', 'x', 'y', 'w', 'h', 'shape', 'colour', 'color', 'label',
 	'collapsed', 'note', 'notes',
+	// The group a block is filed under, which no equation can name: see
+	// ./groups.js.
+	'group',
 ]);
 
 /** A replacer that sorts every object's keys, so key order never changes a fingerprint. */

@@ -4571,7 +4571,11 @@ table.matrix th.matrix-self { padding: 0; position: relative; }
 /* Each fold level a shade stronger, so a group inside a group is legible as
    one. Two levels is as far as it needs to go: deeper than that the frames
    are nested enough that position says it. */
-.matrix { --matrix-frame: color-mix(in oklab, var(--accent) 52%, var(--border-strong)); }
+.matrix {
+	--matrix-frame: color-mix(in oklab, var(--accent) 52%, var(--border-strong));
+	/* A group's frame: the same ink, dashed (see `edgesAt` in matrix.js). */
+	--matrix-group-frame: color-mix(in oklab, var(--accent) 60%, var(--text-muted));
+}
 
 /* A folded sub-system: its name, then what it is holding. Reads as a
    container rather than as a block -- squarer corners and a heavier edge,
@@ -4639,6 +4643,19 @@ table.matrix th.matrix-self { padding: 0; position: relative; }
 
 .matrix-system.is-open {
 	background: color-mix(in oklab, var(--accent) 10%, transparent);
+}
+
+/* A group of the model's: the container tile again, dashed as its frame is --
+   the lighter container, which changes no name. */
+.matrix-system.matrix-group {
+	border-style: dashed;
+	border-color: var(--matrix-group-frame);
+}
+
+.matrix-group .matrix-fold { color: var(--matrix-group-frame); }
+
+.matrix-system.matrix-group.is-open {
+	background: color-mix(in oklab, var(--accent) 6%, transparent);
 }
 
 .matrix-system:hover .matrix-fold { color: var(--accent); }
@@ -5519,6 +5536,12 @@ table.matrix td {
 	stroke: var(--series-4);
 }
 .bicon-transport .bicon-mark { stroke: var(--node-ink-dim); }
+/* A group: the container again, dashed as its area is on the diagram. */
+.bicon-group .bicon-body {
+	fill: color-mix(in oklab, var(--surface-2) 75%, var(--accent) 25%);
+	stroke: color-mix(in oklab, var(--accent) 70%, var(--text-muted));
+	stroke-dasharray: 2.2 1.4;
+}
 
 .trow-system.is-current .bicon-system .bicon-body {
 	fill: var(--accent);
@@ -5541,6 +5564,108 @@ table.matrix td {
 .gnode-system .gnode-name { font-weight: 600; }
 
 .gnode-system:hover .gnode-body { filter: brightness(1.08); }
+
+/* --- groups ---------------------------------------------------------------
+   A group sorts the blocks of one sub-system and changes none of their names,
+   so it is the lighter of the two containers and is drawn as such: a dashed
+   outline round what it holds, open or folded, here and on the Matrix. Its
+   colour, when it is given one, is the outline's and the band's. */
+.ggroup {
+	--group-ink: var(--group-own, color-mix(in oklab, var(--accent) 70%, var(--text-muted)));
+	pointer-events: none;
+}
+
+.ggroup-body {
+	fill: color-mix(in oklab, var(--group-ink) 6%, transparent);
+	stroke: var(--group-ink);
+	stroke-width: 1.5;
+	stroke-dasharray: 8 5;
+}
+
+/* The band its name is in, which is what picks it up. Only the band and the
+   outline take the pointer: the inside of a group is canvas, to pan and to
+   sweep a selection on. */
+.ggroup-head {
+	fill: color-mix(in oklab, var(--group-ink) 16%, transparent);
+	pointer-events: all;
+	cursor: grab;
+}
+
+.ggroup-edge {
+	fill: none;
+	stroke: transparent;
+	stroke-width: 10;
+	pointer-events: stroke;
+	cursor: grab;
+}
+
+.graph-svg.is-panning .ggroup-head,
+.graph-svg.is-panning .ggroup-edge { cursor: grabbing; }
+
+.ggroup-name {
+	fill: var(--node-ink);
+	font: 600 12px var(--sans);
+	dominant-baseline: middle;
+	pointer-events: none;
+}
+
+.ggroup-count {
+	fill: var(--text-muted);
+	font: 11px var(--sans);
+	text-anchor: end;
+	dominant-baseline: middle;
+	pointer-events: none;
+}
+
+.ggroup-fold { pointer-events: all; cursor: pointer; }
+
+.ggroup-fold-box {
+	fill: var(--surface-2);
+	stroke: var(--group-ink);
+	stroke-width: 1;
+}
+
+.ggroup-fold-mark {
+	fill: none;
+	stroke: var(--node-ink);
+	stroke-width: 1.5;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+.ggroup-fold:hover .ggroup-fold-box {
+	fill: color-mix(in oklab, var(--group-ink) 24%, var(--surface-2));
+}
+
+.ggroup.is-selected .ggroup-body { stroke: var(--select); stroke-width: 2.5; }
+.ggroup.is-selected .ggroup-head { fill: color-mix(in oklab, var(--select) 20%, transparent); }
+
+/* The group a dragged block would land in. */
+.ggroup.is-drop .ggroup-body {
+	stroke: var(--accent);
+	stroke-width: 3;
+	stroke-dasharray: none;
+	fill: color-mix(in oklab, var(--accent) 12%, transparent);
+}
+
+/* Folded up, a group is drawn as a sub-system is -- a folder, with what it
+   holds counted on it -- in the dashed outline it has open. */
+.gnode-group .gnode-body,
+.gnode-group .ggroup-tab {
+	fill: color-mix(in oklab, var(--surface-2) 86%, var(--accent) 14%);
+	stroke: var(--group-own, color-mix(in oklab, var(--accent) 70%, var(--text-muted)));
+	stroke-width: 1.5;
+	stroke-dasharray: 7 4;
+}
+
+.gnode-group .gnode-name { font-weight: 600; }
+
+.gnode-group:hover .gnode-body { filter: brightness(1.08); }
+
+.gnode-group.is-drop .gnode-body {
+	fill: color-mix(in oklab, var(--accent) 30%, var(--surface-2));
+	stroke-dasharray: none;
+}
 
 /* --- import report ------------------------------------------------------ */
 

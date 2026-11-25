@@ -190,6 +190,14 @@ const TERMINAL_ROOM = TERMINAL_GAP + 40;
 const PIPE_ROOM = TERMINAL_GAP + PIPE_W_MAX + 8;
 /** Smallest node that still gets a resize grip rather than just handles. */
 const GRIP = 7;
+/**
+ * A group's area: the radius of its corners, the band its name is written in
+ * (inside `GROUP_HEAD`, the room above its blocks), and the size of one that
+ * holds nothing yet.
+ */
+const GROUP_R = 12;
+const GROUP_BAND = 24;
+const EMPTY_GROUP = { w: 220, h: 120 };
 
 const svg = (name, attrs = {}) => {
 	const n = document.createElementNS(NS, name);
@@ -247,11 +255,15 @@ export class GraphEditor {
 		// `decor` in the DOM because `gshape-` already means a *block's*
 		// outline -- see _renderNode.
 		this.decorLayer = svg('g', { class: 'graph-decor' });
+		// The areas of the groups open on this canvas: behind the lines and
+		// the blocks, which are what they hold, and in front of the shapes,
+		// which are drawing. See `_renderGroups`.
+		this.groupLayer = svg('g', { class: 'graph-groups' });
 		this.edgeLayer = svg('g', { class: 'graph-edges' });
 		this.nodeLayer = svg('g', { class: 'graph-nodes' });
 		this.overlay = svg('g', { class: 'graph-overlay' });
 		this.viewport.append(
-			this.decorLayer, this.edgeLayer, this.nodeLayer, this.overlay,
+			this.decorLayer, this.groupLayer, this.edgeLayer, this.nodeLayer, this.overlay,
 		);
 		this.root.append(this.viewport);
 		container.append(this.root);
@@ -385,6 +397,8 @@ export class GraphEditor {
 			// A sub-system is shown by opening the one that holds it, so the
 			// container itself is on screen rather than its contents.
 			if (sel.kind === 'system') this.setSystem(parentOf(sel.name));
+			// A group is drawn on its sub-system's canvas.
+			else if (ed.isGroupId(sel.name)) this.setSystem(ed.groupSystem(sel.name));
 			else if (ed.findBlock(this.project, sel.name)) this.setSystem(parentOf(sel.name));
 		}
 		this.selection = sel;
@@ -541,7 +555,316 @@ export class GraphEditor {
 				shape: 'rounded',
 			});
 		}
-		return out;
+		return this._foldGroups(out, here);
+	}
+
+	/**
+	 * The groups of the canvas on show, as they bear on what is drawn as a
+	 * node: what is inside a group that is folded up is not drawn, and the
+	 * outermost folded group stands for it as one node, drawn like a
+	 * sub-system's. Records, for the rest of the drawing, which group each
+	 * node is in and which folded group stands for each hidden one.
+	 *
+	 * A folded group whose members are all of kinds the view is not showing
+	 * is not drawn either, as they are not; one with nothing in it at all is,
+	 * so that there is something to drop a block on.
+	 */
+	_foldGroups(out, here) {
+		const p = this.project;
+		const index = ed.groupIndex(p);
+		const mine = ed.groupsOn(index, here);
+		const g = {
+			project: p, index, here, mine,
+			// node name -> the innermost group it is in, or null
+			of: new Map(),
+			// hidden node name -> the folded group drawn for it
+			folded: new Map(),
+			// group id -> whether anything at all is in it, however deep
+			occupied: new Set(),
+		};
+		this._groups = g;
+		if (!mine.length) return out;
+		const foldOf = (gid) => {
+			for (const id of ed.groupChain(index, gid)) {
+				if (index.get(id).decl.collapsed === true) return id;
+			}
+			return null;
+		};
+		const fill = (gid) => { for (const id of ed.groupChain(index, gid)) g.occupied.add(id); };
+		for (const kind of ed.KINDS) {
+			for (const b of p[kind] ?? []) {
+				if (systemOf(b) !== here) continue;
+				const gid = ed.groupOfBlock(b, index);
+				if (gid) fill(gid);
+			}
+		}
+		for (const child of ed.childSystems(p, here)) {
+			const gid = ed.groupOfSystem(p, child, index);
+			if (gid) fill(gid);
+		}
+		for (const info of mine) if (info.parent) fill(info.parent);
+		const shown = [];
+		const hidden = new Map();
+		for (const n of out) {
+			const gid = n.kind === 'system'
+				? ed.groupOfSystem(p, n.name, index)
+				: ed.groupOfBlock(n.block, index);
+			g.of.set(n.name, gid);
+			const f = gid ? foldOf(gid) : null;
+			if (!f) { shown.push(n); continue; }
+			g.folded.set(n.name, f);
+			if (!hidden.has(f)) hidden.set(f, []);
+			hidden.get(f).push(n);
+		}
+		this._groupCounts ??= new Map();
+		for (const info of mine) {
+			if (info.decl.collapsed !== true) continue;
+			if (info.parent && foldOf(info.parent)) continue;
+			const inside = hidden.get(info.id) ?? [];
+			if (!inside.length && g.occupied.has(info.id)) continue;
+			const size = ed.blockSize(p, info.id, 'group');
+			const at = this._foldedAt(info, inside);
+			if (!this._groupCounts.has(info.id)) {
+				const deep = ed.groupMembers(p, info.id, index, { deep: true });
+				this._groupCounts.set(info.id, deep.blocks.length + deep.systems.reduce(
+					(t, s) => t + ed.blocksIn(p, s, { deep: true }).length, 0,
+				));
+			}
+			g.of.set(info.id, info.parent);
+			shown.push({
+				kind: 'group',
+				name: info.id,
+				label: info.name,
+				block: { name: info.name, system: here, color: info.decl.color },
+				count: this._groupCounts.get(info.id),
+				x: at.x,
+				y: at.y,
+				w: size.w,
+				h: size.h,
+				shape: 'rounded',
+			});
+		}
+		return shown;
+	}
+
+	/**
+	 * Where a folded group's node is drawn: where it was put, else where its
+	 * area would begin round what it hides, else somewhere free.
+	 */
+	_foldedAt(info, inside) {
+		const { decl } = info;
+		if (Number.isFinite(decl.x) && Number.isFinite(decl.y)) return { x: decl.x, y: decl.y };
+		const placed = inside.filter((n) => n.kind === 'group' || ed.getPosition(this.project, n.name));
+		if (placed.length) {
+			return {
+				x: Math.min(...placed.map((n) => n.x)) - ed.GROUP_PAD,
+				y: Math.min(...placed.map((n) => n.y)) - ed.GROUP_HEAD,
+			};
+		}
+		return ed.freeSpotIn(this.project, info.system);
+	}
+
+	/** How many blocks a group holds, however deep, counted once per drawing. */
+	_groupCountOf(id) {
+		this._groupCounts ??= new Map();
+		if (!this._groupCounts.has(id)) {
+			const p = this.project;
+			const deep = ed.groupMembers(p, id, this._groups?.index ?? ed.groupIndex(p), { deep: true });
+			this._groupCounts.set(id, deep.blocks.length + deep.systems.reduce(
+				(t, s) => t + ed.blocksIn(p, s, { deep: true }).length, 0,
+			));
+		}
+		return this._groupCounts.get(id);
+	}
+
+	/**
+	 * The areas of the groups open on this canvas, by id: `{id, name, decl,
+	 * depth, x, y, w, h}`.
+	 *
+	 * An area is drawn round what the group holds -- its blocks and sub-system
+	 * nodes, the folded groups in it, the areas of the open ones -- with
+	 * `GROUP_PAD` to spare and `GROUP_HEAD` along the top for its name, which
+	 * is the room the layout leaves (see `layoutGrouped` in edit.js). A group
+	 * that has been made bigger by hand keeps that size as well. So the area
+	 * always holds what is in it, whatever was dragged where, and moving one
+	 * of its blocks out is something that can be seen.
+	 *
+	 * Worked out from the inside out, so an area holds the areas inside it
+	 * rather than lying on top of them. One with nothing in it at all keeps a
+	 * place of its own; one whose blocks are all of kinds the view is not
+	 * showing is not drawn, as they are not.
+	 */
+	_groupFrames(nodes) {
+		const frames = new Map();
+		const g = this._groups;
+		if (!g?.mine?.length) return frames;
+		const { index } = g;
+		const isFolded = (gid) => ed.groupChain(index, gid).some((id) => index.get(id).decl.collapsed === true);
+		const depth = (gid) => ed.groupChain(index, gid).length;
+		const boxes = new Map();
+		const put = (gid, r) => {
+			if (!gid) return;
+			if (!boxes.has(gid)) boxes.set(gid, []);
+			boxes.get(gid).push(r);
+		};
+		for (const n of nodes.values()) {
+			// Only what has been put somewhere. A block nothing has placed yet
+			// -- a recorder off an import -- is drawn at the origin, and an
+			// area stretched out to the origin for it would cover the diagram.
+			if (n.kind !== 'group' && !ed.getPosition(this.project, n.name)) continue;
+			put(g.of.get(n.name), { x0: n.x, y0: n.y, x1: n.x + n.w, y1: n.y + n.h });
+		}
+		const open = g.mine.filter((info) => !isFolded(info.id))
+			.sort((a, b) => depth(b.id) - depth(a.id));
+		for (const info of open) {
+			const inside = boxes.get(info.id) ?? [];
+			const { decl } = info;
+			let box = null;
+			if (inside.length) {
+				box = {
+					x0: Math.min(...inside.map((r) => r.x0)) - ed.GROUP_PAD,
+					y0: Math.min(...inside.map((r) => r.y0)) - ed.GROUP_HEAD,
+					x1: Math.max(...inside.map((r) => r.x1)) + ed.GROUP_PAD,
+					y1: Math.max(...inside.map((r) => r.y1)) + ed.GROUP_PAD,
+				};
+				if ([decl.x, decl.y, decl.w, decl.h].every(Number.isFinite)) {
+					box.x0 = Math.min(box.x0, decl.x);
+					box.y0 = Math.min(box.y0, decl.y);
+					box.x1 = Math.max(box.x1, decl.x + decl.w);
+					box.y1 = Math.max(box.y1, decl.y + decl.h);
+				}
+			} else {
+				if (g.occupied.has(info.id)) continue;
+				const at = Number.isFinite(decl.x) && Number.isFinite(decl.y)
+					? { x: decl.x, y: decl.y }
+					: ed.freeSpotIn(this.project, g.here);
+				box = {
+					x0: at.x,
+					y0: at.y,
+					x1: at.x + (Number.isFinite(decl.w) ? decl.w : EMPTY_GROUP.w),
+					y1: at.y + (Number.isFinite(decl.h) ? decl.h : EMPTY_GROUP.h),
+				};
+			}
+			frames.set(info.id, {
+				id: info.id, name: info.name, decl, parent: info.parent, depth: depth(info.id),
+				x: box.x0, y: box.y0, w: box.x1 - box.x0, h: box.y1 - box.y0,
+			});
+			put(info.parent, box);
+		}
+		return frames;
+	}
+
+	/** Draws the open groups' areas, the outermost first, so each holds the next. */
+	_renderGroups(nodes) {
+		this._frames = this._groupFrames(nodes);
+		const order = [...this._frames.values()].sort((a, b) => a.depth - b.depth);
+		for (const f of order) this.groupLayer.append(this._renderGroupFrame(f));
+		this._applyGroupSelection();
+	}
+
+	/**
+	 * One group's area: a dashed outline round what it holds, its name in a
+	 * band along the top, and a button that folds it up.
+	 *
+	 * Only the band and the outline take the pointer. The inside is the
+	 * canvas: a drag there pans and a modifier-drag sweeps a selection, as
+	 * anywhere else, which a group the size of the diagram would otherwise
+	 * have taken away. The band is what moves the group, with everything in
+	 * it.
+	 */
+	_renderGroupFrame(f) {
+		const g = svg('g', {
+			class: 'ggroup',
+			'data-group': f.id,
+			transform: `translate(${f.x} ${f.y})`,
+		});
+		// A colour given to the group is its outline's and its band's. Set as
+		// a property, as every colour out of a file is here.
+		if (f.decl.color) g.style.setProperty('--group-own', String(f.decl.color));
+		const r = Math.min(GROUP_R, f.w / 2, f.h / 2);
+		g.append(svg('rect', {
+			class: 'ggroup-body', x: 0, y: 0, width: f.w, height: f.h, rx: r,
+		}));
+		const band = Math.min(GROUP_BAND, f.h);
+		g.append(svg('path', {
+			class: 'ggroup-head',
+			d: `M 0 ${r} A ${r} ${r} 0 0 1 ${r} 0 H ${f.w - r} A ${r} ${r} 0 0 1 ${f.w} ${r} `
+				+ `V ${band} H 0 Z`,
+		}));
+		g.append(svg('rect', {
+			class: 'ggroup-edge', x: 0, y: 0, width: f.w, height: f.h, rx: r,
+		}));
+		const fold = svg('g', {
+			class: 'ggroup-fold', 'data-groupfold': f.id, transform: 'translate(7 5)',
+			role: 'button', 'aria-label': `Fold up ${f.name}`,
+		});
+		fold.append(svg('rect', { class: 'ggroup-fold-box', x: 0, y: 0, width: 14, height: 14, rx: 3 }));
+		fold.append(svg('path', { class: 'ggroup-fold-mark', d: 'M 3.5 5.5 L 7 9 L 10.5 5.5' }));
+		const tip = svg('title');
+		tip.textContent = 'Fold the group up into one node';
+		fold.append(tip);
+		g.append(fold);
+		const count = this._groupCountOf(f.id);
+		const counted = `${count} block${count === 1 ? '' : 's'}`;
+		const room = f.w - 28 - 10 - (f.w >= 160 ? counted.length * 6 + 12 : 0);
+		const name = svg('text', { class: 'ggroup-name', x: 28, y: 16 });
+		name.textContent = fitText(f.name, Math.max(16, room), 7);
+		g.append(name);
+		if (f.w >= 160) {
+			const c = svg('text', { class: 'ggroup-count', x: f.w - 10, y: 16 });
+			c.textContent = counted;
+			g.append(c);
+		}
+		this._tip(g, `Group ${f.name} -- ${counted}. Its blocks keep their names; `
+			+ 'drag its band to move it with everything in it, or a block in or out of it.');
+		return g;
+	}
+
+	/** Marks the selected groups' areas. */
+	_applyGroupSelection() {
+		for (const el of this.groupLayer?.children ?? []) {
+			el.classList.toggle('is-selected', this.picked.has(el.dataset.group));
+			el.classList.toggle('is-primary', this.selection?.name === el.dataset.group);
+		}
+	}
+
+	/**
+	 * The group a point is in on this canvas: the innermost open area round
+	 * it, or a folded group's node under it. `barred` says which groups cannot
+	 * be the answer -- one being dragged, and what is inside it. Null for the
+	 * canvas itself, outside every group.
+	 *
+	 * The areas are the ones drawn when the gesture began: what is being
+	 * dragged must not stretch the area it is being dragged out of.
+	 */
+	_groupAt(point, barred = null) {
+		const index = this._groups?.index;
+		if (!index?.size) return null;
+		const no = (id) => !!barred && barred(id);
+		const nodes = this._nodes();
+		for (let i = nodes.length - 1; i >= 0; i--) {
+			const n = nodes[i];
+			if (n.kind !== 'group' || no(n.name)) continue;
+			if (point.x >= n.x && point.x <= n.x + n.w && point.y >= n.y && point.y <= n.y + n.h) return n.name;
+		}
+		let best = null;
+		for (const f of this._frames?.values() ?? []) {
+			if (no(f.id)) continue;
+			if (point.x < f.x || point.x > f.x + f.w || point.y < f.y || point.y > f.y + f.h) continue;
+			if (!best || f.depth >= best.depth) best = f;
+		}
+		return best?.id ?? null;
+	}
+
+	/** Lights up the group something would land in, while it is dragged. */
+	_markDropGroup(id) {
+		for (const el of this.groupLayer.children) {
+			el.classList.toggle('is-drop', !!id && el.dataset.group === id);
+		}
+		for (const el of this.nodeLayer.children) {
+			if (!el.classList.contains('gnode-group')) continue;
+			el.classList.toggle('is-drop', !!id && el.dataset.name === id);
+		}
 	}
 
 	/**
@@ -553,12 +876,29 @@ export class GraphEditor {
 		if (name == null) return null;
 		const here = this.system ?? '';
 		const system = parentOf(name);
-		if (system === here) return name;
-		if (!isWithin(system, here)) return null;
-		// Inside a child: the first path component below this sub-system.
-		const rest = here ? system.slice(here.length + 1) : system;
-		const child = rest.split('.')[0];
-		return here ? `${here}.${child}` : child;
+		let end;
+		if (system === here) end = name;
+		else if (!isWithin(system, here)) return null;
+		else {
+			// Inside a child: the first path component below this sub-system.
+			const rest = here ? system.slice(here.length + 1) : system;
+			const child = rest.split('.')[0];
+			end = here ? `${here}.${child}` : child;
+		}
+		// ...and a block or a sub-system inside a group that is folded up is
+		// drawn as that group, the way one inside a sub-system is drawn as it.
+		return this._foldedFor(end) ?? end;
+	}
+
+	/** The folded group drawn for something on this canvas, if one is. */
+	_foldedFor(name) {
+		// What the last list of nodes found. Every drawing makes that list
+		// before it asks this, so it is about the model on screen; anything
+		// else is asked again.
+		if (this._groups?.here !== (this.system ?? '') || this._groups.project !== this.project) {
+			this._nodes();
+		}
+		return this._groups.folded.get(name) ?? null;
 	}
 
 	_nodeMap() { return new Map(this._nodes().map((n) => [n.name, n])); }
@@ -591,15 +931,20 @@ export class GraphEditor {
 		// connection gives two different answers: everything that needs a
 		// connection's geometry after it is drawn reads it from here.
 		this._geo = new Map();
+		// What each folded group holds, counted again for each drawing: an
+		// edit may have moved something in or out of one.
+		this._groupCounts = new Map();
 		const nodes = this._nodeMap();
 		this._bundles = this._bundleConnections(nodes);
 		this.decorLayer.replaceChildren();
+		this.groupLayer.replaceChildren();
 		this.edgeLayer.replaceChildren();
 		this.nodeLayer.replaceChildren();
 		this.overlay.replaceChildren();
 		this._applyView();
 
 		this._renderDecor();
+		this._renderGroups(nodes);
 		this._renderEdges(nodes);
 		for (const n of nodes.values()) this.nodeLayer.append(this._renderNode(n));
 		this._applySelection();
@@ -637,7 +982,9 @@ export class GraphEditor {
 	 * off under Show. Only the first of them is an invitation to add a block.
 	 */
 	_renderBlank(count) {
-		if (count) { this.blank.hidden = true; return; }
+		// A group's area is something drawn too, the area of an empty one
+		// included: a canvas holding one is not blank.
+		if (count || this._frames?.size) { this.blank.hidden = true; return; }
 		const here = this.system ?? '';
 		const all = ed.allBlocks(this.project);
 		const mine = all.filter((b) => systemOf(b) === here);
@@ -1246,6 +1593,7 @@ export class GraphEditor {
 		}
 		this._renderEdgeHandle();
 		this._renderNodeHandles();
+		this._applyGroupSelection();
 	}
 
 	/** Whether an edge element has the named block at either end. */
@@ -1329,19 +1677,24 @@ export class GraphEditor {
 		// about any more.
 		if (!this.selection || this.picked.size > 1) return;
 		const n = this._nodes().find((x) => x.name === this.selection.name);
-		if (!n) return;
+		// A folded group is the size every one is: there is nothing of its
+		// own to make bigger.
+		if (!n || n.kind === 'group') return;
 		this.overlay.append(this._renderResizeHandles(n));
 	}
 
 	_renderNode(n) {
+		// A folded group stands for blocks, as a sub-system does, and is not
+		// one: it has no switch and no part in a transport.
+		const block = n.kind !== 'system' && n.kind !== 'group';
 		const g = svg('g', {
 			class: `gnode gnode-${n.kind} gshape-${n.shape}`
 				// Off by its own switch, or with the sub-system around it; a
 				// sub-system node fades when it is the thing switched off.
-				+ `${n.kind !== 'system' && !ed.isEffectivelyEnabled(this.project, n.block) ? ' is-disabled' : ''}`
+				+ `${block && !ed.isEffectivelyEnabled(this.project, n.block) ? ' is-disabled' : ''}`
 				+ `${n.kind === 'system' && !ed.isSystemEnabled(this.project, n.name) ? ' is-disabled' : ''}`
 				+ `${n.kind === 'system' && n.transport ? ' is-transport' : ''}`
-				+ `${n.kind !== 'system' && ed.transportOf(this.project, n.block) ? ' is-transport-part' : ''}`,
+				+ `${block && ed.transportOf(this.project, n.block) ? ' is-transport-part' : ''}`,
 			transform: `translate(${n.x} ${n.y})`,
 			'data-name': n.name,
 			// One tab stop for the whole diagram, not one per node: Tab lands
@@ -1418,6 +1771,20 @@ export class GraphEditor {
 			}
 		}
 
+		// A folded group is drawn as a sub-system is -- a folder with what it
+		// holds counted on it -- with the dashed outline its area has open, so
+		// that the two containers are told apart at a glance: one changes the
+		// names of what is in it, and this one does not.
+		if (n.kind === 'group') {
+			g.append(svg('path', {
+				class: 'gsystem-tab ggroup-tab',
+				d: `M 8 0 L 8 -7 L ${Math.min(n.w * 0.45, 56)} -7 `
+					+ `L ${Math.min(n.w * 0.45, 56) + 7} 0 Z`,
+			}));
+			this._tip(g, `Group ${n.label} -- folded up, holding ${n.count} block`
+				+ `${n.count === 1 ? '' : 's'}, which keep their names. Double-click to open it out.`);
+		}
+
 		// A sub-system is drawn as a folder-ish tab so it reads as a container
 		// rather than as one more box, and says how much is inside.
 		if (n.kind === 'system') {
@@ -1487,10 +1854,10 @@ export class GraphEditor {
 
 		if (twoLines) {
 			const sub = svg('text', { class: 'gnode-sub', x: n.w / 2, y: n.h / 2 + 13 });
-			sub.textContent = n.kind === 'system'
+			sub.textContent = n.kind === 'system' || n.kind === 'group'
 				? (n.transport
 					? `chain of ${this._chainLength(n.name)}`
-					: `${n.count} block${n.count === 1 ? '' : 's'}`)
+					: `${n.count} block${n.count === 1 ? '' : 's'}${n.kind === 'group' ? ' · group' : ''}`)
 				: fitText(this._subtitle(n), textW, 5.6);
 			if (ink) sub.style.setProperty('fill', ink.dim);
 			g.append(sub);
@@ -2313,6 +2680,15 @@ export class GraphEditor {
 		const edge = ev.target.closest('[data-edge]');
 		const decorGrip = ev.target.closest('[data-decorgrip]');
 		const decor = ev.target.closest('[data-decor]');
+		const groupFold = ev.target.closest('[data-groupfold]');
+		const groupArea = ev.target.closest('[data-group]');
+
+		// The button on a group's band folds it up, and is a press rather than
+		// the start of a drag.
+		if (groupFold) {
+			this._setGroupFolded(groupFold.dataset.groupfold, true);
+			return;
+		}
 
 		if (port) {
 			this._beginConnect(port.dataset.port, ev);
@@ -2444,6 +2820,10 @@ export class GraphEditor {
 				kind: 'node', name, ox: m.x, oy: m.y, members, moved: false, raised: false,
 				undo: () => {
 					for (const mem of members) {
+						if (mem.kind === 'group') {
+							ed.shiftGroup(this.project, mem.name, mem.x0 - mem.cx, mem.y0 - mem.cy);
+							continue;
+						}
 						ed.setPosition(this.project, mem.name, { x: mem.x0, y: mem.y0 });
 					}
 				},
@@ -2453,6 +2833,10 @@ export class GraphEditor {
 				// `_dropTargetAt` decides as the pointer passes over.
 				canNest: members.length > 0,
 				into: null,
+				// The group each is in as the drag begins, which is what a
+				// drop is a change from: looked up once rather than on every
+				// move of the pointer.
+				was: new Map(members.map((mem) => [mem.name, this._groupOfName(mem.name)])),
 			};
 			this.root.setPointerCapture(ev.pointerId);
 			return;
@@ -2460,6 +2844,17 @@ export class GraphEditor {
 
 		if (edge) {
 			this._select(edge.dataset.edge);
+			return;
+		}
+
+		// A group's band or outline: picked up like a block, and like a block
+		// the modifier adds it to the selection instead. What moves is the
+		// group and everything in it, however deep.
+		if (groupArea) {
+			const id = groupArea.dataset.group;
+			if (additive(ev)) { this._pickToggle(id); return; }
+			if (!this.picked.has(id)) this._select(id);
+			this._beginGroupDrag(id, ev);
 			return;
 		}
 
@@ -2498,9 +2893,97 @@ export class GraphEditor {
 		for (const n of this._nodes()) {
 			if (!wanted.includes(n.name)) continue;
 			const el = this.nodeLayer.querySelector(`.gnode[data-name="${cssEscape(n.name)}"]`);
-			if (el) out.push({ name: n.name, kind: n.kind, el, x0: n.x, y0: n.y });
+			// `cx`, `cy`: where a folded group has been moved to so far, since
+			// one is moved by the difference -- it carries what it hides.
+			if (el) out.push({ name: n.name, kind: n.kind, el, x0: n.x, y0: n.y, cx: n.x, cy: n.y });
 		}
 		return out;
+	}
+
+	/**
+	 * Picks up a group by its band, to move it with everything in it.
+	 *
+	 * The model moves as the pointer does (`shiftGroup`), and what is drawn is
+	 * moved after it: the group's area and the areas inside it, and the nodes
+	 * of what it holds. Everything else stays as it was drawn when the drag
+	 * began, the other groups' areas included, which is what the drop is
+	 * judged against.
+	 */
+	_beginGroupDrag(id, ev) {
+		const index = this._groups?.index ?? ed.groupIndex(this.project);
+		const f = this._frames?.get(id);
+		const inner = (gid) => ed.groupWithin(index, gid, id);
+		const m = this._toModel(ev);
+		const frames = [...this.groupLayer.children]
+			.filter((el) => inner(el.dataset.group))
+			.map((el) => {
+				const at = this._frames.get(el.dataset.group);
+				return { el, x: at.x, y: at.y };
+			});
+		const nodes = this._nodes()
+			.filter((n) => {
+				const gid = n.kind === 'group' ? n.name : this._groups?.of.get(n.name);
+				return !!gid && inner(gid);
+			})
+			.map((n) => ({
+				name: n.name,
+				el: this.nodeLayer.querySelector(`.gnode[data-name="${cssEscape(n.name)}"]`),
+				x: n.x,
+				y: n.y,
+			}))
+			.filter((n) => n.el);
+		// What lands on the lattice: the corner of what the group holds, where
+		// a block of it stands, so the blocks stay on it as a dragged block
+		// does; an empty group's own corner when it holds nothing drawn.
+		const anchor = nodes.length
+			? { x: Math.min(...nodes.map((n) => n.x)), y: Math.min(...nodes.map((n) => n.y)) }
+			: { x: f?.x ?? m.x, y: f?.y ?? m.y };
+		const drag = {
+			kind: 'group', id, ox: m.x, oy: m.y,
+			x0: anchor.x, y0: anchor.y,
+			dx: 0, dy: 0, moved: false, frames, nodes,
+			// Where it would land among the groups: undefined until the
+			// pointer has said, then a group's id or null for none.
+			into: undefined,
+		};
+		drag.undo = () => {
+			if (drag.dx || drag.dy) ed.shiftGroup(this.project, id, -drag.dx, -drag.dy);
+		};
+		this.drag = drag;
+		this.root.setPointerCapture(ev.pointerId);
+	}
+
+	/** One step of a group being dragged by its band. */
+	_moveGroupDrag(m, ev) {
+		const d = this.drag;
+		if (!d.moved && Math.abs(m.x - d.ox) < DRAG_SLOP && Math.abs(m.y - d.oy) < DRAG_SLOP) return;
+		// The corner of what it holds lands on the lattice: see `_beginGroupDrag`.
+		const dx = this._snap(d.x0 + (m.x - d.ox), ev) - d.x0;
+		const dy = this._snap(d.y0 + (m.y - d.oy), ev) - d.y0;
+		d.moved = true;
+		if (dx !== d.dx || dy !== d.dy) {
+			ed.shiftGroup(this.project, d.id, dx - d.dx, dy - d.dy);
+			d.dx = dx;
+			d.dy = dy;
+			for (const f of d.frames) f.el.setAttribute('transform', `translate(${f.x + dx} ${f.y + dy})`);
+			for (const n of d.nodes) {
+				this.nodeLayer.append(n.el);
+				n.el.setAttribute('transform', `translate(${n.x + dx} ${n.y + dy})`);
+			}
+			this._redrawEdges();
+		}
+		const index = this._groups?.index;
+		const into = this._groupAt(m, (gid) => !!index && ed.groupWithin(index, gid, d.id));
+		d.into = into;
+		this._markDropGroup(into);
+		const was = index?.get(d.id)?.parent ?? null;
+		if (into !== was) {
+			this._showHint(ev, into
+				? `Release to put ${ed.groupName(d.id)} in ${ed.groupName(into)}`
+				: `Release to take ${ed.groupName(d.id)} out of ${ed.groupName(was)}`);
+		} else {
+			this.hint.hidden = true;
+		}
 	}
 
 	/** Starts a connection and marks every legal target. */
@@ -2618,6 +3101,11 @@ export class GraphEditor {
 		}
 
 		const m = this._toModel(ev);
+
+		if (this.drag.kind === 'group') {
+			this._moveGroupDrag(m, ev);
+			return;
+		}
 
 		if (this.drag.kind === 'resize') {
 			const { corner, ox, oy, w0, h0, name } = this.drag;
@@ -2737,7 +3225,18 @@ export class GraphEditor {
 		for (const mem of this.drag.members) {
 			const x = mem.x0 + dx;
 			const y = mem.y0 + dy;
-			ed.setPosition(this.project, mem.name, { x, y });
+			if (mem.kind === 'group') {
+				// A folded group carries what it hides: moved by the
+				// difference, as its area would be.
+				ed.shiftGroup(this.project, mem.name, x - mem.cx, y - mem.cy);
+				if (!Number.isFinite(ed.groupBox(this.project, mem.name).x)) {
+					ed.setGroupBox(this.project, mem.name, { x, y });
+				}
+				mem.cx = x;
+				mem.cy = y;
+			} else {
+				ed.setPosition(this.project, mem.name, { x, y });
+			}
 			mem.el.setAttribute('transform', `translate(${x} ${y})`);
 			// The grips live in the overlay, in the node's own coordinates, so
 			// they are carried along rather than rebuilt: re-rendering them
@@ -2759,14 +3258,43 @@ export class GraphEditor {
 			const into = this._dropTargetAt(m)?.name ?? null;
 			this.drag.into = into;
 			this._markDropSystem(into);
+			// Not over a sub-system: over a group, or out of one. The group a
+			// drop lands in is the one the pointer is in, and moving a block
+			// out of its group's area takes it out of the group.
+			const group = into ? undefined : this._groupAt(m, this._barredGroups());
+			this.drag.group = group;
+			this._markDropGroup(group ?? null);
+			const what = this._what(this.drag.members.map((mem) => mem.name));
+			const leaving = group === undefined ? []
+				: this._regrouped(this.drag.members.map((mem) => mem.name), group, this.drag.was);
 			if (into) {
-				this._showHint(ev, `Release to move ${
-					this._what(this.drag.members.map((mem) => mem.name))
-				} into ${baseName(into)}`);
+				this._showHint(ev, `Release to move ${what} into ${baseName(into)}`);
+			} else if (leaving.length) {
+				this._showHint(ev, group
+					? `Release to put ${what} in ${ed.groupName(group)}`
+					: `Release to take ${what} out of ${ed.groupName(this.drag.was.get(leaving[0]))}`);
 			} else {
 				this.hint.hidden = true;
 			}
 		}
+	}
+
+	/** The group something on this canvas is in: a block's, a sub-system's, a group's parent. */
+	_groupOfName(name) {
+		return ed.groupOf(this.project, name, this._groups?.index ?? ed.groupIndex(this.project));
+	}
+
+	/** Of `names`, those a drop into `group` (null: none) would move. */
+	_regrouped(names, group, was = null) {
+		return names.filter((n) => (was?.has(n) ? was.get(n) : this._groupOfName(n)) !== group);
+	}
+
+	/** The groups a drag cannot be dropped into: the folded ones it carries, and what is in them. */
+	_barredGroups() {
+		const index = this._groups?.index;
+		const carried = (this.drag?.members ?? []).filter((mem) => mem.kind === 'group').map((mem) => mem.name);
+		if (!index || !carried.length) return null;
+		return (gid) => carried.some((c) => ed.groupWithin(index, gid, c));
 	}
 
 	/**
@@ -2803,6 +3331,11 @@ export class GraphEditor {
 		const carried = (this.drag?.members ?? [])
 			.filter((mem) => mem.kind === 'system')
 			.map((mem) => mem.name);
+		// A folded group is not taken into a sub-system by a drop: that would
+		// change the name of everything in it, which is a move to make on
+		// purpose, from the menu, block by block. Over a sub-system it is a
+		// move on the canvas like any other.
+		if ((this.drag?.members ?? []).some((mem) => mem.kind === 'group')) return null;
 		return this._systemAt(point, (name) => carried.some((p) => isWithin(name, p)));
 	}
 
@@ -2892,20 +3425,48 @@ export class GraphEditor {
 			return;
 		}
 
+		if (this.drag?.kind === 'group') {
+			const d = this.drag;
+			const into = d.moved ? this._groupAt(this._toModel(ev), (gid) => {
+				const index = this._groups?.index;
+				return !!index && ed.groupWithin(index, gid, d.id);
+			}) : undefined;
+			this._endDrag();
+			if (!d.moved) {
+				// A click on the band: the group is the selection, and only it.
+				if (!additive(ev) && this.picked.size > 1) this._select(d.id);
+				return;
+			}
+			if (into !== undefined && into !== this._groupOfName(d.id)) {
+				this._regroup([d.id], into);
+				return;
+			}
+			this._changed({ layoutOnly: true });
+			return;
+		}
+
 		if (this.drag?.kind === 'node') {
 			// Recomputed from where the pointer actually came up, rather than
 			// trusting the last move event.
-			const { name, moved, members } = this.drag;
+			const { name, moved, members, was } = this.drag;
 			// Only a drag drops: a plain click on a block that happens to sit
 			// over a container is a click, not a request to move it inside.
+			const at = this._toModel(ev);
 			const into = this.drag.canNest && moved
-				? this._dropTargetAt(this._toModel(ev))?.name ?? null
+				? this._dropTargetAt(at)?.name ?? null
 				: null;
+			const group = this.drag.canNest && moved && !into
+				? this._groupAt(at, this._barredGroups())
+				: undefined;
 			this._endDrag();
 			if (into) {
 				this._moveInto(members.map((mem) => mem.name), into, { forget: true });
 				return;
 			}
+			// Into the group the pointer came up in, or out of the one it
+			// left: whichever of them it changes for. The rest only moved.
+			const regroup = group === undefined ? [] : this._regrouped(members.map((mem) => mem.name), group, was);
+			if (regroup.length) { this._regroup(regroup, group); return; }
 			if (moved) { this._changed({ layoutOnly: true }); return; }
 			// A click that went nowhere, on a block that was part of a group:
 			// now that it is clearly a click and not the start of a drag, it
@@ -3123,7 +3684,7 @@ export class GraphEditor {
 				? `Release to attach to ${name}${into}`
 				: `Release to connect to ${name}${into}`;
 		}
-		if (name && name !== ctx.from) return `${name} cannot be a target`;
+		if (name && name !== ctx.from) return `${ed.isGroupId(name) ? ed.groupName(name) : name} cannot be a target`;
 		return ctx.end
 			? 'Release on empty space to detach from the model'
 			: 'Release on empty space for an outflow';
@@ -3138,6 +3699,10 @@ export class GraphEditor {
 		if (found?.kind === 'waste_package') {
 			return `${name} is a set of waste packages: nothing flows into them, `
 				+ `their release comes out.`;
+		}
+		if (ed.isGroupId(name)) {
+			return `${ed.groupName(name)} is a group, folded up: open it out and connect to a `
+				+ 'compartment in it.';
 		}
 		if (!found && ed.systems(this.project).includes(name)) {
 			return ed.isTransport(this.project, name)
@@ -3249,6 +3814,7 @@ export class GraphEditor {
 
 	_endDrag() {
 		if (this.drag?.canNest) this._markDropSystem(null);
+		if (this.drag?.canNest || this.drag?.kind === 'group') this._markDropGroup(null);
 		this.overlay.querySelector('.gmarquee')?.remove();
 		this.drag = null;
 		this.root.classList.remove('is-panning');
@@ -3328,7 +3894,10 @@ export class GraphEditor {
 		// Nodes are found in model space: a right-click over a node's label or
 		// its resize grip should still be a right-click on the node.
 		const node = edgeName ? null : this._nodeAt(this._toModel(ev));
-		const name = edgeName ?? node?.name ?? null;
+		// ...and a group's band or outline is the group. Its inside is the
+		// canvas, where the canvas menu adds into the group.
+		const area = edgeName || node ? null : ev.target.closest('[data-group]');
+		const name = edgeName ?? node?.name ?? area?.dataset.group ?? null;
 
 		// A shape, when nothing of the model is over it. Its own handles
 		// count as it, the way a connection's do.
@@ -3513,6 +4082,17 @@ export class GraphEditor {
 			};
 		}
 
+		// A group is neither a block nor a sub-system: a set of them.
+		if (ed.isGroupId(name)) {
+			const info = ed.groupIndex(this.project).get(name);
+			if (!info) return null;
+			this._select(name);
+			return {
+				items: this._groupMenu(name, { elsewhere }),
+				title: `group ${info.name}${info.system ? ` in ${info.system}` : ''}`,
+			};
+		}
+
 		// A sub-system is a node without being a block -- and the top level,
 		// which the block tree offers as a row of its own, is one whose path
 		// is the empty string. Testing it for truth is why right-clicking that
@@ -3575,6 +4155,24 @@ export class GraphEditor {
 	}
 
 	/**
+	 * Puts blocks, sub-systems or groups in a group from outside the diagram
+	 * -- a drop on its row in the tree -- or with `group` null takes them out.
+	 */
+	regroup(names, group) {
+		this._regroup(names, group);
+	}
+
+	/**
+	 * Files what has just arrived at `at` on `system`'s canvas -- a paste --
+	 * into the group whose area that is, as a block made there is. The areas
+	 * are the ones drawn before it arrived.
+	 */
+	fileAt(names, at, system = this.system ?? '') {
+		if ((this.system ?? '') !== (system ?? '')) return;
+		this._fileAt(names, at);
+	}
+
+	/**
 	 * What a selection is, in words.
 	 *
 	 * One thing is named; several are counted, by kind, because a selection
@@ -3584,12 +4182,15 @@ export class GraphEditor {
 	 */
 	_what(names) {
 		const parts = ed.selectionParts(this.project, names);
+		const groups = names.filter((n) => ed.isGroupId(n));
 		const n = parts.blocks.length;
 		const s = parts.systems.length;
-		if (n + s === 1) return baseName(parts.systems[0] ?? parts.blocks[0]);
+		const g = groups.length;
+		if (n + s + g === 1) return g ? ed.groupName(groups[0]) : baseName(parts.systems[0] ?? parts.blocks[0]);
 		const bits = [];
 		if (n) bits.push(n === 1 ? '1 block' : `${n} blocks`);
 		if (s) bits.push(s === 1 ? '1 sub-system' : `${s} sub-systems`);
+		if (g) bits.push(g === 1 ? '1 group' : `${g} groups`);
 		return bits.join(' and ') || 'nothing';
 	}
 
@@ -3764,6 +4365,7 @@ export class GraphEditor {
 			{ separator: true },
 			this._alignItem(drawn, (how) => this._alignPicked(names, how)),
 			this._moveItem(names, here),
+			this._groupItem(names),
 			{ separator: true },
 			{
 				label: 'Delete',
@@ -4588,6 +5190,12 @@ export class GraphEditor {
 				onPick: () => this._addSystemHere(at),
 			},
 			...this._transportOperationItems(at),
+			{
+				label: 'Group',
+				title: 'A named area to sort this sub-system’s blocks into. A block in a group '
+					+ 'keeps its name; drag blocks in and out of it.',
+				onPick: () => this._addGroupHere(at),
+			},
 
 			{ separator: true },
 			// What is on the clipboard and what goes onto it.
@@ -4686,6 +5294,8 @@ export class GraphEditor {
 			// addCompartment takes a position; the others do not, so place
 			// them here rather than letting the auto-placer guess.
 			ed.setPosition(this.project, name, at);
+			// Made inside a group's area, it is in the group.
+			this._fileAt([name], at);
 			this._select(name);
 			this._changed();
 			this.hooks.onSelect?.({ kind, name });
@@ -4824,6 +5434,7 @@ export class GraphEditor {
 				// why this sits beside Rename rather than being the thing the
 				// format cannot say.
 				this._moveItem([path], parentOf(path)),
+				this._groupItem([path]),
 				{
 					label: 'Rename…',
 					onPick: () => this._renameSystem(path),
@@ -4943,6 +5554,7 @@ export class GraphEditor {
 				...copies,
 				{ separator: true },
 				moveTo,
+				this._groupItem([name]),
 				toggle,
 				del,
 			];
@@ -4989,6 +5601,7 @@ export class GraphEditor {
 				...copies,
 				{ separator: true },
 				moveTo,
+				this._groupItem([name]),
 				toggle,
 				del,
 			];
@@ -5015,6 +5628,7 @@ export class GraphEditor {
 				...copies,
 				{ separator: true },
 				moveTo,
+				this._groupItem([name]),
 				toggle,
 				del,
 			];
@@ -5034,6 +5648,7 @@ export class GraphEditor {
 			...copies,
 			{ separator: true },
 			moveTo,
+			this._groupItem([name]),
 			toggle,
 			del,
 		];
@@ -5070,6 +5685,7 @@ export class GraphEditor {
 		try {
 			const path = ed.addSystem(this.project, { parent: this.system ?? '' });
 			if (at) ed.setPosition(this.project, path, at);
+			this._fileAt([path], at);
 			this._changed();
 			this.hooks.onStatus?.(
 				`Added ${path}. Right-click it to open, rename or dissolve it.`, 'info',
@@ -5128,6 +5744,268 @@ export class GraphEditor {
 				+ `moved out.`, 'info',
 			);
 		} catch (e) { this.hooks.onStatus?.(e.message, 'warn'); }
+	}
+
+	// --- group actions ------------------------------------------------------
+	// A group sorts the blocks of one sub-system and changes none of their
+	// names, so nothing here changes a number: every edit is the layout's
+	// kind, and leaves the results that are on screen where they are.
+
+	/** The canvas every one of `names` is drawn on, or null when they are on more than one. */
+	_canvasOfAll(names, index = ed.groupIndex(this.project)) {
+		const canvases = new Set();
+		for (const n of names) {
+			if (ed.isGroupId(n)) { canvases.add(index.get(n)?.system ?? ed.groupSystem(n)); continue; }
+			const found = ed.findBlock(this.project, n);
+			if (found) { canvases.add(systemOf(found.block)); continue; }
+			if (ed.systems(this.project).includes(n)) canvases.add(parentOf(n));
+		}
+		return canvases.size === 1 ? [...canvases][0] : null;
+	}
+
+	/** Puts things in a group, or with `target` null takes them out of theirs. */
+	_regroup(names, target) {
+		const what = this._what(names);
+		const one = names.length === 1;
+		const was = target ? null : this._groupOfName(names[0]);
+		try {
+			const changed = ed.setGroup(this.project, names, target);
+			this._changed({ layoutOnly: true, grid: true });
+			if (!changed.length) return;
+			this.hooks.onStatus?.(target
+				? `${what} ${one ? 'is' : 'are'} now in group ${ed.groupName(target)}.`
+				: `${what} ${one ? 'is' : 'are'} out of ${was ? `group ${ed.groupName(was)}` : 'its group'}.`,
+			'info');
+		} catch (e) {
+			this.hooks.onStatus?.(e.message, 'warn');
+			this.render();
+		}
+	}
+
+	/** Puts what has just been made at `at` into the group whose area that is. */
+	_fileAt(names, at) {
+		if (!at || !this._frames?.size) return;
+		const target = this._groupAt(at);
+		if (!target) return;
+		try { ed.setGroup(this.project, names, target); } catch { /* left where it was made */ }
+	}
+
+	/**
+	 * Folds a group up into one node, or opens it out. Folding keeps where its
+	 * area was, so the node is drawn there and the area opens there again.
+	 */
+	_setGroupFolded(id, folded) {
+		try {
+			const f = this._frames?.get(id);
+			if (folded && f) ed.setGroupBox(this.project, id, { x: f.x, y: f.y });
+			ed.setGroupCollapsed(this.project, id, folded);
+			this._changed({ layoutOnly: true });
+			const count = this._groupCountOf(id);
+			this.hooks.onStatus?.(folded
+				? `${ed.groupName(id)} is folded up: its ${count} block${count === 1 ? '' : 's'} `
+					+ 'are drawn as one node. Double-click it to open it out.'
+				: `${ed.groupName(id)} is open.`, 'info');
+		} catch (e) { this.hooks.onStatus?.(e.message, 'warn'); }
+	}
+
+	/** Makes a group of what is selected, asking for its name first. */
+	_groupSelection(names) {
+		const index = ed.groupIndex(this.project);
+		const canvas = this._canvasOfAll(names, index);
+		if (canvas == null) {
+			this.hooks.onStatus?.('A group holds what is on one canvas, and these are in different '
+				+ 'sub-systems.', 'warn');
+			return;
+		}
+		const suggested = ed.nextGroupName(this.project, canvas);
+		const typed = this.hooks.onPrompt
+			? this.hooks.onPrompt(`Put ${this._what(names)} in a new group of `
+				+ `${canvas || 'the top level'}, called`, suggested)
+			: suggested;
+		if (typed == null) return;
+		const what = this._what(names);
+		try {
+			const id = ed.addGroup(this.project, {
+				name: String(typed).trim() || suggested, system: canvas, members: names,
+			});
+			this._pick([id]);
+			this._changed({ layoutOnly: true, grid: true });
+			this.hooks.onStatus?.(`Made group ${ed.groupName(id)} of ${what}. `
+				+ 'What is in a group keeps its name.', 'info');
+		} catch (e) { this.hooks.onStatus?.(e.message, 'warn'); }
+	}
+
+	/** A group with nothing in it yet, where the menu was opened. */
+	_addGroupHere(at) {
+		try {
+			const here = this.system ?? '';
+			const id = ed.addGroup(this.project, {
+				system: here, group: this._groupAt(at) ?? null, at,
+			});
+			this._pick([id]);
+			this._changed({ layoutOnly: true });
+			this.hooks.onStatus?.(`Added group ${ed.groupName(id)}. Drag blocks into it, `
+				+ 'or right-click a block for Put in group.', 'info');
+		} catch (e) { this.hooks.onStatus?.(e.message, 'warn'); }
+	}
+
+	_renameGroup(id) {
+		const was = ed.groupName(id);
+		const next = this.hooks.onPrompt ? this.hooks.onPrompt(`Rename group ${was} to`, was) : null;
+		if (next == null || next === was) return;
+		try {
+			const to = ed.renameGroup(this.project, id, String(next).trim());
+			this._pick([to]);
+			this._changed({ layoutOnly: true, grid: true });
+			this.hooks.onStatus?.(`Renamed group ${was} to ${ed.groupName(to)}.`, 'info');
+		} catch (e) { this.hooks.onStatus?.(e.message, 'warn'); }
+	}
+
+	/** Takes groups away, leaving what they held where they were. */
+	_dissolveGroups(ids) {
+		const index = ed.groupIndex(this.project);
+		const live = ids.filter((id) => index.has(id));
+		if (!live.length) return;
+		try {
+			for (const id of live) ed.dissolveGroup(this.project, id);
+			this._select(null);
+			this._changed({ layoutOnly: true, grid: true });
+			this.hooks.onStatus?.(live.length === 1
+				? `Ungrouped ${ed.groupName(live[0])}: what was in it stays where it is.`
+				: `Ungrouped ${live.length} groups: what was in them stays where it is.`, 'info');
+		} catch (e) { this.hooks.onStatus?.(e.message, 'warn'); }
+	}
+
+	/** Deletes a group and everything in it, asking first. */
+	_deleteGroup(id) {
+		const count = this._groupCountOf(id);
+		if (count && this.hooks.onConfirm
+			&& !this.hooks.onConfirm(`Delete group ${ed.groupName(id)} and the ${count} block`
+				+ `${count === 1 ? '' : 's'} in it?`)) return;
+		try {
+			const r = ed.deleteGroup(this.project, id);
+			this._select(null);
+			this._changed();
+			this.hooks.onStatus?.(`Deleted group ${ed.groupName(id)}`
+				+ (r.removed.length ? `, with the ${r.removed.length} block${r.removed.length === 1 ? '' : 's'} in it.` : '.'),
+			'info');
+		} catch (e) { this.hooks.onStatus?.(e.message, 'warn'); }
+	}
+
+	/** Selects what a group holds, opening it out first if it is folded. */
+	_selectGroupMembers(id) {
+		const index = ed.groupIndex(this.project);
+		const deep = ed.groupMembers(this.project, id, index, { deep: true });
+		const folded = ed.groupChain(index, id).filter((g) => index.get(g).decl.collapsed === true);
+		for (const g of [...folded, ...deep.groups.filter((g) => index.get(g)?.decl.collapsed === true)]) {
+			ed.setGroupCollapsed(this.project, g, false);
+		}
+		if (folded.length || deep.groups.some((g) => index.get(g)?.decl.collapsed === true)) {
+			this._changed({ layoutOnly: true });
+		}
+		this._pick([...deep.blocks, ...deep.systems]);
+	}
+
+	/**
+	 * The `Put in group` item: a new group made of these, none, or one of the
+	 * groups of the canvas they are on -- nested ones under the group they are
+	 * in, so the list reads as the groups do.
+	 */
+	_groupItem(names, label = 'Put in group') {
+		const index = ed.groupIndex(this.project);
+		const canvas = this._canvasOfAll(names, index);
+		if (canvas == null) {
+			return {
+				label,
+				disabled: true,
+				title: 'A group holds what is on one canvas, and these are in different sub-systems',
+			};
+		}
+		const current = new Set(names.map((n) => ed.groupOf(this.project, n, index)));
+		const only = current.size === 1 ? [...current][0] : undefined;
+		const barred = (gid) => names.some((n) => ed.isGroupId(n) && ed.groupWithin(index, gid, n));
+		const groups = ed.groupsOn(index, canvas);
+		const order = [];
+		const walk = (parent, depth) => {
+			const kids = groups.filter((g) => g.parent === parent)
+				.sort((a, b) => a.name.localeCompare(b.name));
+			for (const g of kids) { order.push({ g, depth }); walk(g.id, depth + 1); }
+		};
+		walk(null, 0);
+		return {
+			label,
+			items: [
+				{
+					label: 'a new group…',
+					title: `Makes a group in ${canvas || 'the top level'} and puts `
+						+ `${this._what(names)} in it. Their names stay as they are.`,
+					onPick: () => this._groupSelection(names),
+				},
+				{ separator: true },
+				{
+					label: 'no group',
+					hint: only === null ? 'current' : '',
+					disabled: only === null,
+					title: 'Out of the group, to the top of the sub-system',
+					onPick: () => this._regroup(names, null),
+				},
+				...order.map(({ g, depth }) => ({
+					label: `${' '.repeat(depth)}${g.name}`,
+					hint: only === g.id ? 'current' : '',
+					disabled: only === g.id || barred(g.id),
+					title: barred(g.id) ? 'A group cannot go into itself, or into a group inside it' : '',
+					onPick: () => this._regroup(names, g.id),
+				})),
+			],
+		};
+	}
+
+	/** The menu of a group: on its band, its folded node, or its row in the tree. */
+	_groupMenu(id, { elsewhere = false } = {}) {
+		const index = ed.groupIndex(this.project);
+		const info = index.get(id);
+		const folded = info.decl.collapsed === true;
+		const count = this._groupCountOf(id);
+		const held = ed.groupMembers(this.project, id, index, { deep: true });
+		const show = () => {
+			this.hooks.onShowDiagram?.();
+			requestAnimationFrame(() => {
+				this.setSystem(info.system);
+				this.centreOn([id]);
+			});
+		};
+		return [
+			...(elsewhere ? [{ label: 'Show on the diagram', onPick: show }] : []),
+			{
+				label: folded ? 'Open out' : 'Fold up',
+				hint: folded ? 'dbl' : '',
+				title: folded
+					? 'Draws its blocks again, in the area round them'
+					: 'Draws the group as one node; lines to what is in it end on that node',
+				onPick: () => this._setGroupFolded(id, !folded),
+			},
+			{
+				label: 'Select what is in it',
+				disabled: !(held.blocks.length + held.systems.length),
+				onPick: () => { if (elsewhere) show(); this._selectGroupMembers(id); },
+			},
+			{ separator: true },
+			this._groupItem([id]),
+			{ label: 'Rename…', onPick: () => this._renameGroup(id) },
+			{ separator: true },
+			{
+				label: 'Ungroup',
+				hint: 'Del',
+				title: 'Takes the group away. What was in it stays where it is, in the group around it if there is one.',
+				onPick: () => this._dissolveGroups([id]),
+			},
+			{
+				label: 'Delete, and everything in it',
+				danger: true,
+				title: `The ${count} block${count === 1 ? '' : 's'} in it ${count === 1 ? 'goes' : 'go'} too. Ungroup keeps them.`,
+				onPick: () => this._deleteGroup(id),
+			},
+		];
 	}
 
 	/**
@@ -5290,7 +6168,12 @@ export class GraphEditor {
 		// double-clicking a thing with properties is expected to do.
 		const node = this._nodeAt(this._toModel(ev));
 		if (node?.kind === 'system') { this.setSystem(node.name); return; }
+		// A folded group opens out where it is; it is not a place to go into.
+		if (node?.kind === 'group') { this._setGroupFolded(node.name, false); return; }
 		if (node) { this.hooks.onOpenSettings?.(node.name); return; }
+		// A group's band is its name, and a group has nothing else to set.
+		const area = at('[data-group]');
+		if (area && !at('[data-groupfold]')) { this._renameGroup(area.dataset.group); return; }
 
 		// A shape has properties too, and until now double-clicking one did
 		// nothing at all -- its settings were six submenus deep in its
@@ -5343,9 +6226,26 @@ export class GraphEditor {
 			const name = focused?.dataset?.name ?? this.selection?.name ?? null;
 			if (name) {
 				ev.preventDefault();
+				// A group has no settings: Enter folds it up or opens it out.
+				if (ed.isGroupId(name)) {
+					this._setGroupFolded(name, !ed.isGroupCollapsed(this.project, name));
+					return;
+				}
 				this.hooks.onOpenSettings?.(name);
 				return;
 			}
+		}
+		// Group and Ungroup, on the keys every drawing program has them on.
+		if (mod && key === 'g') {
+			ev.preventDefault();
+			const names = [...this.picked];
+			if (ev.shiftKey) {
+				const groups = names.filter((n) => ed.isGroupId(n));
+				if (groups.length) this._dissolveGroups(groups);
+				return;
+			}
+			if (names.length) this._groupSelection(names);
+			return;
 		}
 		if (!mod && NUDGE[ev.key] && this.picked.size) {
 			ev.preventDefault();
@@ -5355,6 +6255,12 @@ export class GraphEditor {
 			const [kx, ky] = NUDGE[ev.key];
 			let moved = false;
 			for (const name of this.picked) {
+				// A group moves with everything in it.
+				if (ed.isGroupId(name)) {
+					ed.shiftGroup(this.project, name, kx * step, ky * step);
+					moved = true;
+					continue;
+				}
 				const at = ed.getPosition(this.project, name);
 				if (!at) continue;
 				ed.setPosition(this.project, name, {
@@ -5494,8 +6400,17 @@ export class GraphEditor {
 	}
 
 	deleteSelected() {
-		const names = [...this.picked];
-		if (!names.length) return;
+		const picked = [...this.picked];
+		if (!picked.length) return;
+		// A group is taken away and what it held is left: a group is a way of
+		// sorting blocks, and deleting a way of sorting them is not deleting
+		// them. Its menu has the other one, which asks.
+		const groups = picked.filter((n) => ed.isGroupId(n));
+		if (groups.length) {
+			this._dissolveGroups(groups);
+			if (groups.length === picked.length) return;
+		}
+		const names = picked.filter((n) => !ed.isGroupId(n));
 		const parts = ed.selectionParts(this.project, names);
 		const inside = parts.systems.reduce(
 			(n, p) => n + ed.blocksIn(this.project, p, { deep: true }).length, 0,
@@ -5623,6 +6538,7 @@ export class GraphEditor {
 
 	/** Whether a name is something this diagram can select: a block or a sub-system. */
 	_selectable(name) {
+		if (ed.isGroupId(name)) return ed.groupIndex(this.project).has(name);
 		return !!ed.findBlock(this.project, name)
 			|| (!!name && ed.systems(this.project).includes(name));
 	}
@@ -5641,7 +6557,11 @@ export class GraphEditor {
 		this.picked = new Set(keep);
 		const head = primary && this.picked.has(primary) ? primary : keep[keep.length - 1] ?? null;
 		this.selection = head
-			? { kind: ed.findBlock(this.project, head)?.kind ?? 'system', name: head }
+			? {
+				kind: ed.findBlock(this.project, head)?.kind
+					?? (ed.isGroupId(head) ? 'group' : 'system'),
+				name: head,
+			}
 			: null;
 		this._applySelection();
 		this.hooks.onSelect?.(this.selection, [...this.picked]);
@@ -5783,9 +6703,13 @@ export class GraphEditor {
 		};
 		for (const name of names) {
 			if (nodes.has(name)) { take(nodes.get(name)); continue; }
+			// An open group is its area.
+			if (this._frames?.has(name)) { take(this._frames.get(name)); continue; }
 			// A connection, or a sub-system drawn as the box its blocks are
 			// in: both are stood for by the nodes they join or hold.
-			for (const end of this._standsFor(name)) take(nodes.get(end));
+			for (const end of this._standsFor(name)) {
+				take(nodes.get(end) ?? nodes.get(this._foldedFor(end)));
+			}
 		}
 		if (!Number.isFinite(box.x0)) return false;
 
@@ -5801,6 +6725,7 @@ export class GraphEditor {
 
 	/** The sub-system whose canvas a name is drawn on. */
 	_homeOf(name) {
+		if (ed.isGroupId(name)) return ed.groupIndex(this.project).get(name)?.system ?? ed.groupSystem(name);
 		if (ed.systems(this.project).includes(name)) return parentOf(name);
 		const found = ed.findBlock(this.project, name);
 		return found ? systemOf(found.block) : (this.system ?? '');
@@ -5823,7 +6748,7 @@ export class GraphEditor {
 		// A canvas can hold shapes and no blocks -- a sub-system being drawn
 		// before it is built -- and fitting to nothing left it off screen.
 		const drawn = ed.shapesBox(ed.shapesIn(this.project, this.system ?? ''));
-		if ((!nodes.length && !drawn) || !r.width) return;
+		if ((!nodes.length && !drawn && !this._frames?.size) || !r.width) return;
 		// Parallel transfers bow out to either side of the line between their
 		// compartments, so a bundle needs room the nodes alone do not ask for.
 		const bow = bundleOffsets(this.project.transfers ?? []).size ? BUNDLE_GAP : 0;
@@ -5843,6 +6768,14 @@ export class GraphEditor {
 			y0 = Math.min(y0, drawn.y0 - 20);
 			x1 = Math.max(x1, drawn.x1 + 20);
 			y1 = Math.max(y1, drawn.y1 + 20);
+		}
+		// A group's area reaches past what it holds, and an empty one is all
+		// area.
+		for (const f of this._frames?.values() ?? []) {
+			x0 = Math.min(x0, f.x - 20);
+			y0 = Math.min(y0, f.y - 20);
+			x1 = Math.max(x1, f.x + f.w + 20);
+			y1 = Math.max(y1, f.y + f.h + 20);
 		}
 		const pad = 28;
 		// Into what can be seen: under the bar along the top, not behind it.

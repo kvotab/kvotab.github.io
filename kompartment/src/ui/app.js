@@ -166,7 +166,7 @@ import * as sitechrome from './sitechrome.js';
  * caused more than one "the code says otherwise" puzzle. Serve with serve.py,
  * which disables caching.
  */
-const BUILD = '2026-11-23';
+const BUILD = '2026-11-25';
 
 const EXAMPLES = [
 	{ file: 'four-compartment.json', title: 'Four-compartment test model' },
@@ -433,6 +433,9 @@ const state = {
 	// sub-systems opened flat is the thing this replaces. The view's, never
 	// the model's, so it is not saved and changing it marks nothing stale.
 	matrixOpen: new Set(),
+	// The groups folded up on the grid. The other way round from the
+	// sub-systems: a group is open there unless it has been folded.
+	matrixShut: new Set(),
 	// The same idea for the chart's series picker: a name pattern, the kinds
 	// of output, one set of allowed indices per index list, and the same
 	// Probabilistic chip the tree has.
@@ -3428,6 +3431,8 @@ function modelChanged(opts = {}) {
 	// Working on in the model that replaced one puts the offer to bring that
 	// one back away; it stays in the list at the top.
 	if (asideOffer) { asideOffer = null; renderAsideOffer(); }
+	// One the grid draws differently, though no number moved: see `gridEdits`.
+	if (opts.grid) gridEdits += 1;
 	// Any edit calls off a pending cut: a move whose source has been changed
 	// under it is a move nobody asked for. The paste clears it before it moves
 	// anything, so this does not cancel the move it is performing.
@@ -5407,7 +5412,10 @@ function stepTrail(by) {
 	const t = state.trail;
 	const to = t.at + by;
 	if (to < 0 || to >= t.seen.length) return;
-	const found = ed.findBlock(state.raw, t.seen[to]);
+	const name = t.seen[to];
+	const found = ed.isGroupId(name)
+		? (ed.groupIndex(state.raw).has(name) ? { kind: 'group' } : null)
+		: ed.findBlock(state.raw, name);
 	if (!found) {
 		// The block has gone since. Drop it and try the next one along.
 		t.seen.splice(to, 1);
@@ -5432,7 +5440,9 @@ function stepTrail(by) {
  * survived and the sub-system beside it quietly did not.
  */
 function reconcileSelection() {
-	const alive = (n) => !!ed.findBlock(state.raw, n) || ed.systems(state.raw).includes(n);
+	const groups = ed.groupIndex(state.raw);
+	const alive = (n) => !!ed.findBlock(state.raw, n) || ed.systems(state.raw).includes(n)
+		|| (ed.isGroupId(n) && groups.has(n));
 	if (state.selection && !alive(state.selection.name)) state.selection = null;
 	state.picked = state.picked.filter(alive);
 }
@@ -5902,6 +5912,7 @@ function renderInfoCard() {
 		unitProblems: state.unitProblems,
 		onSelect: setSelection,
 		onOpenSystem: (path) => { graph?.setSystem(path); selectTab('build'); },
+		onShowGroup: showGroup,
 		onOpenSettings: openBlockSettings,
 		onOpenIndexList: openIndexLists,
 		// Double-clicking the model's name puts the caret in the field that
@@ -6035,10 +6046,12 @@ function renderRail({ tree = true } = {}) {
 	if (!picked.hidden) {
 		const paths = ed.systems(state.raw);
 		const subs = state.picked.filter((n) => paths.includes(n)).length;
-		const blocks = state.picked.length - subs;
+		const groups = state.picked.filter((n) => ed.isGroupId(n)).length;
+		const blocks = state.picked.length - subs - groups;
 		const bits = [];
 		if (blocks) bits.push(blocks === 1 ? '1 block' : `${blocks} blocks`);
 		if (subs) bits.push(subs === 1 ? '1 sub-system' : `${subs} sub-systems`);
+		if (groups) bits.push(groups === 1 ? '1 group' : `${groups} groups`);
 		const line = el('div', { className: 'picked-line' },
 			el('b', {}, `${bits.join(' and ')} selected`));
 		// A selection made in the tree reaches across sub-systems, and the
@@ -6046,7 +6059,7 @@ function renderRail({ tree = true } = {}) {
 		// somewhere else are selected and invisible, which reads as a
 		// selection that did not take.
 		const here = graph?.currentSystem ?? '';
-		const away = state.picked.filter((n) => parentOf(n) !== here).length;
+		const away = state.picked.filter((n) => (ed.isGroupId(n) ? ed.groupSystem(n) : parentOf(n)) !== here).length;
 		if (away) {
 			line.append(el('span', {
 				title: 'The diagram shows one sub-system at a time. They are still '
@@ -6086,6 +6099,10 @@ function renderRail({ tree = true } = {}) {
 		// since that is what the tree as a whole is a view of.
 		onPlaceMenu: (system, ev) => graph?.openPasteMenu(system, ev.clientX, ev.clientY),
 		onMoveTo: (names, system) => graph?.moveInto(names, system),
+		// A drop on a group's row files what was dropped under it; one on a
+		// sub-system's row moves it there, which is the other thing.
+		onGroupTo: (names, group) => graph?.regroup(names, group),
+		onShowGroup: showGroup,
 		onDelete: () => graph?.deleteSelected(),
 		// Beside the Chart and the Table, the tree is where their series are
 		// picked: a box on every block, its indices under it, the endpoints
@@ -6580,7 +6597,13 @@ function pasteClipboard({ system = null, at = null } = {}) {
 	const what = clipboardNow();
 	if (!what) { flash('Nothing has been cut or copied yet.', 'warn'); return; }
 	try {
-		arrived('Pasted', ed.pasteBlocks(state.raw, what.payload, { system, at }));
+		const r = ed.pasteBlocks(state.raw, what.payload, { system, at });
+		// Pasted inside a group's area on the diagram, it is in that group.
+		if (at && graph) {
+			const { systems, own } = landed(r);
+			graph.fileAt([...systems, ...own], at, system ?? '');
+		}
+		arrived('Pasted', r);
 		// Where it came from, when it came from somewhere else. A paste that
 		// silently produced another tab's blocks would be the wrong kind of
 		// surprise, and the model it was taken from is the one fact that makes
@@ -6726,6 +6749,20 @@ function clipboardInfo() {
  * smaller one of their own, so that what a right-click does to a block does
  * not depend on which panel the block was found in.
  */
+/**
+ * Shows a group on the diagram: the canvas it is on, centred on it. From the
+ * tree and the Information view, which are beside tabs that may not be the
+ * diagram; a frame after the tab is in front, as `Centre on the canvas` does.
+ */
+function showGroup(id) {
+	if (!graph || !ed.groupIndex(state.raw).has(id)) return;
+	selectTab('build');
+	requestAnimationFrame(() => {
+		graph.setSystem(ed.groupSystem(id));
+		graph.centreOn([id]);
+	});
+}
+
 function blockMenu(name, ev) {
 	if (!graph) return;
 	if (!graph.openMenuFor(name, ev.clientX, ev.clientY)) {
@@ -6977,11 +7014,21 @@ function renderIndexListsView() {
  * selection that moves within the same revision moves the highlight instead.
  */
 let matrixStale = true;
-let matrixBuilt = { model: null, rev: -1 };
+let matrixBuilt = { model: null, rev: -1, grid: -1 };
+/**
+ * Edits that change what the grid draws and no number: a block put in a group
+ * or taken out of one, a group made, renamed or taken away. They leave the
+ * revision where it was, so they say so (`grid` in `modelChanged`'s options)
+ * and are counted here -- rather than every layout edit, which would draw a
+ * grid of forty thousand cells again for each letter typed in the model's
+ * description.
+ */
+let gridEdits = 0;
 
 function renderMatrixView() {
 	if (state.tab !== 'matrix') { matrixStale = true; return; }
-	if (!matrixStale && matrixBuilt.model === state.raw && matrixBuilt.rev === state.rev) {
+	if (!matrixStale && matrixBuilt.model === state.raw && matrixBuilt.rev === state.rev
+		&& matrixBuilt.grid === gridEdits) {
 		markSelection($('#panel-matrix'), state.selection);
 		return;
 	}
@@ -6996,7 +7043,7 @@ function drawMatrix() {
 	// render that follows the load is the one that builds it.
 	if (!state.raw) return;
 	matrixStale = false;
-	matrixBuilt = { model: state.raw, rev: state.rev };
+	matrixBuilt = { model: state.raw, rev: state.rev, grid: gridEdits };
 	renderMatrix($('#panel-matrix'), state.raw, state.selection, {
 		onChange: modelChanged,
 		onSelect: setSelection,
@@ -7005,6 +7052,14 @@ function drawMatrix() {
 		// Folding a sub-system changes nothing about the model, so it does not
 		// go through `modelChanged`: the grid is redrawn and that is all.
 		onToggleSystem: (path) => {
+			// A group is open unless folded, and folding one folds nothing
+			// else: what is in it is drawn again as it was when it opens.
+			if (ed.isGroupId(path)) {
+				if (state.matrixShut.has(path)) state.matrixShut.delete(path);
+				else state.matrixShut.add(path);
+				drawMatrix();
+				return;
+			}
 			if (state.matrixOpen.has(path)) {
 				// Folding a sub-system folds what is inside it too: reopening
 				// it to find its children still spread out is not what closing
@@ -7024,7 +7079,9 @@ function drawMatrix() {
 		// The menu's two that fold the lot, at once.
 		onFoldAll: (open) => {
 			state.matrixOpen.clear();
+			state.matrixShut.clear();
 			if (open) for (const p of ed.systems(state.raw)) state.matrixOpen.add(p);
+			else for (const g of ed.groups(state.raw)) state.matrixShut.add(g);
 			drawMatrix();
 		},
 		// A block made inside a sub-system from the menu: unfolded to where it
@@ -7047,7 +7104,7 @@ function drawMatrix() {
 		// Information view open. As items, so the grid can add its own.
 		blockMenu: (name, adds) => graph?.menuAbout(name, { elsewhere: true, adds }) ?? null,
 		pasteItem: (system) => graph?.pasteItem(system) ?? null,
-	}, { open: state.matrixOpen });
+	}, { open: state.matrixOpen, shut: state.matrixShut });
 }
 
 // --- sidebar ------------------------------------------------------------------
@@ -15271,8 +15328,10 @@ function setModel(raw, source) {
 	// takes a minute to solve was a minute of the old model's picker, filter
 	// and legend under the new model's name.
 	clearResultsViews();
-	// Which sub-systems were unfolded is a fact about the model just closed.
+	// Which sub-systems were unfolded is a fact about the model just closed,
+	// and which groups were folded.
 	state.matrixOpen.clear();
+	state.matrixShut.clear();
 	// All of them: a form over the model just closed has nothing to say about
 	// the one arriving, however deep it was stacked.
 	closeAllModals();

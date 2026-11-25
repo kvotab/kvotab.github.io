@@ -7,6 +7,7 @@ the model -- as JSON text, so key order counts too.
 
 from __future__ import annotations
 
+import json
 import math
 import random
 import unittest
@@ -439,6 +440,142 @@ class EditingAModel(unittest.TestCase):
                 self.assertEqual(layout.get(inner), {'x': 3, 'y': 4, 'matrix': 0}, layout)
                 self.assertEqual(layout.get(inner + '.Deep'), {'x': 5, 'y': 6}, layout)
                 self.assertEqual(differences(m.to_dict(), js['model']), [])
+
+    def test_groups_go_where_their_sub_system_goes(self):
+        # A group sorts the blocks of one sub-system and changes no id. It goes where its
+        # sub-system goes; a block that leaves the sub-system leaves it, and a sub-system that
+        # moves leaves the group of the one it left; dissolving a sub-system brings its groups
+        # out into the one around it, numbered past those there, and what was in none lands in
+        # the group the sub-system sat in.
+        base = {'name': 'Grouped', 'systems': ['Outer', 'Outer.Inner', 'Y'],
+                'groups': [{'name': 'G', 'system': 'Outer'}, {'name': 'H', 'system': 'Outer', 'group': 'G'},
+                           {'name': 'G'}, {'name': 'W', 'system': 'Outer.Inner', 'collapsed': True},
+                           {'name': 'Loop', 'system': 'Y', 'group': 'Loop'}],
+                'compartments': [{'name': 'A', 'system': 'Outer', 'group': 'H', 'initial': '1'},
+                                 {'name': 'B', 'system': 'Outer', 'initial': '0'},
+                                 {'name': 'C', 'system': 'Outer.Inner', 'group': 'W', 'initial': '0'},
+                                 {'name': 'D', 'system': 'Y', 'group': 'Nowhere', 'initial': '0'}],
+                'transfers': [{'name': 'AB', 'from': 'Outer.A', 'to': 'Outer.B', 'rate': '1', 'system': 'Outer',
+                               'group': 'H'}],
+                'layout': {'Outer': {'x': 1, 'y': 2, 'group': 'G'}, 'Outer.Inner': {'group': 'G'},
+                           'Outer.A': {'x': 3, 'y': 4}}}
+        for what, ops, edit in [
+                ('rename', [['renameSystem', 'Outer', 'Top']], lambda m: m.rename_system('Outer', 'Top')),
+                ('move', [['moveSystem', 'Outer', 'Y']], lambda m: m.move_system('Outer', 'Y')),
+                ('move the inner one out', [['moveSystem', 'Outer.Inner', '']],
+                 lambda m: m.move_system('Outer.Inner', '')),
+                ('dissolve', [['deleteSystem', 'Outer']], lambda m: m.delete_system('Outer')),
+                ('dissolve the inner one', [['deleteSystem', 'Outer.Inner']],
+                 lambda m: m.delete_system('Outer.Inner')),
+                ('delete with what is in it', [['deleteSystem', 'Outer', {'contents': 'delete'}]],
+                 lambda m: m.delete_system('Outer', contents='delete')),
+                ('move a block out', [['moveBlock', 'Outer.A', 'Y']], lambda m: m.move_block('Outer.A', 'Y'))]:
+            with self.subTest(edit=what):
+                js = app('edit', model=base, ops=ops)
+                self.assertNotIn('error', js)
+                m = kp.Model(base)
+                edit(m)
+                self.assertEqual(differences(m.to_dict(), js['model']), [])
+
+    # A model with something of every kind a group edit touches: blocks in and out of
+    # groups, a nested sub-system with a shape drawn inside it, transfers and an inflow
+    # filed with their donor, a group with a place on the grid's diagonal, a bend and a
+    # pipe on the diagram.
+    GROUPED = {
+        'name': 'Grouping', 'systems': ['Basin', 'Basin.Inner', 'Other'],
+        'groups': [{'name': 'Old', 'system': 'Basin', 'matrix': 2, 'x': 40, 'y': 60}],
+        'compartments': [{'name': 'Pond', 'system': 'Basin', 'initial': '1'},
+                         {'name': 'Well', 'system': 'Basin', 'initial': '0'},
+                         {'name': 'Lake', 'system': 'Basin', 'group': 'Old', 'initial': '0'},
+                         {'name': 'Deep', 'system': 'Basin.Inner', 'initial': '0'},
+                         {'name': 'Sea', 'initial': '0'}],
+        'parameters': [{'name': 'k', 'system': 'Basin', 'value': 0.1}],
+        'transfers': [{'name': 'Seep', 'from': 'Basin.Pond', 'to': 'Basin.Well', 'rate': 'k', 'system': 'Basin'},
+                      {'name': 'Down', 'from': 'Basin.Well', 'to': 'Basin.Inner.Deep', 'rate': '0.2',
+                       'system': 'Basin'},
+                      {'name': 'Out', 'from': 'Basin.Lake', 'to': 'Sea', 'rate': '0.3', 'system': 'Basin',
+                       'group': 'Old'}],
+        'inflows': [{'name': 'Rain', 'to': 'Basin.Pond', 'rate': '1', 'system': 'Basin'}],
+        'shapes': [{'id': 'sh1', 'figure': 'sticky', 'system': 'Basin.Inner', 'x': 0, 'y': 0, 'w': 100, 'h': 60},
+                   {'id': 'sh2', 'figure': 'rect', 'system': 'Basin', 'x': 5, 'y': 5, 'w': 100, 'h': 60}],
+        'layout': {'Basin.Pond': {'x': 100, 'y': 100, 'matrix': 0}, 'Basin.Well': {'x': 300, 'y': 100},
+                   'Basin.Lake': {'x': 500, 'y': 100}, 'Basin.Inner': {'x': 300, 'y': 300, 'matrix': 1},
+                   'Basin.Inner.Deep': {'x': 50, 'y': 50}, 'Basin.k': {'x': 100, 'y': 250},
+                   'edge:Basin.Seep': {'x': 200, 'y': 80}, 'edge:Basin.Down@Basin': {'x': 310, 'y': 200},
+                   'Sea': {'x': 600, 'y': 400}},
+    }
+
+    def test_group_edits_are_the_application_s(self):
+        # Every group edit of the API, one after the other, against the application's own:
+        # the same model after each.
+        steps: List[Any] = [
+            (['addGroup', {'name': 'Wells', 'system': 'Basin', 'members': ['Basin.Pond', 'Basin.Well']}],
+             lambda m: m.add_group('Wells', 'Basin', members=['Basin.Pond', 'Basin.Well'])),
+            (['addGroup', {'system': 'Basin', 'members': ['Basin.Pond']}],
+             lambda m: m.add_group(None, 'Basin', members=['Basin.Pond'])),
+            (['addGroup', {'name': 'Empty', 'system': 'Basin', 'group': None, 'at': {'x': 33.4, 'y': 50.6}}],
+             lambda m: m.add_group('Empty', 'Basin', group=None, position=(33.4, 50.6))),
+            (['setGroup', ['Basin.Inner', 'group:Basin.Empty', 'group:Basin.Old'], 'group:Basin.Wells'],
+             lambda m: m.set_group(['Basin.Inner', 'group:Basin.Empty', 'group:Basin.Old'], 'group:Basin.Wells')),
+            (['setGroup', ['Basin.Well'], None], lambda m: m.set_group('Basin.Well', None)),
+            (['setGroup', ['Basin.k'], 'group:Basin.Group'], lambda m: m.set_group(['Basin.k'], 'group:Basin.Group')),
+            (['renameGroup', 'group:Basin.Wells', 'Bores'], lambda m: m.rename_group('group:Basin.Wells', 'Bores')),
+            (['setGroupCollapsed', 'group:Basin.Bores', True], lambda m: m.set_group_collapsed('group:Basin.Bores')),
+            (['setGroupBox', 'group:Basin.Bores', {'x': 10.5, 'y': 20, 'w': 5000, 'h': 10}],
+             lambda m: m.set_group_box('group:Basin.Bores', x=10.5, y=20, w=5000, h=10)),
+            (['shiftGroup', 'group:Basin.Bores', 15, -5.5], lambda m: m.shift_group('group:Basin.Bores', 15, -5.5)),
+            (['setGroupBox', 'group:Basin.Bores', {'w': None}], lambda m: m.set_group_box('group:Basin.Bores', w=None)),
+            (['setGroupCollapsed', 'group:Basin.Bores', False],
+             lambda m: m.set_group_collapsed('group:Basin.Bores', False)),
+            (['addGroup', {'name': 'Top', 'members': ['Sea']}], lambda m: m.add_group('Top', members=['Sea'])),
+            (['dissolveGroup', 'group:Basin.Group'], lambda m: m.dissolve_group('group:Basin.Group')),
+            (['deleteGroup', 'group:Basin.Bores'], lambda m: m.delete_group('group:Basin.Bores')),
+        ]
+        m = kp.Model(self.GROUPED)
+        for k, (op, edit) in enumerate(steps, 1):
+            with self.subTest(step=k, op=op[0]):
+                edit(m)
+                js = app('edit', model=self.GROUPED, ops=[s[0] for s in steps[:k]])
+                self.assertNotIn('error', js)
+                self.assertEqual(differences(m.to_dict(), js['model']), [])
+                self.assertEqual(dumps(m.to_dict()), dumps(js['model']))
+        # Deleting the group took the sub-system in it, and the shape drawn inside that.
+        self.assertEqual([sh['id'] for sh in m.raw['shapes']], ['sh2'])
+        self.assertNotIn('Basin.Inner', m.systems)
+
+    def test_group_edits_the_application_refuses_are_refused(self):
+        for op, edit in [
+                (['setGroup', ['Sea'], 'group:Basin.Old'], lambda m: m.set_group(['Sea'], 'group:Basin.Old')),
+                (['setGroup', ['Basin.Pond'], 'group:Basin.Nope'], lambda m: m.set_group(['Basin.Pond'], 'group:Basin.Nope')),
+                (['setGroup', ['Nothing'], None], lambda m: m.set_group(['Nothing'], None)),
+                (['setGroup', ['group:Basin.Old'], 'group:Basin.Old'],
+                 lambda m: m.set_group(['group:Basin.Old'], 'group:Basin.Old')),
+                (['addGroup', {'name': 'Old', 'system': 'Basin'}], lambda m: m.add_group('Old', 'Basin')),
+                (['addGroup', {'name': '2x', 'system': 'Basin'}], lambda m: m.add_group('2x', 'Basin')),
+                (['addGroup', {'name': 'G', 'system': 'Nowhere'}], lambda m: m.add_group('G', 'Nowhere')),
+                (['addGroup', {'name': 'G', 'members': ['Basin.Lake']}], lambda m: m.add_group('G', members=['Basin.Lake'])),
+                (['addGroup', {'name': 'G', 'system': 'Basin', 'members': ['Sea']}],
+                 lambda m: m.add_group('G', 'Basin', members=['Sea'])),
+                (['renameGroup', 'group:Basin.Old', 'not a name'], lambda m: m.rename_group('group:Basin.Old', 'not a name')),
+                (['dissolveGroup', 'group:Nope'], lambda m: m.dissolve_group('group:Nope')),
+                (['deleteGroup', 'group:Basin.Nope'], lambda m: m.delete_group('group:Basin.Nope'))]:
+            with self.subTest(op=op):
+                js = app('edit', model=self.GROUPED, ops=[op])
+                self.assertIn('error', js)
+                m = kp.Model(self.GROUPED)
+                with self.assertRaises(kp.EditError):
+                    edit(m)
+                # Refused, and nothing changed: a group made for members that cannot go in is taken away again.
+                self.assertEqual(dumps(m.to_dict()), dumps(app('normalise', model=self.GROUPED)['model']))
+        # A group whose contents are still read from outside is not deleted.
+        raw = json.loads(json.dumps(self.GROUPED))
+        raw['expressions'] = [{'name': 'Watch', 'equation': 'Basin.Pond'}]
+        raw['groups'].append({'name': 'Held', 'system': 'Basin'})
+        raw['compartments'][0]['group'] = 'Held'
+        js = app('edit', model=raw, ops=[['deleteGroup', 'group:Basin.Held']])
+        self.assertIn('error', js)
+        with self.assertRaises(kp.EditError):
+            kp.Model(raw).delete_group('group:Basin.Held')
 
 
 @needs_app

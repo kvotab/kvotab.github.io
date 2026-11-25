@@ -4886,7 +4886,7 @@ the Ecolego that wrote it, the author and the date, all read out of the
 archive. The rest *is* derivable, which is exactly why it is worth writing
 down: it is the reading somebody would otherwise do by hand before they could
 say anything at all about the file. The counts are taken after the import has
-finished renaming blocks, flattening groups and connecting interfaces, so they
+finished renaming blocks and connecting interfaces, so they
 describe the model rather than the file; the dimensions are the ones blocks
 actually carry, most used first, because a real project declares one index list
 per collection it has and naming all sixteen says less than naming six.
@@ -5134,10 +5134,13 @@ equation and why. Guard what divides by zero instead, as in
 
 **Blocks and dimensions.**
 
-- A *group* is Ecolego's purely visual grouping and does not scope names, so
-  its blocks are read as belonging to the sub-system around it, which is what
-  the file's own ids say. The rest of the hierarchy comes across as it is: 66
-  of the 71 real models tested use sub-systems, up to five deep.
+- A *group* in Ecolego sorts the blocks of a sub-system without scoping their
+  names, which is what a [group](#groups) is here, so it comes across as one,
+  nested as it was: its blocks keep the ids the file gives them, and a
+  sub-system Ecolego keeps in a group is in that group. A group's name is
+  tidied into an identifier as a block's is, and a second group of the same
+  name in one sub-system is numbered. The rest of the hierarchy comes across as
+  it is: 66 of the 71 real models tested use sub-systems, up to five deep.
 - A *general variable* stands in for one of a list of blocks: the modeller
   chooses which, per index if need be, and Ecolego works it out as an
   expression that reads the block chosen. That is what it arrives as — an
@@ -5380,7 +5383,15 @@ else:
 
 The diagram's layout and the shapes drawn on it are not written either: they
 are this tool's own, and Ecolego lays a model out itself. The report says so in
-a line rather than counting it as a loss. **Block colours are written**, as
+a line rather than counting it as a loss. **Groups are written**, as Ecolego's
+groups, with what each holds in it, nested as they are (see
+[Groups](#groups)). A group named like a block or a sub-system beside it goes
+out under a name of its own, `Lake_group` for `Lake`: in Ecolego a group has an
+id as a block has, and one id cannot name two things. The report lists it
+among the renamed. Ecolego keeps a transfer beside the block it leaves, in that
+block's group, so that is where it is written, and the report says so for one
+filed in another group; a transfer from outside the model goes out in its own
+group, with the source Ecolego feeds it from. **Block colours are written**, as
 Ecolego keeps a colour, so Ecolego draws each block in it and an import brings
 it back: a node's on the block, a transfer's and an inflow's on the connection,
 an event's on each discrete transfer it becomes, and a far-field pathway's on
@@ -5677,6 +5688,85 @@ says which sub-system a block is in.
 
 An imported project brings its hierarchy with it: see
 [Importing Ecolego projects](#importing-ecolego-projects).
+
+## Groups
+
+A sub-system changes the names of what is in it — `Water` inside `NearField`
+is `NearField.Water` — and everything that reads it says so. A **group** sorts
+the blocks of a sub-system without that: a block in a group keeps the name it
+has, nothing that reads it changes, and no number in a run depends on which
+group anything is in. It is the place for the twenty parameters a pathway
+reads, the compartments of one well, the blocks that make up one dose route —
+together on the diagram, on the Matrix and in the tree.
+
+```json
+{
+  "systems": ["NearField"],
+  "groups": [
+    { "name": "Wells", "system": "NearField" },
+    { "name": "Deep", "system": "NearField", "group": "Wells" }
+  ],
+  "compartments": [
+    { "name": "Pond", "system": "NearField", "group": "Wells", "initial": "1" },
+    { "name": "Bore", "system": "NearField", "group": "Deep", "initial": "0" }
+  ]
+}
+```
+
+A group belongs to one sub-system (`system`, left out at the top level) and
+may sit inside another group of the same sub-system (`group`). It holds what
+says it is in it: a block by its own `group`, a sub-system by the `group` in
+its entry under `layout`. A group's name is unique among the groups of its
+sub-system; it is not a block's name, so a group and a block may share one.
+
+**On the diagram** an open group is an area with a dashed outline round what
+it holds, and its name in a band along the top with the number of blocks in
+it. Drag the band to move the group with everything in it, the groups inside
+it included. Drag a block out of the area and it leaves the group; drop one
+inside an area and it joins that group — the area lights up under the pointer
+to say which group a block would land in, and the innermost one wins. The area
+is drawn round what the group holds, so it follows its blocks wherever they
+are put.
+
+The button at the left of the band folds the group up into one node, drawn
+like a sub-system's with a dashed outline and the number of blocks it holds.
+Lines into what it holds end on that node, and double-clicking it opens the
+group out where it was. Whether a group is folded is saved with the model.
+
+Right-click a block, or a selection, for **Put in group ▸**: a new group made
+of them, one of the groups of their sub-system, or none. **Add here ▸ Group**
+on the canvas makes an empty one where you clicked, and a block made inside a
+group's area, or pasted there, is in that group. **⌘G** (Ctrl+G) puts what is
+selected in a new group and asks for its name. **Del**, or **⇧⌘G**, on a
+selected group takes the group away and leaves what was in it where it was —
+in the group around it, if there is one. A group's own menu has **Fold up** or
+**Open out**, **Select what is in it**, **Put in group ▸**, **Rename…**,
+**Ungroup**, and **Delete, and everything in it**, which asks first.
+
+A group holds what is on its own sub-system's canvas. Moving a block into
+another sub-system takes it out of its group; a sub-system renamed or moved
+takes its groups with it; and one that is dissolved brings its groups out into
+the sub-system around it — numbered past any of the same name there — while
+what was in no group lands in the group the sub-system sat in. A copy of a
+sub-system copies its groups; a block pasted where its group is not is in
+none.
+
+**On the Matrix** a group is framed as a sub-system is, with a dashed line: a
+tile with its name, and what it holds inside the frame. A click on the tile
+folds it into one row and one column, where every flux in and out of it lands,
+and opens it again; a group is open on the grid until it is folded there, and
+folding it there leaves the diagram as it is. A group's tile is dragged along
+the diagonal like any other, taking what it holds with it. A group holding
+nothing the grid draws — a group of parameters — is left off it.
+
+**In the tree** a group is a folder under its sub-system, holding its blocks,
+the sub-systems in it and its own groups. Drag a row onto a group's row to put
+it in the group, and onto its sub-system's row to take it out. The Information
+view for a group says where it is, what it holds by kind, and what flows across
+its edge; a block's page says which group it is in.
+
+An imported project brings its groups with it, and an exported one takes them
+along: see [Importing Ecolego projects](#importing-ecolego-projects).
 
 ## Transports
 

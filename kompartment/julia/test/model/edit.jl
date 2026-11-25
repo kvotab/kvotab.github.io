@@ -180,6 +180,25 @@ end
         @test K.move_system!(m, "Q", "Y") == "Y.Q"
         @test entry("Y.Q.B") == """{"x":3,"y":4,"matrix":0}""" && entry("Y.Q.B.C") == """{"x":5,"y":6}"""
     end
+
+    @testset "a group sorts the blocks of a sub-system and changes no id" begin
+        # The edits are Python's to the byte (the replay below); this is the API reached directly.
+        m = K.Model(K.parse_json("""{"name": "Grouped", "systems": ["B"],
+            "compartments": [{"name": "P", "system": "B", "initial": "1"}, {"name": "W", "system": "B", "initial": "0"}],
+            "transfers": [{"name": "PW", "from": "B.P", "to": "B.W", "rate": "1", "system": "B"}],
+            "layout": {"B.P": {"x": 10, "y": 20}}}"""))
+        g = K.add_group!(m, "Wells", "B"; members=["B.P"])
+        @test g == "group:B.Wells" && m.groups == ["group:B.Wells"]
+        @test K.group_of(m, "B.P") == g && K.group_of(m, "B.PW") == g && K.group_of(m, "B.W") === nothing
+        @test K.set_group!(m, ["B.W"], g) == ["B.W"]
+        @test K.group_members(m, g)["blocks"] == ["B.P", "B.W", "B.PW"]
+        K.shift_group!(m, g, 5, 0)
+        @test K.layout(m)["B.P"]["x"] == 15
+        @test K.rename_group!(m, g, "Bores") == "group:B.Bores"
+        @test_throws K.EditError K.set_group!(m, ["B.P"], "group:B.Nope")
+        @test K.dissolve_group!(m, "group:B.Bores") === nothing && isempty(m.groups)
+        @test K.block_names(m) == ["B.P", "B.W", "B.PW"]
+    end
 end
 
 # --- the Python package's edits, replayed -----------------------------------------------------------------

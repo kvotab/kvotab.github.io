@@ -575,6 +575,7 @@ function _model_property(m::Model, s::Symbol)
     s === :decay_chains && return decay_chains(m)
     s === :has_own_chains && return has_own_chains(m)
     s === :systems && return systems(m)
+    s === :groups && return groups(m)
     s === :transports && return transports(m)
     s === :shapes && return shapes(m)
     s === :derived && return derived(m)
@@ -623,6 +624,6 @@ end
 Base.propertynames(::Model, private::Bool=false) =
     (:raw, :path, :import_report, :name, :description, :author, :created, :saved, :simulation, :view, :layout,
      :index_lists, :scenarios, :scenario, :materials, :nuclides, :decay_unit, :decay_chains, :has_own_chains,
-     :systems, :transports, :shapes, :derived, :review_tracking, :compartments, :transfers, :inflows, :parameters,
+     :systems, :groups, :transports, :shapes, :derived, :review_tracking, :compartments, :transfers, :inflows, :parameters,
      :expressions, :lookups, :index_reductions, :block_reductions, :functions, :min_maxes, :running_means,
      :snapshots, :delays, :triggers, :farfields, :waste_packages, :events)

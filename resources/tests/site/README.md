@@ -1444,6 +1444,33 @@ A model is pasted into the JSON tab with the tab open, and Apply clicked only
 once it is on: it stays off until the text has been checked, and a click
 before then does nothing, leaving the example the page opened with.
 
+## test-chrome-kompartment-groups.py
+
+Kompartment's groups, which sort the blocks of one sub-system and change none
+of their names.
+
+    SITE_HTTP_PORT=8765 SITE_CDP_PORT=9222 python3 test-chrome-kompartment-groups.py    # expect 15/15
+
+A group is an area on the diagram with a dashed outline round what it holds
+(`_foldGroups` and `_groupFrames` in `kompartment/src/ui/graph.js`), framed
+like a sub-system, dashed, on the Matrix (`matrixPlan` in
+`kompartment/src/domain/edit.js`), and a folder in the tree; what a model file
+says about one is in `kompartment/src/domain/groups.js`. With real presses,
+drags and keys, on a model of its own pasted into the JSON tab: the open groups
+are drawn each round its own blocks, the inner one inside the outer, with their
+names; a drag on a group's band moves its blocks and the group inside it by one
+distance, on the lattice, and nothing else; a block dragged out of a group's
+area is in no group and keeps its name, and dropped back in the ring left of
+the area it is in the group again; the band's button folds the group into one
+node that a line into a block it hides ends on, folding is kept with the model,
+and a double-click opens it out; Cmd+G with two blocks selected makes a group
+of them under the name the prompt is answered with, and Del on that group
+ungroups it and keeps the blocks; on the Matrix the two groups' tiles and a
+dashed frame, and a click on a tile folds it into one row; the tree has a
+group's row, and selecting it fills the Information view with what it holds;
+and the page raised nothing. A prompt is answered over the protocol
+(`Page.javascriptDialogOpening`), which needs `Page.enable`.
+
 ## test-chrome-kompartment-checks.py
 
 Kompartment's checks on a model and its run, in the page.

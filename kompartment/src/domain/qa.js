@@ -66,6 +66,8 @@ export const QA_LABEL = {
 const NOT_REVIEWED = new Set([
 	'x', 'y', 'w', 'h', 'shape', 'colour', 'color', 'label', 'collapsed',
 	'comment', 'note', 'notes', 'qa',
+	// The group a block is filed under: see ./groups.js.
+	'group',
 ]);
 
 /**

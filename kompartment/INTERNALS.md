@@ -53,6 +53,7 @@ exercise `domain/` and `sim/` directly, which is why they can be plain Node.
 | `src/domain/keys.js` | Migration: old key spellings and old solver ids, so a saved file still opens |
 | `src/domain/indexlists.js` | Index lists, sub-sets, mappings and index resolution |
 | `src/domain/systems.js` | Sub-systems and qualified names |
+| `src/domain/groups.js` | Groups: a sorting of one sub-system's blocks that changes no id. See *Groups* |
 | `src/domain/nuclides.js`, `src/domain/decaydb.js` | Half-lives, decay chains and chain collapsing |
 | `src/domain/icrp107.js` | The ICRP 107 radionuclide tables, extracted from kvotab.se/rdc.html |
 | `src/domain/lookup.js` | A value that changes with time, and the five ways of reading between points |
@@ -809,8 +810,9 @@ Four rules, all taken from the source material rather than invented:
 
 1. **An id is `namespace + "." + name`.** The id rule builds it against the nearest *namespace* sub-system.
 2. **A group sub-system is not a namespace.** A plain grouping declares no namespace, so the id rule skips it, so its blocks belong to the
-   sub-system around it. The importer flattens groups away, which is what the
-   ids in the file already say.
+   sub-system around it, which is what the ids in the file already say. It
+   comes across as one of this tool's groups, which change no id either: see
+   *Groups*.
 3. **How a reference resolves is the mirror of how it is written.**
    The desktop tool writes a target's *local name* when it shares the writer's namespace or sits at the root, and its
    *full id* otherwise. So a bare name is mine, or failing that the model's; a
@@ -1180,6 +1182,8 @@ thousand-odd warnings are Ecolego's unit check on the models' own units.
 | initial values | worked out before the run: parameters, tables read at a value, and expressions *set* to be evaluated before the run -- the automatic mode, the default, does not count; not the time, not an aggregate or an index operation | every expression an initial value reads, transitively, goes out set to be evaluated before the run; one that cannot is named in the report |
 | the year | 31,556,952 s, 365.2425 days; a half-life in seconds is turned into the run's unit with it | half-lives in seconds of Ecolego's year for a model run in years, of this tool's in days or shorter (`ecoSecondsPerYear`), both ways |
 | a cyclic table read at a value | read at the time, never at the argument | written unrepeated, every call wrapping its value onto the range with Ecolego's own `rem` -- Java's `%`, which is what `../domain/lookup.js` does |
+| a group | what a block, a sub-system or a group is in is found by its id as the file is read, so it has to come first; a group's id is its sub-system's path and its own name, as a block's is, and one id cannot be held twice | each group written before what is in it -- a sub-system in a group after the group; one named like a block or a sub-system beside it under a name of its own, said in the report |
+| where a connection is | wherever the block it leaves is, in that block's group, whatever the file says | written there, and said in the report when that is not the group it is filed in; the source written for a transfer from outside goes in that transfer's group |
 
 And the equation language, which is the importer's with less in it
 (`src/io/ecoequation.js`, whose header has the reasons): a unit on a number
@@ -1824,6 +1828,87 @@ arithmetic on a fixed vector, partial cells and reversed ends included.
 The `.eco` reader is checked on a hand-written `type="transport"` sub-system
 with all five block types, which imports, builds and conserves mass.
 
+## Groups
+
+A group sorts the blocks of one sub-system and changes no id
+(`src/domain/groups.js`). The model says so in three places:
+
+- `groups`, a list of declarations `{name, system?, group?}` -- the group's
+  name, its sub-system (absent at the top level) and the group of the same
+  sub-system it sits in -- with what the diagram and the grid keep about it
+  beside them: `x`, `y`, `w`, `h`, `collapsed`, `matrix`, `color`;
+- `group` on a block: the name of a group of the block's own sub-system;
+- `group` in a sub-system's layout entry, for one that sits in a group of the
+  sub-system around it. A sub-system has no object of its own -- `systems` is a
+  list of paths -- and its layout entry is the one place that already follows
+  it through every rename, move and prune, here and in the Python and Julia
+  packages.
+
+A group is known by an id, `group:` and its qualified name, which no block or
+sub-system can have; a name is unique among the groups of its sub-system only.
+Everything reads leniently (`groupIndex`): a member naming a group its
+sub-system does not have is in none, a parent that is not there leaves a group
+at the top of its sub-system, and a loop of parents is cut where it closes, so a
+hand-edited file draws as something and nothing here can refuse a model.
+
+**No number moves.** `group` is in `NOT_NUMERIC` (`fingerprint.js`) and in
+`NOT_REVIEWED` (`qa.js`, and in the Python and Julia packages, so a review stamp
+does not change), and it is never among the changes listed since a run
+(`changes.js`). A grouping edit is a layout edit; the ones the transfer grid
+draws differently say so (`grid` in `modelChanged`'s options), so the grid is
+drawn again without a run.
+
+**Edits.** `setGroup` checks, then moves: what a group holds is on its
+sub-system's canvas, and nothing goes into itself. A compartment takes along the
+connections out of it that were filed with it. A block that leaves its
+sub-system leaves its group (`moveBlock`); a sub-system that moves leaves the
+group of the one it left (`moveSystem`); a renamed or moved sub-system takes its
+groups with it (`relocateSystem`); and one that is dissolved brings its groups
+out into the one around it, numbered past those there, while what was in none
+lands in the group it sat in (`deleteSystem`). `deleteGroup` deletes what the
+group holds as one selection (`deleteSelection`), so a sub-system in it goes with
+everything inside, the shapes drawn there included.
+
+The Python and Julia packages make every one of these edits, `add_group`,
+`set_group` and the rest (`python/kompartment/model.py`,
+`julia/src/model/edit.jl`). `test_app_parity.py` compares the Python package's
+with this tool's, the model's file after each, and the Julia edit fixtures
+replay the Python package's in Julia (the cases `groups` and `group_edits`, and
+group edits among the random ones). Where the application forgets a kept area
+given something other than a number, the packages refuse it.
+
+**The diagram** draws an open group as an area round its placed member nodes,
+`GROUP_PAD` to the sides and below and `GROUP_HEAD` above for its name, inner
+areas first so that an outer one holds them; a block nothing has placed is left
+out of it rather than stretching it. A folded group is one node, where it was
+put or else at the corner its area would have (`_foldedAt`), and `_visibleEnd`
+sends a line into anything it hides to that node, as it does for a sub-system. A drop goes into the innermost area under the
+pointer, judged against the areas as drawn when the drag began, so the area a
+block is dragged out of does not follow it. The automatic layout lays a canvas
+with groups out a group at a time (`layoutGrouped`): each group's contents as a
+diagram of their own, inner groups first, then the group as one box of that
+size and the pads in the diagram around it.
+
+**The grid** (`matrixPlan`) gives a group's members one run of slots, as a
+sub-system's, open unless folded (`shut`, the other way round from a
+sub-system's `open`), its frame marked `group` and drawn dashed; a slot's
+`home` is the run it moves along, its sub-system and its group.
+`representative` puts a flux on the outermost closed container on the way down,
+sub-system or group (`containersOf`). A group holding nothing the grid draws is
+left off it.
+
+**Ecolego** has groups too, and they are no namespace there either: a block in
+one has the id of the sub-system around it. All four importers keep them, with
+the blocks, transfers and sub-systems in them. The export writes each as
+Ecolego's group, before what is in it and under a name of its own where its id
+would be a block's beside it (see *What Ecolego needs that the importer did
+not*). Ecolego keeps a connection wherever the block it leaves is, group and
+all, so a transfer is written beside its donor. Checked in Ecolego itself:
+what each block is in, as Ecolego reads it, is what the model says for the
+fixture `GROUPS`, whose runs there agree with this tool's, and a real model of
+seven groups, imported and exported again, has every block it kept in the
+group it was in.
+
 ## Deleting a large sub-system
 
 `referencesTo` answers "what still reads this block" by tokenising every
@@ -2145,6 +2230,13 @@ Two graphs decide where a block goes, and deliberately not the same one:
 Keeping the two apart is what makes the result stable: expressions, parameters,
 lookup tables and reductions can each be hidden, and hiding them must not move
 the compartments.
+
+Every kind the diagram draws is placed: compartments, far-field paths and waste
+packages in the flow, since each holds an inventory and has lines in and out;
+expressions, parameters, tables, reductions, the blocks that remember, triggers,
+events and functions hung beneath it, each by what it reads and what reads it.
+A canvas with groups on it is laid out a group at a time, so what a group holds
+stays together: see *Groups*.
 
 Three things the textbook version leaves out and a real model needs:
 

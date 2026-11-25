@@ -100,6 +100,8 @@ import {
 } from './blocks.js';
 import { integratingBlocks, integrationFingerprint } from './fingerprint.js';
 import * as tr from './transport.js';
+// Groups: named sets of one sub-system's blocks, changing no id. See ./groups.js.
+import * as gr from './groups.js';
 import { switchTimeProblems } from './switchtimes.js';
 import { derivedProblems } from './derived.js';
 import {
@@ -2790,8 +2792,24 @@ export function alignBlocks(project, names, how) {
  * transfer's rate lands.
  */
 
-/** The kinds of block that are drawn hanging beneath the flow. */
-const SUPPLY_KINDS = ['expressions', 'parameters', 'lookups', 'index_reductions', 'block_reductions'];
+/**
+ * The kinds of block that are the flow: what holds an inventory and has lines
+ * in and out of it -- a compartment, a far-field path, a set of waste packages.
+ */
+const FLOW_KINDS = ['compartments', 'farfields', 'waste_packages'];
+const FLOWING = new Set(FLOW_KINDS.map((k) => SINGULAR[k]));
+
+/**
+ * The kinds of block that are drawn hanging beneath the flow: everything else
+ * the diagram draws, each under what reads it or what it reads. The blocks
+ * that remember, the triggers, the events and the functions were left out of
+ * this and so were never placed: an imported model drew every one of them on
+ * top of each other at the corner of its canvas.
+ */
+const SUPPLY_KINDS = [
+	'expressions', 'parameters', 'lookups', 'index_reductions', 'block_reductions',
+	'min_maxes', 'running_means', 'snapshots', 'delays', 'triggers', 'events', 'functions',
+];
 
 /**
  * Everything the layout needs about a project, worked out once.
@@ -2810,7 +2828,7 @@ function diagramPlan(project) {
 	for (const p of paths) if (p) children.get(parentOf(p))?.push(p);
 
 	const blocks = new Map(paths.map((p) => [p, []]));
-	for (const kind of ['compartments', ...SUPPLY_KINDS]) {
+	for (const kind of [...FLOW_KINDS, ...SUPPLY_KINDS]) {
 		for (const b of project[kind] ?? []) {
 			blocks.get(systemOf(b))?.push({ id: qualifiedName(b), kind: SINGULAR[kind] });
 		}
@@ -2860,7 +2878,7 @@ function diagramOf(project, system, plan) {
 	const supply = [];
 	for (const { id, kind } of plan.blocks.get(system) ?? []) {
 		const node = { id, ...blockSize(project, id, kind) };
-		(kind === 'compartment' ? flow : supply).push(node);
+		(FLOWING.has(kind) ? flow : supply).push(node);
 	}
 	// A sub-system stands for its contents, so it takes part in the flow: a
 	// model whose top level is nothing but sub-systems still has a shape.
@@ -2972,7 +2990,7 @@ function needsPlacing(project, plan = null, system = null) {
 		}
 		return false;
 	}
-	for (const kind of ['compartments', ...SUPPLY_KINDS]) {
+	for (const kind of [...FLOW_KINDS, ...SUPPLY_KINDS]) {
 		for (const b of project[kind] ?? []) {
 			if (!getPosition(project, qualifiedName(b))) return true;
 		}
@@ -3008,10 +3026,32 @@ export function autoLayout(project, { spacingX = 260, spacingY = 110, originX = 
 	const { gapX, gapY } = gapsFrom(spacingX, spacingY);
 	const plan = diagramPlan(project);
 
+	const groupIdx = gr.groupIndex(project);
 	for (const system of plan.paths) {
 		if (!needsPlacing(project, plan, system)) continue;
 		const view = diagramOf(project, system, plan);
 		if (!view.flow.length && !view.supply.length) continue;
+
+		// A canvas with groups on it is laid out a group at a time, so that
+		// what a group holds ends up together, inside the area drawn round it.
+		if (groupIdx.size && gr.groupsOn(groupIdx, system).length) {
+			const laid = layoutGrouped(project, view, plan, groupIdx, { gapX, gapY });
+			const at = toOrigin(laid.at, originX, originY);
+			for (const [name, p] of at) {
+				if (name.startsWith('\u0000') || getPosition(project, name)) continue;
+				setPosition(project, name, p);
+			}
+			// A group with nothing in it is still somewhere: where its box
+			// came out, which is a place nothing else was put.
+			for (const [id, box] of laid.empty) {
+				const decl = groupIdx.get(id)?.decl;
+				if (!decl || Number.isFinite(decl.x)) continue;
+				const p = at.get(`\u0000${id}`) ?? box;
+				decl.x = p.x;
+				decl.y = p.y;
+			}
+			continue;
+		}
 
 		const flow = layoutFlow(view.flow, view.edges, { gapX, gapY });
 		const anchors = anchorPoints(view, plan, flow.at);
@@ -3031,6 +3071,168 @@ export function autoLayout(project, { spacingX = 260, spacingY = 110, originX = 
 }
 
 /**
+ * One sub-system's diagram laid out a group at a time.
+ *
+ * What a group holds is laid out on its own first, as a little diagram of its
+ * own -- its flow, and what supplies it hung underneath -- and its groups
+ * before it, inside out. The group then takes part in the diagram around it as
+ * one box the size of that, plus the room its area takes round its members
+ * (`GROUP_PAD`, and `GROUP_HEAD` for its name), and the lines that cross into
+ * it are lines to the box. Last, each box is opened and what is in it put
+ * inside.
+ *
+ * So a transfer between two of a group's compartments still orders them, and
+ * one from a compartment outside into the group puts the group to the right
+ * of it; what a group holds never ends up apart from the rest of it.
+ *
+ * @returns {{at: Map<string, {x: number, y: number}>, empty: Map<string, object>}}
+ *   positions by name, top-left corners, from an origin of nothing in
+ *   particular; and where each group that holds nothing came out. Those are
+ *   also in `at`, under the group's id after a NUL, so that moving `at` to its
+ *   origin moves them with it.
+ */
+function layoutGrouped(project, view, plan, index, { gapX, gapY }) {
+	const system = view.system;
+	const blocks = blockIndex(project);
+	const nodes = [...view.flow, ...view.supply];
+	const isFlow = new Set(view.flow.map((n) => n.id));
+	// The innermost group of this canvas each node is in, or null.
+	const home = new Map(nodes.map((n) => [n.id, blocks.has(n.id)
+		? gr.groupOfBlock(blocks.get(n.id).block, index)
+		: gr.groupOfSystem(project, n.id, index)]));
+	const kids = new Map();
+	for (const g of gr.groupsOn(index, system)) {
+		const key = g.parent ?? null;
+		if (!kids.has(key)) kids.set(key, []);
+		kids.get(key).push(g.id);
+	}
+	// Whether a group holds any of the flow, however deep: a group of
+	// compartments takes part in the flow, a group of parameters supplies it.
+	const flowing = new Set();
+	for (const n of view.flow) {
+		for (let g = home.get(n.id); g; g = index.get(g)?.parent ?? null) flowing.add(g);
+	}
+	// What a name is drawn as among the contents of `level` (a group, or null
+	// for the canvas): itself, the box of the group in `level` that holds it,
+	// or null when it is not in `level` at all.
+	const liftTo = (id, level) => {
+		if (!home.has(id)) return null;
+		let g = home.get(id);
+		if ((g ?? null) === level) return id;
+		while (g) {
+			const parent = index.get(g)?.parent ?? null;
+			if (parent === level) return g;
+			g = parent;
+		}
+		return null;
+	};
+	const transfers = plan.transfers.get(system) ?? [];
+	const inflows = plan.inflows.get(system) ?? [];
+	const lines = new Set([...transfers, ...inflows].map((t) => qualifiedName(t)));
+
+	const placeLevel = (level) => {
+		const boxes = new Map();
+		for (const child of kids.get(level) ?? []) boxes.set(child, placeLevel(child));
+		const flow = [];
+		const supply = [];
+		const size = new Map();
+		for (const n of nodes) {
+			if ((home.get(n.id) ?? null) !== level) continue;
+			(isFlow.has(n.id) ? flow : supply).push(n);
+			size.set(n.id, n);
+		}
+		for (const [child, inner] of boxes) {
+			const box = {
+				id: child,
+				w: Math.max(inner.w, DEFAULT_SIZE.compartment.w) + 2 * gr.GROUP_PAD,
+				h: inner.h + gr.GROUP_HEAD + gr.GROUP_PAD,
+			};
+			(flowing.has(child) ? flow : supply).push(box);
+			size.set(child, box);
+		}
+		const edges = [];
+		const seen = new Set();
+		for (const e of view.edges) {
+			const a = liftTo(e.from, level);
+			const b = liftTo(e.to, level);
+			if (!a || !b || a === b || !size.has(a) || !size.has(b)) continue;
+			const key = `${a}\u0000${b}`;
+			if (seen.has(key)) continue;
+			seen.add(key);
+			edges.push({ from: a, to: b });
+		}
+		const flowAt = layoutFlow(flow, edges, { gapX, gapY });
+		const anchors = new Map();
+		for (const n of flow) {
+			const p = flowAt.at.get(n.id);
+			if (p) anchors.set(n.id, { x: p.x + n.w / 2, y: p.y + n.h / 2 });
+		}
+		// Where an influence into a transfer lands: the middle of the line, as
+		// far as this level draws it.
+		const midpoint = (...ends) => {
+			const known = ends.map((e) => (e ? anchors.get(liftTo(e, level)) : null)).filter(Boolean);
+			if (!known.length) return null;
+			return {
+				x: known.reduce((t, p) => t + p.x, 0) / known.length,
+				y: known.reduce((t, p) => t + p.y, 0) / known.length,
+			};
+		};
+		for (const t of transfers) {
+			const mid = midpoint(view.visible(t.from), view.visible(t.to));
+			if (mid) anchors.set(qualifiedName(t), mid);
+		}
+		for (const t of inflows) {
+			const mid = midpoint(view.visible(t.to));
+			if (mid) anchors.set(qualifiedName(t), mid);
+		}
+		const links = [];
+		for (const l of view.links) {
+			const a = liftTo(l.from, level);
+			const b = lines.has(l.to) ? l.to : liftTo(l.to, level);
+			if (!a || !b || a === b) continue;
+			links.push({ from: a, to: b });
+		}
+		const rows = hangRows(supply, links, anchors, {
+			top: flow.length ? flowAt.h + gapY * 1.5 : 0, gapX, gapY,
+		});
+		const at = new Map([...flowAt.at, ...rows.at]);
+		let x0 = Infinity;
+		let y0 = Infinity;
+		let x1 = -Infinity;
+		let y1 = -Infinity;
+		for (const [id, p] of at) {
+			const n = size.get(id);
+			x0 = Math.min(x0, p.x);
+			y0 = Math.min(y0, p.y);
+			x1 = Math.max(x1, p.x + (n?.w ?? 0));
+			y1 = Math.max(y1, p.y + (n?.h ?? 0));
+		}
+		if (!Number.isFinite(x0)) return { at, boxes, w: 0, h: 0 };
+		for (const p of at.values()) { p.x -= x0; p.y -= y0; }
+		return { at, boxes, w: x1 - x0, h: y1 - y0 };
+	};
+
+	const at = new Map();
+	const empty = new Map();
+	const unfold = (laid, ox, oy) => {
+		for (const [id, p] of laid.at) {
+			const x = ox + p.x;
+			const y = oy + p.y;
+			const inner = laid.boxes.get(id);
+			if (!inner) { at.set(id, { x, y }); continue; }
+			if (!inner.at.size) {
+				empty.set(id, { x, y });
+				at.set(`\u0000${id}`, { x, y });
+				continue;
+			}
+			unfold(inner, x + gr.GROUP_PAD, y + gr.GROUP_HEAD);
+		}
+	};
+	unfold(placeLevel(null), 0, 0);
+	return { at, empty };
+}
+
+/**
  * Gives a position to blocks that have none, without moving anything.
  *
  * A block added from the block list, or one that a diagram toggle has just
@@ -3046,18 +3248,20 @@ export function placeLoose(project, { spacingX = 260, spacingY = 110, originX = 
 	layoutOf(project);
 	// This runs on every diagram toggle, and almost always has nothing to do.
 	const unplaced = (name) => !getPosition(project, name);
-	const anyMissing = ['compartments', ...SUPPLY_KINDS]
+	const anyMissing = [...FLOW_KINDS, ...SUPPLY_KINDS]
 		.some((kind) => (project[kind] ?? []).some((b) => unplaced(qualifiedName(b))))
 		|| systemPaths(project).some(unplaced);
 	if (!anyMissing) return project;
 
 	const { gapX, gapY } = gapsFrom(spacingX, spacingY);
 	const plan = diagramPlan(project);
+	const groupIdx = gr.groupIndex(project);
+	const blocks = groupIdx.size ? blockIndex(project) : null;
 
 	for (const system of plan.paths) {
 		const view = diagramOf(project, system, plan);
 		const placed = new Map();
-		const missing = [];
+		let missing = [];
 		let bottom = -Infinity;
 		for (const n of [...view.flow, ...view.supply]) {
 			const p = getPosition(project, n.id);
@@ -3065,6 +3269,11 @@ export function placeLoose(project, { spacingX = 260, spacingY = 110, originX = 
 			placed.set(n.id, { x: p.x, y: p.y });
 			bottom = Math.max(bottom, p.y + n.h);
 		}
+		if (!missing.length) continue;
+		// A block in a group goes with the group: in a row under what of it is
+		// already drawn, which is inside the area drawn round it -- not under
+		// the whole diagram, which would stretch that area across it.
+		if (groupIdx.size) missing = placeInGroups(project, missing, groupIdx, blocks, { gapX, gapY });
 		if (!missing.length) continue;
 
 		const anchors = anchorPoints(view, plan, placed);
@@ -3090,6 +3299,47 @@ export function placeLoose(project, { spacingX = 260, spacingY = 110, originX = 
 		}
 	}
 	return project;
+}
+
+/**
+ * Places the nodes of `missing` that are in a group under the members of that
+ * group already drawn, a row to each group, and gives back the rest. A group
+ * with nothing of it drawn yet but a place of its own takes them there.
+ */
+function placeInGroups(project, missing, index, blocks, { gapX, gapY }) {
+	const rest = [];
+	const byGroup = new Map();
+	for (const n of missing) {
+		const found = blocks.get(n.id);
+		const gid = found ? gr.groupOfBlock(found.block, index) : gr.groupOfSystem(project, n.id, index);
+		if (!gid) { rest.push(n); continue; }
+		if (!byGroup.has(gid)) byGroup.set(gid, []);
+		byGroup.get(gid).push(n);
+	}
+	for (const [gid, list] of byGroup) {
+		const deep = gr.groupMembers(project, gid, index, { deep: true });
+		let x0 = Infinity;
+		let y1 = -Infinity;
+		for (const name of [...deep.blocks, ...deep.systems]) {
+			const p = getPosition(project, name);
+			if (!p) continue;
+			const size = blockSize(project, name, blocks.get(name)?.kind ?? 'system');
+			x0 = Math.min(x0, p.x);
+			y1 = Math.max(y1, p.y + size.h);
+		}
+		const decl = index.get(gid).decl;
+		if (!Number.isFinite(x0) && Number.isFinite(decl.x) && Number.isFinite(decl.y)) {
+			x0 = decl.x + gr.GROUP_PAD;
+			y1 = decl.y + gr.GROUP_HEAD - gapY / 2;
+		}
+		if (!Number.isFinite(x0)) { rest.push(...list); continue; }
+		let x = x0;
+		for (const n of list) {
+			setPosition(project, n.id, { x: onGrid(x), y: onGrid(y1 + gapY / 2) });
+			x += n.w + gapX / 2;
+		}
+	}
+	return rest;
 }
 
 /**
@@ -4555,6 +4805,425 @@ export function childSystems(project, system = '') {
 	return systems(project).filter((p) => parentOf(p) === system);
 }
 
+// --- groups -------------------------------------------------------------------
+// A named set of the blocks of one sub-system, which changes no id and no
+// number. What a model file says about one, and how it is read, is in
+// ./groups.js; here is what the editor does to one.
+
+export const GROUP_PREFIX = gr.GROUP_PREFIX;
+export const GROUP_PAD = gr.GROUP_PAD;
+export const GROUP_HEAD = gr.GROUP_HEAD;
+export const groupId = gr.groupId;
+export const isGroupId = gr.isGroupId;
+export const splitGroupId = gr.splitGroupId;
+export const groupName = gr.groupName;
+export const groupSystem = gr.groupSystem;
+export const groupIndex = gr.groupIndex;
+export const groupOfBlock = gr.groupOfBlock;
+export const groupOfSystem = gr.groupOfSystem;
+export const groupChain = gr.groupChain;
+export const groupWithin = gr.groupWithin;
+export const containersOf = gr.containersOf;
+export const groupMembers = gr.groupMembers;
+export const groupsOn = gr.groupsOn;
+
+/** The groups of the model, by id, in the file's order. */
+export function groups(project) {
+	return [...gr.groupIndex(project).keys()];
+}
+
+/**
+ * The group something is in, as an id, or null: a block's, a sub-system's,
+ * or -- given a group's id -- the group that one is inside.
+ */
+export function groupOf(project, name, index = gr.groupIndex(project)) {
+	if (gr.isGroupId(name)) return index.get(name)?.parent ?? null;
+	const found = findBlock(project, name);
+	if (found) return gr.groupOfBlock(found.block, index);
+	return gr.groupOfSystem(project, name, index);
+}
+
+/**
+ * The name a new group of `system` would be given: `Group`, then `Group1`.
+ * Only other groups are in the way -- a group's name is no block's id.
+ */
+export function nextGroupName(project, system = '', base = 'Group') {
+	const taken = new Set(gr.groupsOn(gr.groupIndex(project), system).map((g) => g.name));
+	let local = base;
+	for (let i = 1; taken.has(local); i++) local = `${base}${i}`;
+	return local;
+}
+
+/** Why `name` cannot be a group of `system`, or null when it can. */
+export function validateGroupName(project, name, { system = '', allow = null } = {}) {
+	if (!NAME_RE.test(name ?? '')) {
+		return 'Use letters, digits and underscore; do not start with a digit.';
+	}
+	const id = gr.groupId(system, name);
+	if (id !== allow && gr.groupIndex(project).has(id)) {
+		return `There is already a group called '${name}' in ${system ? `'${system}'` : 'the top level'}.`;
+	}
+	return null;
+}
+
+/** The declaration behind a group's id, live, or an EditError. */
+function groupDecl(project, id, index = gr.groupIndex(project)) {
+	const info = index.get(id);
+	if (!info) throw new EditError(`No group '${gr.groupName(id)}'${gr.isGroupId(id) ? '' : ` (${id})`}`);
+	return info;
+}
+
+/** What a member of a group is: a block, a sub-system or a group. Null for anything else. */
+function memberKind(project, name, index) {
+	if (gr.isGroupId(name)) return index.has(name) ? 'group' : null;
+	if (findBlock(project, name)) return 'block';
+	if (name && systems(project).includes(name)) return 'system';
+	return null;
+}
+
+/** The canvas a member is drawn on: a block's sub-system, a sub-system's parent, a group's own. */
+function memberCanvas(project, name, kind, index) {
+	if (kind === 'group') return index.get(name).system;
+	if (kind === 'block') return systemOf(findBlock(project, name).block);
+	return parentOf(name);
+}
+
+/** Writes which group a member is in: `local` is the group's own name, or null for none. */
+function putInGroup(project, name, kind, local, index) {
+	if (kind === 'group') {
+		const decl = index.get(name).decl;
+		if (local) decl.group = local;
+		else delete decl.group;
+		return;
+	}
+	if (kind === 'block') {
+		const block = findBlock(project, name).block;
+		if (local) block.group = local;
+		else delete block.group;
+		return;
+	}
+	if (local) {
+		const layout = layoutOf(project);
+		layout[name] = { ...(ownEntry(project, name) ?? {}), group: local };
+		return;
+	}
+	const entry = ownEntry(project, name);
+	if (!entry || !Object.prototype.hasOwnProperty.call(entry, 'group')) return;
+	delete entry.group;
+	if (!Object.keys(entry).length) delete project.layout[name];
+}
+
+/**
+ * Puts blocks, sub-systems and groups into a group -- `target`, an id -- or,
+ * with `target` null, takes them out of whatever group they are in, to the top
+ * of their sub-system.
+ *
+ * What a group holds is on its own sub-system's canvas, so something drawn on
+ * another one is refused: moving a block into another sub-system is a change
+ * of its id, and that is `moveSelection`'s business, not a group's. A group
+ * cannot go into itself or into a group inside it.
+ *
+ * A compartment takes along the transfers out of it, and its source terms,
+ * that were in the group it is leaving: they were filed together and stay so.
+ * Those in other groups, or in a group of their own choosing, are left alone.
+ *
+ * Checked first and then done, so a selection either all lands or none of it
+ * does. Changes no number.
+ *
+ * @returns {string[]} every name whose group changed, connections carried along included
+ */
+export function setGroup(project, names, target = null) {
+	const index = gr.groupIndex(project);
+	const into = target ? groupDecl(project, target, index) : null;
+	const wanted = [...new Set(names ?? [])];
+	const items = [];
+	for (const name of wanted) {
+		const kind = memberKind(project, name, index);
+		if (!kind) throw new EditError(`'${gr.groupName(name)}' is not a block, a sub-system or a group`);
+		const canvas = memberCanvas(project, name, kind, index);
+		if (into && canvas !== into.system) {
+			throw new EditError(
+				`'${kind === 'group' ? gr.groupName(name) : name}' is in `
+				+ `${canvas ? `'${canvas}'` : 'the top level'}, and '${into.name}' is a group of `
+				+ `${into.system ? `'${into.system}'` : 'the top level'}: a group holds what is on its `
+				+ 'own sub-system\'s canvas. Move it there first.',
+			);
+		}
+		if (kind === 'group' && into && gr.groupWithin(index, target, name)) {
+			throw new EditError(target === name
+				? `'${into.name}' cannot go into itself`
+				: `'${gr.groupName(name)}' cannot go into '${into.name}', which is inside it`);
+		}
+		items.push({ name, kind, was: kind === 'group' ? index.get(name).parent : groupOf(project, name, index) });
+	}
+	const local = into ? into.name : null;
+	const changed = [];
+	for (const { name, kind, was } of items) {
+		if (was === (target ?? null)) continue;
+		putInGroup(project, name, kind, local, index);
+		// Its place on the grid's diagonal was among the neighbours it has
+		// left; it goes after its new ones.
+		clearMatrixPlace(project, name);
+		changed.push(name);
+		if (kind !== 'block') continue;
+		const found = findBlock(project, name);
+		if (!['compartment', 'farfield', 'waste_package'].includes(found.kind)) continue;
+		const attached = [
+			...(project.transfers ?? []).filter((t) => t.from === name),
+			...(project.inflows ?? []).filter((s) => s.to === name),
+		];
+		for (const conn of attached) {
+			const q = qualifiedName(conn);
+			if (wanted.includes(q) || systemOf(conn) !== systemOf(found.block)) continue;
+			if (gr.groupOfBlock(conn, index) !== was) continue;
+			if (local) conn.group = local;
+			else delete conn.group;
+			changed.push(q);
+		}
+	}
+	return changed;
+}
+
+/**
+ * Makes a group in `system` and puts `members` in it.
+ *
+ * With no `group` named, a group made of things that already share one goes
+ * inside the innermost they share: grouping three blocks of `Wells` makes a
+ * group within `Wells`, not one beside it that takes them out.
+ *
+ * @param {{name?: string, system?: string, group?: string|null,
+ *   members?: string[], at?: {x: number, y: number}|null}} opts `group` is the
+ *   id of the group the new one goes in; `at` where its area starts on the
+ *   diagram, for one made empty.
+ * @returns {string} the new group's id
+ */
+export function addGroup(project, {
+	name, system = '', group = undefined, members = [], at = null,
+} = {}) {
+	if (system && !systems(project).includes(system)) {
+		throw new EditError(`No sub-system named '${system}'`);
+	}
+	const index = gr.groupIndex(project);
+	if (name != null) {
+		const why = validateGroupName(project, name, { system });
+		if (why) throw new EditError(why);
+	}
+	let parent = group;
+	if (parent === undefined) {
+		// The innermost group every member is already in, if they share one.
+		const chains = members.map((n) => {
+			const kind = memberKind(project, n, index);
+			if (!kind) return [];
+			const own = kind === 'group' ? index.get(n).parent : groupOf(project, n, index);
+			return own ? gr.groupChain(index, own) : [];
+		});
+		parent = null;
+		if (chains.length) {
+			const [first, ...rest] = chains;
+			for (const id of first) {
+				if (rest.every((c) => c.includes(id))) parent = id;
+				else break;
+			}
+		}
+		// One of another sub-system's groups is no place for this one: what
+		// is in it is on another canvas, which `setGroup` says.
+		if (parent && index.get(parent).system !== system) parent = null;
+	}
+	if (parent) {
+		const p = groupDecl(project, parent, index);
+		if (p.system !== system) {
+			throw new EditError(`'${p.name}' is a group of ${p.system ? `'${p.system}'` : 'the top level'}, `
+				+ `not of ${system ? `'${system}'` : 'the top level'}`);
+		}
+	}
+	const local = name ?? nextGroupName(project, system);
+	const decl = { name: local };
+	if (system) decl.system = system;
+	if (parent) decl.group = gr.groupName(parent);
+	if (at && Number.isFinite(at.x) && Number.isFinite(at.y)) {
+		decl.x = Math.round(at.x);
+		decl.y = Math.round(at.y);
+	}
+	if (!Array.isArray(project.groups)) project.groups = [];
+	project.groups.push(decl);
+	const id = gr.groupId(system, local);
+	if (members.length) {
+		try {
+			setGroup(project, members, id);
+		} catch (e) {
+			project.groups.splice(project.groups.indexOf(decl), 1);
+			if (!project.groups.length) delete project.groups;
+			throw e;
+		}
+	}
+	return id;
+}
+
+/**
+ * Renames a group, and what its members say. Nothing else names one: an
+ * equation cannot, and an id does not change.
+ *
+ * @returns {string} the group's new id
+ */
+export function renameGroup(project, id, newName) {
+	const index = gr.groupIndex(project);
+	const info = groupDecl(project, id, index);
+	if (newName === info.name) return id;
+	const why = validateGroupName(project, newName, { system: info.system, allow: id });
+	if (why) throw new EditError(why);
+	const old = info.name;
+	const was = (x) => x === old;
+	for (const g of gr.groupList(project)) {
+		if ((g.system ?? '') !== info.system) continue;
+		if (g === info.decl) continue;
+		if (was(g.group)) g.group = newName;
+	}
+	info.decl.name = newName;
+	for (const b of allBlocksLive(project)) {
+		if (systemOf(b) === info.system && was(b.group)) b.group = newName;
+	}
+	for (const path of childSystems(project, info.system)) {
+		const entry = ownEntry(project, path);
+		if (entry && was(entry.group)) entry.group = newName;
+	}
+	return gr.groupId(info.system, newName);
+}
+
+/**
+ * Takes a group away and leaves what was in it where the group was: in the
+ * group around it, or at the top of the sub-system. Nothing is deleted.
+ *
+ * @returns {string|null} the group its members are now in
+ */
+export function dissolveGroup(project, id) {
+	const index = gr.groupIndex(project);
+	const info = groupDecl(project, id, index);
+	const outer = info.parent;
+	const local = outer ? index.get(outer).name : null;
+	const members = gr.groupMembers(project, id, index);
+	for (const g of members.groups) putInGroup(project, g, 'group', local, index);
+	for (const b of members.blocks) putInGroup(project, b, 'block', local, index);
+	for (const s of members.systems) putInGroup(project, s, 'system', local, index);
+	project.groups.splice(project.groups.indexOf(info.decl), 1);
+	if (!project.groups.length) delete project.groups;
+	return outer;
+}
+
+/**
+ * Deletes a group and everything in it, however deep: its blocks, the
+ * sub-systems in it with all they hold, and the groups inside it. Refused, as
+ * any deletion is, while something outside still reads what would go.
+ *
+ * @returns {{removed: string[], systems: string[]}} as `deleteSelection` says
+ */
+export function deleteGroup(project, id) {
+	const index = gr.groupIndex(project);
+	groupDecl(project, id, index);
+	const deep = gr.groupMembers(project, id, index, { deep: true });
+	const result = deleteSelection(project, [...deep.blocks, ...deep.systems]);
+	const going = new Set([id, ...deep.groups]);
+	project.groups = gr.groupList(project).filter((g) => !going.has(gr.groupId(g.system ?? '', g.name)));
+	if (!project.groups.length) delete project.groups;
+	return result;
+}
+
+/** Folds a group up into one node on the diagram, or opens it out again. */
+export function setGroupCollapsed(project, id, collapsed) {
+	const { decl } = groupDecl(project, id);
+	if (collapsed) decl.collapsed = true;
+	else delete decl.collapsed;
+	return project;
+}
+
+/** Whether a group is drawn folded up. */
+export function isGroupCollapsed(project, id, index = gr.groupIndex(project)) {
+	return index.get(id)?.decl.collapsed === true;
+}
+
+/**
+ * Where a group's area is kept, when it is kept: `{x, y, w, h}`, any of them
+ * missing. The diagram draws the area round its members and this together.
+ */
+export function groupBox(project, id, index = gr.groupIndex(project)) {
+	const decl = index.get(id)?.decl;
+	if (!decl) return null;
+	const num = (v) => (Number.isFinite(v) ? v : null);
+	return { x: num(decl.x), y: num(decl.y), w: num(decl.w), h: num(decl.h) };
+}
+
+/** Keeps a group's area; a field given as null is forgotten. */
+export function setGroupBox(project, id, box) {
+	const { decl } = groupDecl(project, id);
+	for (const key of ['x', 'y', 'w', 'h']) {
+		if (!(key in box)) continue;
+		const v = box[key];
+		if (v == null || !Number.isFinite(v)) delete decl[key];
+		else decl[key] = Math.round(key === 'w' || key === 'h' ? Math.min(SHAPE_MAX, Math.max(MIN_SIZE.w, v)) : v);
+	}
+	return project;
+}
+
+/**
+ * Moves a group on the diagram, with everything in it: its kept area, the
+ * blocks and sub-system nodes in it however many groups down, the bends of
+ * the lines drawn wholly among them and the loose ends hanging off them.
+ * Things that have never been placed stay unplaced.
+ */
+export function shiftGroup(project, id, dx, dy, index = gr.groupIndex(project)) {
+	const info = groupDecl(project, id, index);
+	if (!dx && !dy) return project;
+	const deep = gr.groupMembers(project, id, index, { deep: true });
+	const move = (key) => {
+		const entry = ownEntry(project, key);
+		if (!entry || !Number.isFinite(entry.x) || !Number.isFinite(entry.y)) return;
+		entry.x = Math.round(entry.x + dx);
+		entry.y = Math.round(entry.y + dy);
+	};
+	for (const g of [id, ...deep.groups]) {
+		const decl = index.get(g)?.decl;
+		if (decl && Number.isFinite(decl.x) && Number.isFinite(decl.y)) {
+			decl.x = Math.round(decl.x + dx);
+			decl.y = Math.round(decl.y + dy);
+		}
+	}
+	for (const name of [...deep.blocks, ...deep.systems]) move(name);
+	// A line goes with the group when what it is drawn between here does: a
+	// block in the group, or anything inside a sub-system in it. Its bend is
+	// on the canvas it is drawn whole on, which is the deepest both its ends
+	// are inside (an end outside the model has only the other); a pipe into
+	// another sub-system has a place of its own on this canvas. See
+	// `waypointKey`.
+	const here = info.system;
+	const inside = new Set(deep.blocks);
+	const covered = (name) => inside.has(name)
+		|| deep.systems.some((p) => isWithin(parentOf(name), p));
+	const shownHere = (name) => isWithin(parentOf(name), here);
+	const inflows = new Set(project.inflows ?? []);
+	for (const conn of [...(project.transfers ?? []), ...inflows]) {
+		const q = qualifiedName(conn);
+		const ends = [inflows.has(conn) ? null : conn.from, conn.to].filter((e) => e != null);
+		if (!ends.length) continue;
+		const visible = ends.filter(shownHere);
+		if (!visible.length || !visible.every(covered)) continue;
+		if (visible.length < ends.length) { move(waypointKey(q, here)); continue; }
+		const steps = ends.map((e) => parts(parentOf(e)));
+		let k = 0;
+		while (steps.every((s) => k < s.length && s[k] === steps[0][k])) k++;
+		if (steps[0].slice(0, k).join('.') === here) move(waypointKey(q));
+	}
+	return project;
+}
+
+
+/** Takes the groups `drop` picks out of the model's list, and the list itself once empty. */
+function dropGroups(project, drop) {
+	if (!Array.isArray(project.groups)) return;
+	const going = new Set(gr.groupList(project).filter(drop));
+	if (!going.size) return;
+	project.groups = project.groups.filter((g) => !going.has(g));
+	if (!project.groups.length) delete project.groups;
+}
+
 // --- transports -------------------------------------------------------------
 // A sub-system that stands for a chain of N compartments, drawn as its first
 // and its last. What one is, and how it runs, are in ./transport.js and
@@ -4706,33 +5375,90 @@ export function addTransportOperation(project, {
  * corner to put its name and its close button in. A frame is then the square
  * from the header to the last member, which is what `frames` describes.
  *
+ * A **group** is drawn the same way -- one slot folded, a header and its
+ * members unfolded -- marked `group: true`, with its id for a path. It is open
+ * unless it has been folded, the other way round from a sub-system: a group is
+ * the lighter of the two and is there to be seen.
+ *
  * @param open a Set of sub-system paths that are open; everything else is
  *   closed. The root is not a sub-system and is always unfolded.
+ * @param shut a Set of group ids that are folded; every other group is open.
  * @returns {{slots: object[], frames: object[], index: Map}}
  */
-export function matrixPlan(project, open = new Set()) {
+export function matrixPlan(project, open = new Set(), shut = new Set()) {
 	const paths = new Set(systems(project));
 	const isPath = new Set([...(project.farfields ?? []), ...(project.waste_packages ?? [])]
 		.map((f) => qualifiedName(f)));
+	const index = gr.groupIndex(project);
+	// What the grid draws on its diagonal, by the groups each sits in. A group
+	// holding none of it -- the parameters of a model filed apart, as Ecolego
+	// models often have them -- would be an empty frame, and is left off.
+	const onGrid = [
+		...(project.compartments ?? []),
+		...(project.farfields ?? []),
+		...(project.waste_packages ?? []),
+	];
+	const holding = new Map();
+	// Once for each group a thing is in: `containersOf` names every one of
+	// them, the groups around the group it is in among them.
+	const hold = (gid, what) => {
+		const n = holding.get(gid) ?? { blocks: 0, systems: 0 };
+		n[what]++;
+		holding.set(gid, n);
+	};
+	if (index.size) {
+		for (const b of onGrid) {
+			for (const c of gr.containersOf(project, qualifiedName(b), index, { block: b })) {
+				if (gr.isGroupId(c)) hold(c, 'blocks');
+			}
+		}
+		for (const p of paths) {
+			for (const c of gr.containersOf(project, p, index)) {
+				if (gr.isGroupId(c)) hold(c, 'systems');
+			}
+		}
+	}
+	const isOpen = (id) => (gr.isGroupId(id) ? !shut.has(id) : open.has(id));
 
 	const slots = [];
 	const frames = [];
-	const walk = (system, depth) => {
-		for (const { id, child } of diagonalOf(project, system)) {
+	const walk = (system, group, depth) => {
+		// Which run of the diagonal a slot moves along -- its sub-system and
+		// the group it is in there -- and that group, for what is said about it.
+		const home = `${system}\u0000${group ?? ''}`;
+		const at = { home, inGroup: group ?? null };
+		for (const { id, child, grp } of diagonalOf(project, system, group, index)) {
+			if (grp) {
+				const held = holding.get(id);
+				if (!held?.blocks) continue;
+				const local = index.get(id).name;
+				if (isOpen(id)) {
+					const from = slots.length;
+					slots.push({ kind: 'head', path: id, local, depth, group: true, ...at });
+					walk(system, id, depth + 1);
+					frames.push({ path: id, from, to: slots.length - 1, depth, group: true });
+				} else {
+					slots.push({
+						kind: 'group', path: id, local, depth, group: true, ...at,
+						blocks: held.blocks, systems: held.systems,
+					});
+				}
+				continue;
+			}
 			if (!child) {
 				slots.push({
-					kind: 'block', name: id, local: baseName(id), isPath: isPath.has(id), depth,
+					kind: 'block', name: id, local: baseName(id), isPath: isPath.has(id), depth, ...at,
 				});
 				continue;
 			}
-			if (open.has(child)) {
+			if (isOpen(child)) {
 				const from = slots.length;
-				slots.push({ kind: 'head', path: child, local: baseName(child), depth });
-				walk(child, depth + 1);
+				slots.push({ kind: 'head', path: child, local: baseName(child), depth, ...at });
+				walk(child, null, depth + 1);
 				frames.push({ path: child, from, to: slots.length - 1, depth });
 			} else {
 				slots.push({
-					kind: 'group', path: child, local: baseName(child), depth,
+					kind: 'group', path: child, local: baseName(child), depth, ...at,
 					// What it holds, for the badge on its cell. Only what
 					// would appear on this grid -- the compartments and the
 					// far-field paths -- because that is what "open it and
@@ -4748,7 +5474,7 @@ export function matrixPlan(project, open = new Set()) {
 			}
 		}
 	};
-	walk('', 0);
+	walk('', null, 0);
 	// The world beyond the model, last: it is not part of any sub-system, and
 	// it is on the grid only when something actually crosses that boundary. A
 	// row and a column standing empty in every model that has no source term
@@ -4764,30 +5490,39 @@ export function matrixPlan(project, open = new Set()) {
 	const idOf = (slot) => (slot.kind === 'block' ? slot.name
 		: slot.kind === 'group' ? slot.path
 			: slot.kind === 'outside' ? null : undefined);
-	const index = new Map();
+	const index2 = new Map();
 	slots.forEach((slot, at) => {
 		const id = idOf(slot);
-		if (id !== undefined) index.set(id, at);
+		if (id !== undefined) index2.set(id, at);
 	});
 
 	/**
-	 * Which slot a block's flux lands on: the outermost *closed* sub-system it
-	 * is inside, or the block itself when every ancestor is open. Null stays
-	 * null -- outside the model is outside the model.
+	 * Which slot a block's flux lands on: the outermost *closed* container it
+	 * is inside -- a sub-system, or a group -- or the block itself when every
+	 * one of them is open. Null stays null -- outside the model is outside the
+	 * model.
 	 */
+	const blockOf = new Map(onGrid.map((b) => [qualifiedName(b), b]));
 	const representative = (name) => {
 		if (name == null) return null;
 		const owner = parentOf(name);
-		if (!owner) return name;
-		const p = parts(owner);
-		for (let i = 1; i <= p.length; i++) {
-			const path = p.slice(0, i).join('.');
-			if (paths.has(path) && !open.has(path)) return path;
+		if (!index.size) {
+			if (!owner) return name;
+			const p = parts(owner);
+			for (let i = 1; i <= p.length; i++) {
+				const path = p.slice(0, i).join('.');
+				if (paths.has(path) && !open.has(path)) return path;
+			}
+			return name;
+		}
+		const block = blockOf.get(name) ?? findBlock(project, name)?.block ?? null;
+		for (const c of gr.containersOf(project, name, index, { block })) {
+			if (gr.isGroupId(c) ? (holding.get(c)?.blocks && !isOpen(c)) : (paths.has(c) && !isOpen(c))) return c;
 		}
 		return name;
 	};
 
-	return { slots, frames, index, representative };
+	return { slots, frames, index: index2, representative };
 }
 
 // --- the grid's diagonal, arranged by hand ------------------------------------
@@ -4814,32 +5549,46 @@ function ownEntry(project, id) {
 	return entry && typeof entry === 'object' ? entry : null;
 }
 
-/** Where `id` was put on the diagonal; `Infinity` for nowhere in particular. */
-function matrixPlace(project, id) {
-	const place = ownEntry(project, id)?.[MATRIX_PLACE];
+/**
+ * Where `id` was put on the diagonal; `Infinity` for nowhere in particular. A
+ * group keeps its place in its own declaration, having no layout entry.
+ */
+function matrixPlace(project, id, index = null) {
+	const place = gr.isGroupId(id)
+		? (index ?? gr.groupIndex(project)).get(id)?.decl[MATRIX_PLACE]
+		: ownEntry(project, id)?.[MATRIX_PLACE];
 	return Number.isFinite(place) ? place : Infinity;
 }
 
 /**
- * What the grid draws on its diagonal for one sub-system (`''`: the top level),
- * in order: each block as `{id}`, each sub-system directly inside it as `{id,
- * child}` with `child` its path.
+ * What the grid draws on its diagonal for one sub-system (`''`: the top level)
+ * -- or, given a group of it, for that group -- in order: each block as
+ * `{id}`, each sub-system as `{id, child}` with `child` its path, each group
+ * as `{id, grp: true}`. Only what sits directly there: a block in a group is
+ * the group's, not the sub-system's.
  *
  * What has been put somewhere goes by its place. What has not comes after it,
  * in the model's own order: compartments, far-field paths and waste packages as
- * the model lists them, then the sub-systems. So a model nobody has arranged is
- * drawn as it always was, and a block added to a run that has been arranged
- * arrives at its end.
+ * the model lists them, then the sub-systems, then the groups. So a model
+ * nobody has arranged is drawn as it always was, and a block added to a run
+ * that has been arranged arrives at its end.
  */
-function diagonalOf(project, system) {
+function diagonalOf(project, system, group = null, index = gr.groupIndex(project)) {
+	const mine = (gid) => (gid ?? null) === (group ?? null);
 	const items = [
 		...(project.compartments ?? []),
 		...(project.farfields ?? []),
 		...(project.waste_packages ?? []),
-	].filter((b) => systemOf(b) === system).map((b) => ({ id: qualifiedName(b) }));
-	for (const child of childSystems(project, system)) items.push({ id: child, child });
+	].filter((b) => systemOf(b) === system && mine(gr.groupOfBlock(b, index)))
+		.map((b) => ({ id: qualifiedName(b) }));
+	for (const child of childSystems(project, system)) {
+		if (mine(gr.groupOfSystem(project, child, index))) items.push({ id: child, child });
+	}
+	for (const g of gr.groupsOn(index, system)) {
+		if (mine(g.parent)) items.push({ id: g.id, grp: true });
+	}
 	// A stable sort, so what has no place keeps the model's order among itself.
-	const place = new Map(items.map((x) => [x, matrixPlace(project, x.id)]));
+	const place = new Map(items.map((x) => [x, matrixPlace(project, x.id, index)]));
 	return items.sort((a, b) => {
 		const pa = place.get(a);
 		const pb = place.get(b);
@@ -4848,19 +5597,29 @@ function diagonalOf(project, system) {
 }
 
 /**
- * The blocks and sub-systems on the grid's diagonal inside one sub-system
- * (`''`: the top level), in the order the grid draws them: a block by its
- * qualified name, a sub-system by its path.
+ * The blocks, sub-systems and groups on the grid's diagonal inside one
+ * sub-system (`''`: the top level) -- or inside one of its groups, given its
+ * id -- in the order the grid draws them: a block by its qualified name, a
+ * sub-system by its path, a group by its id.
  */
-export function matrixOrder(project, system = '') {
-	return diagonalOf(project, system).map((x) => x.id);
+export function matrixOrder(project, system = '', group = null) {
+	return diagonalOf(project, system, group).map((x) => x.id);
+}
+
+/** The sub-system and the group whose run on the diagonal `id` is part of. */
+function matrixHome(project, id, index) {
+	if (gr.isGroupId(id)) {
+		const info = index.get(id);
+		return { system: info?.system ?? gr.groupSystem(id), group: info?.parent ?? null };
+	}
+	return { system: parentOf(id), group: groupOf(project, id, index) };
 }
 
 /**
- * Puts a block or a sub-system somewhere else on the transfer grid's
- * diagonal: just before `before`, another of those in the same sub-system, or
- * after the last of them when `before` is null. A sub-system takes its whole
- * run with it, since what is inside one sits together on both axes.
+ * Puts a block, a sub-system or a group somewhere else on the transfer grid's
+ * diagonal: just before `before`, another of those in the same run, or after
+ * the last of them when `before` is null. A sub-system or a group takes its
+ * whole run with it, since what is inside one sits together on both axes.
  *
  * Each of them is given its place, so that the order holds whatever is added
  * later: that goes at the end. An arrangement of a view, as a position on the
@@ -4869,21 +5628,28 @@ export function matrixOrder(project, system = '') {
  * @returns {boolean} whether the order changed
  */
 export function moveOnMatrix(project, id, before = null) {
-	const system = parentOf(id);
-	const order = matrixOrder(project, system);
+	const index = gr.groupIndex(project);
+	const { system, group } = matrixHome(project, id, index);
+	const order = diagonalOf(project, system, group, index).map((x) => x.id);
 	if (!order.includes(id)) {
 		throw new EditError(`'${id}' is not drawn on the diagonal of the grid`);
 	}
 	if (before === id) return false;
 	if (before != null && !order.includes(before)) {
+		const among = group ? `group '${index.get(group)?.name ?? group}'` : (system ? `'${system}'` : 'the top level');
 		throw new EditError(`'${before}' is not beside '${id}' on the grid: it moves among the other `
-			+ `blocks and sub-systems of ${system ? `'${system}'` : 'the top level'}`);
+			+ `blocks and sub-systems of ${among}`);
 	}
 	const next = order.filter((x) => x !== id);
 	next.splice(before == null ? next.length : next.indexOf(before), 0, id);
 	if (next.every((x, i) => x === order[i])) return false;
 	const layout = layoutOf(project);
 	next.forEach((x, i) => {
+		if (gr.isGroupId(x)) {
+			const decl = index.get(x)?.decl;
+			if (decl) decl[MATRIX_PLACE] = i;
+			return;
+		}
 		const entry = ownEntry(project, x) ?? {};
 		entry[MATRIX_PLACE] = i;
 		layout[x] = entry;
@@ -4892,13 +5658,20 @@ export function moveOnMatrix(project, id, before = null) {
 }
 
 /**
- * Forgets where `id` was put on the grid's diagonal. What a block or a
- * sub-system wants when it moves into another sub-system: its place was among
- * the neighbours it has left, and it goes after its new ones.
+ * Forgets where `id` was put on the grid's diagonal. What a block, a
+ * sub-system or a group wants when it moves into another sub-system or group:
+ * its place was among the neighbours it has left, and it goes after its new
+ * ones.
  *
  * @returns {boolean} whether it had a place
  */
 export function clearMatrixPlace(project, id) {
+	if (gr.isGroupId(id)) {
+		const decl = gr.groupIndex(project).get(id)?.decl;
+		if (!decl || !Object.prototype.hasOwnProperty.call(decl, MATRIX_PLACE)) return false;
+		delete decl[MATRIX_PLACE];
+		return true;
+	}
 	const entry = ownEntry(project, id);
 	if (!entry || !Object.prototype.hasOwnProperty.call(entry, MATRIX_PLACE)) return false;
 	delete entry[MATRIX_PLACE];
@@ -4908,11 +5681,14 @@ export function clearMatrixPlace(project, id) {
 
 /**
  * What can hold a place on the diagonal inside `system`, however deep: every
- * block the grid draws and every sub-system, `system` itself apart -- where it
- * sits is among its own neighbours, outside it.
+ * block the grid draws, every sub-system and every group, `system` itself
+ * apart -- where it sits is among its own neighbours, outside it.
  */
 function placesWithin(project, system) {
-	if (!project.layout) return [];
+	const groupsInside = gr.groupList(project)
+		.filter((g) => isWithin(g.system ?? '', system))
+		.map((g) => gr.groupId(g.system ?? '', g.name));
+	if (!project.layout) return groupsInside;
 	return [
 		...[
 			...(project.compartments ?? []),
@@ -4920,12 +5696,15 @@ function placesWithin(project, system) {
 			...(project.waste_packages ?? []),
 		].filter((b) => isWithin(systemOf(b), system)).map((b) => qualifiedName(b)),
 		...systems(project).filter((p) => p !== system && isWithin(p, system)),
+		...groupsInside,
 	];
 }
 
 /** Whether anything inside `system` (`''`: the model) has been put somewhere on the diagonal. */
 export function hasMatrixOrder(project, system = '') {
+	const index = gr.groupIndex(project);
 	return placesWithin(project, system).some((id) => {
+		if (gr.isGroupId(id)) return Object.prototype.hasOwnProperty.call(index.get(id)?.decl ?? {}, MATRIX_PLACE);
 		const entry = ownEntry(project, id);
 		return !!entry && Object.prototype.hasOwnProperty.call(entry, MATRIX_PLACE);
 	});
@@ -4951,11 +5730,21 @@ export function clearMatrixOrder(project, system = '') {
  * is no reason to lose the other.
  */
 export function clearDiagramLayout(project) {
+	// A group's area goes with the positions it was drawn round. Whether it is
+	// folded up stays, being a choice rather than a place.
+	for (const g of gr.groupList(project)) {
+		for (const key of ['x', 'y', 'w', 'h']) delete g[key];
+	}
 	if (!project.layout) return project;
 	const layout = layoutOf(project);
 	for (const key of Object.keys(layout)) {
-		const place = ownEntry(project, key)?.[MATRIX_PLACE];
-		if (place !== undefined) layout[key] = { [MATRIX_PLACE]: place };
+		// The group a sub-system sits in is kept in its entry too, and is not
+		// layout at all: it is what the sub-system is filed under.
+		const entry = ownEntry(project, key);
+		const keep = {};
+		if (entry?.[MATRIX_PLACE] !== undefined) keep[MATRIX_PLACE] = entry[MATRIX_PLACE];
+		if (entry?.group !== undefined) keep.group = entry.group;
+		if (Object.keys(keep).length) layout[key] = keep;
 		else delete layout[key];
 	}
 	return project;
@@ -5221,7 +6010,14 @@ export function moveSystem(project, path, parent = '') {
 	const taken = new Set([...systems(project), ...blockNames(project)]);
 	let local = baseName(path);
 	for (let i = 1; taken.has(qualify(parent, local)); i++) local = `${baseName(path)}${i}`;
-	return relocateSystem(project, path, qualify(parent, local));
+	const target = relocateSystem(project, path, qualify(parent, local));
+	// The group it sat in was one of the sub-system it has left.
+	const entry = ownEntry(project, target);
+	if (entry && Object.prototype.hasOwnProperty.call(entry, 'group')) {
+		delete entry.group;
+		if (!Object.keys(entry).length) delete project.layout[target];
+	}
+	return target;
 }
 
 /**
@@ -5281,6 +6077,14 @@ function relocateSystem(project, path, target) {
 		if (to) sh.system = to;
 		else delete sh.system;
 	}
+	// And so do its groups, and those of every sub-system inside it: each
+	// belongs to the sub-system whose blocks it holds.
+	for (const g of gr.groupList(project)) {
+		if (!isWithin(g.system ?? '', path)) continue;
+		const to = reparent(g.system ?? '', path, target);
+		if (to) g.system = to;
+		else delete g.system;
+	}
 	return target;
 }
 
@@ -5309,6 +6113,9 @@ export function deleteSystem(project, path, { contents = 'move' } = {}) {
 		// *outside* refuses it, which is the point of checking at all.
 		deleteBlocks(project, blocksIn(project, path, { deep: true })
 			.map((b) => qualifiedName(b)));
+		// Its groups, and those of every sub-system inside it, go with what
+		// they held.
+		dropGroups(project, (g) => isWithin(g.system ?? '', path));
 	} else {
 		// A transport is not dissolved. Its parts are not blocks that happen
 		// to share a sub-system: Begin and End are one compartment repeated N
@@ -5349,6 +6156,32 @@ export function deleteSystem(project, path, { contents = 'move' } = {}) {
 		const homeOf = (system) => (system === path ? parent
 			: systemsOut.get(system) ?? reparent(system, path, parent));
 
+		// Its groups come out with what they hold, numbered past the groups
+		// already there; the groups of the sub-systems inside it go along with
+		// those. What was in no group at its top lands in the group the
+		// sub-system itself sat in, if it sat in one -- where the sub-system
+		// was, which is what dissolving a container means. Worked out now,
+		// while every member still says what it is in.
+		const groupIdx = gr.groupIndex(project);
+		const around = gr.groupOfSystem(project, path, groupIdx);
+		const aroundName = around ? groupIdx.get(around).name : null;
+		const takenGroups = new Set(gr.groupsOn(groupIdx, parent).map((g) => g.name));
+		const groupRename = new Map();
+		for (const g of gr.groupsOn(groupIdx, path)) {
+			let local = g.name;
+			for (let i = 1; takenGroups.has(local); i++) local = `${g.name}${i}`;
+			takenGroups.add(local);
+			groupRename.set(g.id, local);
+		}
+		const outGroup = (id) => (id ? groupRename.get(id) : aroundName) ?? null;
+		const topBlocks = new Map();
+		for (const b of allBlocksLive(project)) {
+			if (systemOf(b) === path) topBlocks.set(b, outGroup(gr.groupOfBlock(b, groupIdx)));
+		}
+		const topSystems = new Map(nested.filter((p) => parentOf(p) === path)
+			.map((p) => [p, outGroup(gr.groupOfSystem(project, p, groupIdx))]));
+		const groupsOut = [...groupIdx.values()].filter((g) => isWithin(g.system, path));
+
 		// Names that would collide once the wrapper is gone are numbered.
 		const moved = new Map();
 		const taken = new Set(blockNames(project));
@@ -5379,6 +6212,33 @@ export function deleteSystem(project, path, { contents = 'move' } = {}) {
 			const layout = layoutOf(project);
 			layout[now] = layout[was];
 			delete layout[was];
+		}
+		for (const [b, name] of topBlocks) {
+			if (name) b.group = name;
+			else delete b.group;
+		}
+		for (const [was, name] of topSystems) {
+			const now = systemsOut.get(was);
+			if (name) {
+				const layout = layoutOf(project);
+				layout[now] = { ...(ownEntry(project, now) ?? {}), group: name };
+				continue;
+			}
+			const entry = ownEntry(project, now);
+			if (!entry || !Object.prototype.hasOwnProperty.call(entry, 'group')) continue;
+			delete entry.group;
+			if (!Object.keys(entry).length) delete project.layout[now];
+		}
+		for (const g of groupsOut) {
+			const { decl } = g;
+			const to = homeOf(g.system);
+			if (to) decl.system = to;
+			else delete decl.system;
+			if (g.system !== path) continue;
+			decl.name = groupRename.get(g.id);
+			const up = g.parent ? groupRename.get(g.parent) : aroundName;
+			if (up) decl.group = up;
+			else delete decl.group;
 		}
 	}
 
@@ -5489,6 +6349,9 @@ export function moveBlock(project, name, system = '', record = null) {
 	block.name = local;
 	if (system) block.system = system;
 	else delete block.system;
+	// A group is a set of one sub-system's blocks, so a block that leaves the
+	// sub-system leaves its group. See ./groups.js.
+	delete block.group;
 	record?.set(name, target);
 	// The connections that belong with it go too, or a transfer would be left
 	// in a sub-system its donor has left.
@@ -5815,6 +6678,12 @@ export function copySelection(project, names) {
 		inner: systems(project)
 			.filter((p) => p !== path && isWithin(p, path) && ownEntry(project, p))
 			.map((p) => [below(p, path), structuredClone(ownEntry(project, p))]),
+		// Its groups and those of the sub-systems in it, by the canvas each is
+		// on relative to it: what its blocks say they are in comes along only
+		// if this does.
+		groups: gr.groupList(project)
+			.filter((g) => isWithin(g.system ?? '', path))
+			.map((g) => ({ ...structuredClone(g), rel: below(g.system ?? '', path) })),
 	}));
 	const partOf = (system) => parts.findIndex((p) => isWithin(system, p.path));
 	const within = allBlocks(project)
@@ -6237,6 +7106,39 @@ export function pasteBlocks(project, payload, { system = null, at = null } = {})
 		project.disabled_systems = [...new Set([...disabledSystems(project), ...newDisabled])];
 	}
 
+	// The groups of the copied sub-systems, on the copies' canvases. A
+	// clipboard is text another tab wrote, so only a group of a sub-system this
+	// paste makes is taken, and only once.
+	const madeHere = new Set(newSystems);
+	parts.forEach((part, i) => {
+		for (const g of Array.isArray(part.groups) ? part.groups : []) {
+			if (!g || typeof g !== 'object' || typeof g.name !== 'string' || !NAME_RE.test(g.name)) continue;
+			const { rel, system: _was, ...rest } = g;
+			const home = under(roots[i], typeof rel === 'string' ? rel : '');
+			if (!madeHere.has(home)) continue;
+			if (gr.groupIndex(project).has(gr.groupId(home, g.name))) continue;
+			if (!Array.isArray(project.groups)) project.groups = [];
+			project.groups.push({ ...rest, system: home });
+		}
+	});
+	// What a pasted block or sub-system says it is in is a group of the canvas
+	// it came from. Where it lands has that group, it stays in it -- a copy
+	// made beside its original is filed with it -- and otherwise it is in
+	// none.
+	const groupIdx = gr.groupIndex(project);
+	for (const c of clones) {
+		if (c.item.part >= 0 || c.block.group == null) continue;
+		if (!gr.groupOfBlock(c.block, groupIdx)) delete c.block.group;
+	}
+	for (const root of roots) {
+		const entry = ownEntry(project, root);
+		if (!entry || entry.group == null) continue;
+		if (!gr.groupOfSystem(project, root, groupIdx)) {
+			delete entry.group;
+			if (!Object.keys(entry).length) delete project.layout[root];
+		}
+	}
+
 	// What was drawn on the copied sub-system's canvases. New ids, because a
 	// shape's id is its identity in this model and the original's are taken;
 	// the coordinates are its own canvas's and land unchanged, exactly as the
@@ -6320,6 +7222,11 @@ export function deleteSelection(project, names) {
 	);
 	const removed = deleteBlocks(project, [...new Set([...blocks, ...inside])]);
 	if (chosen.length) {
+		dropGroups(project, (g) => chosen.some((c) => isWithin(g.system ?? '', c)));
+		// The shapes drawn inside them go too, as they do when a sub-system
+		// is deleted with everything in it (`deleteSystem`): left behind,
+		// they would come back on any sub-system given the same name.
+		deleteShapes(project, chosen.flatMap((c) => shapesInDeep(project, c).map((sh) => sh.id)));
 		project.systems = systems(project).filter(
 			(p) => !chosen.some((c) => isWithin(p, c)),
 		);
@@ -9816,11 +10723,16 @@ export function searchBlocks(project, filter = {}) {
  *
  * @param {object} project
  * @param {{query?: string, kinds?: string[]|Set<string>}} [filter]
- * @param {{group?: boolean}} [opts]  `group` puts a sub-system's blocks in
- *   kind order before name order, which is what the grouped view reads: it
- *   takes each run of one kind as a heading. Ungrouped, the order is the name
- *   alone -- with no headings, kind order is an order only somebody who knows
- *   the collection list can see, and a name is what is being looked for.
+ * @param {{group?: boolean, groups?: boolean}} [opts]  `group` puts a
+ *   sub-system's blocks in kind order before name order, which is what the
+ *   grouped view reads: it takes each run of one kind as a heading. Ungrouped,
+ *   the order is the name alone -- with no headings, kind order is an order
+ *   only somebody who knows the collection list can see, and a name is what is
+ *   being looked for. `groups` files what the model's own groups hold under
+ *   them (see ./groups.js): each node then has `groups` beside `systems`, each
+ *   of them `{id, name, system, groups, systems, blocks, count, deep}`, and a
+ *   block or a sub-system in a group is under the group rather than straight
+ *   under its sub-system. Without it the groups are not in the tree at all.
  * @returns {{path: string, name: string, systems: object[], blocks: object[],
  *   count: number, deep: number}} the top level, whose `systems` are its
  *   direct children, and so on down.
@@ -9872,6 +10784,52 @@ export function blockTree(project, filter = {}, opts = {}) {
 	// builds a collator each call, and on a model of 3,789 blocks that alone
 	// was 50 ms of every redraw of the panel.
 	const byName = NAME_ORDER.compare;
+	const sortBlocks = (list) => list.sort(opts.group
+		? (a, b) => (rank.get(a.collection) - rank.get(b.collection))
+			|| byName(a.label, b.label)
+		: (a, b) => byName(a.label, b.label));
+	const index = opts.groups ? gr.groupIndex(project) : null;
+	// The model's own groups of one sub-system, with what they hold taken out
+	// of the sub-system's lists. Groups nest, so a group's members are its
+	// blocks, the sub-systems in it and the groups inside it.
+	const fileGroups = (node) => {
+		const made = new Map();
+		for (const g of gr.groupsOn(index, node.path)) {
+			made.set(g.id, {
+				id: g.id, name: g.name, system: node.path,
+				groups: [], systems: [], blocks: [], count: 0, deep: 0,
+			});
+		}
+		const top = [];
+		for (const g of gr.groupsOn(index, node.path)) {
+			(g.parent ? made.get(g.parent).groups : top).push(made.get(g.id));
+		}
+		node.blocks = node.blocks.filter((b) => {
+			const gid = gr.groupOfBlock(b.block, index);
+			if (!gid) return true;
+			made.get(gid).blocks.push(b);
+			return false;
+		});
+		node.systems = node.systems.filter((sub) => {
+			const gid = gr.groupOfSystem(project, sub.path, index);
+			if (!gid) return true;
+			made.get(gid).systems.push(sub);
+			return false;
+		});
+		const finishGroup = (g) => {
+			for (const inner of g.groups) finishGroup(inner);
+			g.groups.sort((a, b) => byName(a.name, b.name));
+			g.systems.sort((a, b) => byName(a.name, b.name));
+			sortBlocks(g.blocks);
+			if (filtering) g.groups = g.groups.filter((x) => x.deep > 0);
+			g.count = g.blocks.length;
+			g.deep = g.count + g.systems.reduce((t, x) => t + x.deep, 0)
+				+ g.groups.reduce((t, x) => t + x.deep, 0);
+			return g;
+		};
+		node.groups = top.map(finishGroup).sort((a, b) => byName(a.name, b.name));
+		if (filtering) node.groups = node.groups.filter((g) => g.deep > 0);
+	};
 	const finish = (node) => {
 		for (const s of node.systems) finish(s);
 		node.systems.sort((a, b) => byName(a.name, b.name));
@@ -9880,13 +10838,13 @@ export function blockTree(project, filter = {}, opts = {}) {
 		// makes. Ungrouped, by name: there are no headings to file a block
 		// under, so kind order is an order only somebody who already knows the
 		// collection list can see, and the thing being looked for is a name.
-		node.blocks.sort(opts.group
-			? (a, b) => (rank.get(a.collection) - rank.get(b.collection))
-				|| byName(a.label, b.label)
-			: (a, b) => byName(a.label, b.label));
+		sortBlocks(node.blocks);
 		if (filtering) node.systems = node.systems.filter((s) => s.deep > 0);
+		// Counted before the groups take theirs: the blocks of a sub-system are
+		// its blocks whatever they are filed under.
 		node.count = node.blocks.length;
 		node.deep = node.count + node.systems.reduce((t, s) => t + s.deep, 0);
+		if (index) fileGroups(node);
 		return node;
 	};
 	return finish(at(''));

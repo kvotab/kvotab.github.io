@@ -810,9 +810,11 @@ def _settle_transfer_events(project: Dict[str, Any], report: 'ImportReport') -> 
             block['comment'] = t['comment']
         if t.get('enabled') is False:
             block['enabled'] = False
-        # The transfer's colour, on the block it became.
+        # The transfer's colour, on the block it became, and its group.
         if t.get('color'):
             block['color'] = t['color']
+        if t.get('group'):
+            block['group'] = t['group']
         block['timing'] = 'trigger'
         block['trigger'] = event
         block['actions'] = [{'kind': 'move', 'from': t['from'], 'to': t.get('to'), 'fraction': t['rate']}]
@@ -1226,22 +1228,27 @@ def _read_hierarchy(data_model: Node, project: Dict[str, Any], names: _NameMappe
                     report: ImportReport) -> Dict[str, Any]:
     """``<hierarchy-model>``: every sub-system, parents before children.
 
-    A sub-system is a namespace and gives its blocks a path; a *group* is only
-    a visual grouping and is flattened away; a *transport* is marked; one the
-    file switches off is carried as switched off. ``readHierarchy`` in
-    ``src/io/eco.js``.
+    A sub-system is a namespace and gives its blocks a path; a *group* is no
+    namespace and comes across as one of this tool's groups, of the sub-system
+    around it, a sub-system in one saying so in its layout entry; a *transport*
+    is marked; one the file switches off is carried as switched off.
+    ``readHierarchy`` in ``src/io/eco.js``.
     """
     model = child(data_model, 'hierarchy-model')
     path_by_id: Dict[str, str] = {}
     systems: List[str] = []
     disabled_paths: List[str] = []
     transports: List[str] = []
+    # The groups, by the id their blocks name as their sub-system.
+    group_by_id: Dict[str, Dict[str, str]] = {}
     out = {'path_by_id': path_by_id, 'systems': systems, 'disabled_paths': disabled_paths,
-           'transports': transports}
+           'transports': transports, 'group_by_id': group_by_id}
     if model is None:
         return out
 
-    groups = 0
+    groups: List[Dict[str, Any]] = []
+    group_names: Dict[str, Set[str]] = {}
+    grouped: List[Tuple[str, str]] = []
     for el in children(model, 'sub-system-block'):
         sid = child_text(el, 'id')
         original = el.attrs.get('name')
@@ -1252,10 +1259,30 @@ def _read_hierarchy(data_model: Node, project: Dict[str, Any], names: _NameMappe
         parent_id = child_text(el, 'sub-system')
         parent_path = path_by_id.get(parent_id, '') if parent_id else ''
         kind = el.attrs.get('type', '')
+        # The group it sits in, when its parent is one.
+        in_group = group_by_id.get(parent_id) if parent_id else None
 
         if kind == 'group':
-            groups += 1
             path_by_id[sid] = parent_path
+            taken = group_names.setdefault(parent_path, set())
+            clean = js_identifier(js_trim(str(original)))
+            if clean[:1].isascii() and clean[:1].isdigit():
+                clean = '_' + clean
+            if clean == '':
+                clean = 'Group'
+            local = clean
+            n = 1
+            while local in taken or local in _PROTOTYPE_KEYS:
+                local = f'{clean}_{n}'
+                n += 1
+            taken.add(local)
+            group_by_id[sid] = {'system': parent_path, 'name': local}
+            decl: Dict[str, Any] = {'name': local}
+            if parent_path:
+                decl['system'] = parent_path
+            if in_group is not None:
+                decl['group'] = in_group['name']
+            groups.append(decl)
             continue
         if kind == 'external':
             report.warn(
@@ -1270,18 +1297,19 @@ def _read_hierarchy(data_model: Node, project: Dict[str, Any], names: _NameMappe
             transports.append(path)
         if not child_bool(el, 'enabled', True):
             disabled_paths.append(path)
+        if in_group is not None:
+            grouped.append((path, in_group['name']))
 
-    if groups:
-        report.warn(
-            f"{groups} group{' was' if groups == 1 else 's were'} flattened: a group is a "
-            'visual grouping in Ecolego and does not scope names, so its blocks belong '
-            'to the sub-system around it.')
     if systems:
         project['systems'] = systems
     if transports:
         project['transports'] = transports
     if disabled_paths:
         project['disabled_systems'] = disabled_paths
+    if groups:
+        project['groups'] = groups
+    if grouped:
+        project['layout'] = {path: {'group': name} for path, name in grouped}
     return out
 
 
@@ -1795,6 +1823,9 @@ def _read_blocks(data_model: Node, project: Dict[str, Any], names: _NameMapper, 
     # The colour each block was given, by the qualified name it ends up with;
     # put on the blocks once they all exist. See :func:`_block_colour`.
     colours: Dict[str, str] = {}
+    # And the group each is in, the same way. See :func:`_read_hierarchy`.
+    group_by_id = hierarchy['group_by_id'] if hierarchy is not None else {}
+    group_of: Dict[str, str] = {}
 
     block_name_by_id: Dict[str, str] = {}
     path_by_id = hierarchy['path_by_id'] if hierarchy is not None else {}
@@ -1900,6 +1931,9 @@ def _read_blocks(data_model: Node, project: Dict[str, Any], names: _NameMapper, 
         colour = _block_colour(el, type_)
         if colour:
             colours[f'{system}.{name}' if system else name] = colour
+        grouping = group_by_id.get(child_text(el, 'sub-system'))
+        if grouping is not None and grouping['system'] == system:
+            group_of[f'{system}.{name}' if system else name] = grouping['name']
         # Dimension lists in declared order, for resolving entry ids -- and,
         # where the file names none but says there is one, the list that
         # stands for the intersection of a transfer's two ends.
@@ -2263,6 +2297,21 @@ def _read_blocks(data_model: Node, project: Dict[str, Any], names: _NameMapper, 
                 colour = colours.get(_qualified(block))
                 if colour:
                     block['color'] = colour
+
+    # The groups, as the colours are: by qualified name, and the second half of
+    # a transfer made in two in the group of the first. A source is a transfer
+    # the file draws out of one, and is in its group too.
+    for whole, twin in twins.items():
+        if whole in group_of:
+            group_of[twin] = group_of[whole]
+    if group_of:
+        for collection in ('compartments', 'expressions', 'transfers', 'parameters', 'functions', 'inflows',
+                           'lookups', 'index_reductions', 'block_reductions',
+                           'min_maxes', 'running_means', 'snapshots', 'delays', 'triggers'):
+            for block in project.get(collection) or []:
+                group = group_of.get(_qualified(block))
+                if group:
+                    block['group'] = group
 
     wiring['id_by_guid'] = id_by_guid
     return block_name_by_id, wiring, twins, generals

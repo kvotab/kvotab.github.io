@@ -566,6 +566,9 @@ struct IndexIds {
 struct Hierarchy {
     std::unordered_map<std::string, std::string> path_by_id;
     std::vector<std::string> systems, disabled_paths, transports;
+    // The groups, by the id their blocks name as their sub-system: the sub-system they sort and
+    // the name they have there.
+    std::unordered_map<std::string, std::pair<std::string, std::string>> group_by_id;
 };
 
 struct Link {
@@ -1228,13 +1231,16 @@ private:
     }
 
     // <hierarchy-model>: every sub-system, parents before children. A sub-system is a namespace
-    // and gives its blocks a path; a group is only a visual grouping and is flattened away; a
+    // and gives its blocks a path; a group is no namespace and comes across as one of this tool's
+    // groups, of the sub-system around it, a sub-system in one saying so in its layout entry; a
     // transport is marked; one the file switches off is carried as switched off.
     Hierarchy read_hierarchy(const XmlNode* data_model) {
         const XmlNode* model = child(data_model, "hierarchy-model");
         Hierarchy out;
         if (!model) return out;
-        long long groups = 0;
+        Json groups = Json::array();
+        std::unordered_map<std::string, std::unordered_set<std::string>> group_names;
+        std::vector<std::pair<std::string, std::string>> grouped;
         for (const XmlNode* el : children(model, "sub-system-block")) {
             const OptStr sid = child_text(el, "id");
             const OptStr original = attr(*el, "name");
@@ -1247,9 +1253,30 @@ private:
                 if (it != out.path_by_id.end()) parent_path = it->second;
             }
             const std::string kind = attr_or(*el, "type", "");
+            // The group it sits in, when its parent is one.
+            const std::pair<std::string, std::string>* in_group = nullptr;
+            if (truthy(parent_id)) {
+                auto it = out.group_by_id.find(*parent_id);
+                if (it != out.group_by_id.end()) in_group = &it->second;
+            }
             if (kind == "group") {
-                groups++;
                 out.path_by_id[*sid] = parent_path;
+                std::unordered_set<std::string>& taken = group_names[parent_path];
+                std::string clean = js_identifier(js_trim(*original));
+                if (!clean.empty() && is_ascii_digit(static_cast<unsigned char>(clean[0]))) clean = "_" + clean;
+                if (clean.empty()) clean = "Group";
+                std::string local = clean;
+                long long n = 1;
+                while (taken.count(local) || local == "__proto__" || local == "constructor" || local == "prototype") {
+                    local = clean + "_" + itos(n);
+                    n++;
+                }
+                taken.insert(local);
+                Json decl = Json::object({{"name", Json(local)}});
+                if (!parent_path.empty()) decl.set("system", Json(parent_path));
+                if (in_group) decl.set("group", Json(in_group->second));
+                groups.push(decl);
+                out.group_by_id[*sid] = {parent_path, local};
                 continue;
             }
             if (kind == "external") {
@@ -1263,15 +1290,17 @@ private:
             if (kind == "transport") out.transports.push_back(path);
             const std::optional<bool> enabled = child_bool(el, "enabled");
             if (!(enabled ? *enabled : true)) out.disabled_paths.push_back(path);
-        }
-        if (groups != 0) {
-            warn(itos(groups) + " group" + (groups == 1 ? " was" : "s were") +
-                 " flattened: a group is a visual grouping in Ecolego and does not scope names, so its blocks belong to the sub-system "
-                 "around it.");
+            if (in_group) grouped.emplace_back(path, in_group->second);
         }
         if (!out.systems.empty()) project.set("systems", Json::array(out.systems));
         if (!out.transports.empty()) project.set("transports", Json::array(out.transports));
         if (!out.disabled_paths.empty()) project.set("disabled_systems", Json::array(out.disabled_paths));
+        if (!groups.empty()) project.set("groups", groups);
+        if (!grouped.empty()) {
+            Json layout = Json::object();
+            for (const auto& [path, name] : grouped) layout.set(path, Json::object({{"group", Json(name)}}));
+            project.set("layout", layout);
+        }
         return out;
     }
 
@@ -1570,6 +1599,8 @@ private:
         // The colour each block was given, by the qualified name it ends up with; put on the blocks
         // once they all exist. See `block_colour`.
         std::unordered_map<std::string, std::string> colours;
+        // And the group each is in, the same way. See `read_hierarchy`.
+        std::unordered_map<std::string, std::string> group_of;
 
         // Pass one: block id -> qualified name, so connections can resolve their ends and
         // equations their qualified references.
@@ -1646,6 +1677,11 @@ private:
                                          ? qualified_name.substr(system.size() + 1)
                                          : qualified_name;
             if (const OptStr colour = block_colour(el, type_)) colours[system.empty() ? name : system + "." + name] = *colour;
+            if (const OptStr sub = child_text(el, "sub-system")) {
+                auto g = hierarchy.group_by_id.find(*sub);
+                if (g != hierarchy.group_by_id.end() && g->second.first == system)
+                    group_of[system.empty() ? name : system + "." + name] = g->second.second;
+            }
             // Dimension lists in declared order, for resolving entry ids -- and, where the file
             // names none but says there is one, the list that stands for the intersection of a
             // transfer's two ends.
@@ -2065,6 +2101,26 @@ private:
                 for (Json block : list_of(project, collection)) {
                     auto it = colours.find(qualified(block));
                     if (it != colours.end()) block.set("color", Json(it->second));
+                }
+            }
+        }
+
+        // The groups, as the colours are: by qualified name, and the second half of a transfer made
+        // in two in the group of the first. A source is a transfer the file draws out of one, and is
+        // in its group too.
+        for (const auto& [whole, twin] : twins_.items) {
+            auto it = group_of.find(whole);
+            if (it == group_of.end()) continue;
+            const std::string group = it->second;
+            group_of[twin] = group;
+        }
+        if (!group_of.empty()) {
+            for (const char* collection : {"compartments", "expressions", "transfers", "parameters", "functions", "inflows",
+                                           "lookups", "index_reductions", "block_reductions", "min_maxes", "running_means",
+                                           "snapshots", "delays", "triggers"}) {
+                for (Json block : list_of(project, collection)) {
+                    auto it = group_of.find(qualified(block));
+                    if (it != group_of.end()) block.set("group", Json(it->second));
                 }
             }
         }
@@ -2818,8 +2874,9 @@ private:
             if (truthy(t.get("system"))) block.set("system", t.get("system"));
             if (truthy(t.get("comment"))) block.set("comment", t.get("comment"));
             if (is_false(t.get("enabled"))) block.set("enabled", Json(false));
-            // The transfer's colour, on the block it became.
+            // The transfer's colour, on the block it became, and its group.
             if (truthy(t.get("color"))) block.set("color", t.get("color"));
+            if (truthy(t.get("group"))) block.set("group", t.get("group"));
             block.set("timing", Json("trigger"));
             block.set("trigger", event);
             Json move = Json::object({{"kind", Json("move")}, {"from", t.get("from")}, {"to", t.get("to")}, {"fraction", t.get("rate")}});

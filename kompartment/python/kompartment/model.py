@@ -65,8 +65,14 @@ from .io.csv import JS_WHITESPACE, js_to_number
 from .jsonio import PathLike, dumps, js_number, js_text, read_model_file, write_model_file
 from .keys import COLLECTIONS, migrate_keys
 from .names import (
-    NAME_RE, RESERVED, base_name, is_valid_path, is_within, name_problem, parent_of, parts,
+    NAME_RE, RESERVED, base_name, is_name, is_valid_path, is_within, name_problem, parent_of, parts,
     qualified_name, qualify, reference_from, reparent, resolve_reference, system_of, system_paths,
+)
+from .groups import group_index as _group_index, group_list as _group_list
+from .groups import group_of_block as _group_of_block, group_of_system as _group_of_system
+from .groups import (
+    group_chain as _group_chain, group_id, group_members as _group_members, group_name as _group_name,
+    group_within as _group_within, groups_on as _groups_on, is_group_id, split_group_id,
 )
 from .simulation import DEFAULTS as SIM_DEFAULTS
 from .simulation import Simulation
@@ -116,7 +122,7 @@ SHAPE_DASHES = ('solid', 'dashed', 'dotted')
 SHAPE_TEXT_FONTS = ('sans', 'scribble', 'serif', 'mono')
 SHAPE_TEXT_ALIGNS = ('left', 'center', 'right')
 NOT_REVIEWED = frozenset({'x', 'y', 'w', 'h', 'shape', 'colour', 'color', 'label', 'collapsed',
-                          'comment', 'note', 'notes', 'qa'})
+                          'comment', 'note', 'notes', 'qa', 'group'})
 EDGE_PREFIX = 'edge:'
 
 #: What the diagram shows when a model says nothing.
@@ -204,6 +210,11 @@ def _js_round(v: float) -> int:
     return int(math.floor(float(v) + 0.5))
 
 
+def _finite_number(v: Any) -> bool:
+    """``Number.isFinite``: a number, and neither infinite nor NaN. True and False are not numbers."""
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
 def _per(quantity: str, time: str) -> str:
     """``Bq/m3`` over a year is ``(Bq/m3)/year``, not ``Bq/m3/year``."""
     return f'({quantity})/{time}' if any(c in quantity for c in '/ \t\n\r\f\v') else f'{quantity}/{time}'
@@ -232,6 +243,7 @@ def _position_of(xy: Any) -> XY:
         return (float(xy['x']), float(xy['y']))
     x, y = xy
     return (float(x), float(y))
+
 
 
 class _BlockList(dict):
@@ -3238,6 +3250,9 @@ class Model:
             raw['system'] = system
         else:
             raw.pop('system', None)
+        # A group is a set of one sub-system's blocks, so a block that leaves the
+        # sub-system leaves its group.
+        raw.pop('group', None)
         self._invalidate()
         if b.kind == 'compartment':
             attached = [t for t in self._raw.get('transfers') or [] if t.get('from') == target] + \
@@ -3456,7 +3471,15 @@ class Model:
         while qualify(parent, local) in taken:
             local = f'{base_name(path)}{k}'
             k += 1
-        return self._relocate_system(path, qualify(parent, local))
+        target = self._relocate_system(path, qualify(parent, local))
+        # The group it sat in was one of the sub-system it has left.
+        layout = self._raw.get('layout')
+        entry = layout.get(target) if isinstance(layout, dict) else None
+        if isinstance(entry, dict) and 'group' in entry:
+            del entry['group']
+            if not entry:
+                del layout[target]
+        return target
 
     def _relocate_system(self, path: str, target: str) -> str:
         moved: Dict[str, str] = {}
@@ -3488,6 +3511,14 @@ class Model:
                     sh['system'] = to
                 else:
                     sh.pop('system', None)
+        # And so do its groups, and those of every sub-system inside it.
+        for g in _group_list(self._raw):
+            if is_within(g.get('system') or '', path):
+                to = reparent(g.get('system') or '', path, target)
+                if to:
+                    g['system'] = to
+                else:
+                    g.pop('system', None)
         self._invalidate()
         return target
 
@@ -3506,6 +3537,12 @@ class Model:
         systems_out: Dict[str, str] = {}
         if contents == 'delete':
             self.delete_blocks([qualified_name(b) for b in self._all_raw() if is_within(system_of(b), path)])
+            # Its groups, and those of every sub-system inside it, go with what they held.
+            going = [g for g in _group_list(self._raw) if is_within(g.get('system') or '', path)]
+            if going:
+                self._raw['groups'] = [g for g in self._raw['groups'] if not any(g is x for x in going)]
+                if not self._raw['groups']:
+                    del self._raw['groups']
             shapes = self._raw.get('shapes')
             if isinstance(shapes, list):
                 self._raw['shapes'] = [sh for sh in shapes
@@ -3532,6 +3569,34 @@ class Model:
 
             def home_of(system: str) -> str:
                 return parent if system == path else systems_out.get(system, reparent(system, path, parent))
+
+            # Its groups come out with what they hold, numbered past the groups already there;
+            # what was in no group at its top lands in the group the sub-system itself sat in.
+            # ``deleteSystem`` in src/domain/edit.js.
+            group_idx = _group_index(self._raw, systems_before)
+            around = _group_of_system(self._raw, path, group_idx)
+            around_name = group_idx[around]['name'] if around else None
+            taken_groups = {g['name'] for g in group_idx.values() if g['system'] == parent}
+            group_rename: Dict[str, str] = {}
+            for g in group_idx.values():
+                if g['system'] != path:
+                    continue
+                local = g['name']
+                k = 1
+                while local in taken_groups:
+                    local = f"{g['name']}{k}"
+                    k += 1
+                taken_groups.add(local)
+                group_rename[g['id']] = local
+
+            def out_group(gid: Optional[str]) -> Optional[str]:
+                return group_rename.get(gid) if gid else around_name
+
+            top_blocks = [(b, out_group(_group_of_block(b, group_idx)))
+                          for b in self._all_raw() if system_of(b) == path]
+            top_systems = [(p, out_group(_group_of_system(self._raw, p, group_idx)))
+                           for p in nested if parent_of(p) == path]
+            groups_out = [g for g in group_idx.values() if is_within(g['system'], path)]
 
             moved: Dict[str, str] = {}
             taken = self._names()
@@ -3561,6 +3626,42 @@ class Model:
             for was, now in systems_out.items():
                 if isinstance(layout, dict) and layout.get(was) is not None:
                     layout[now] = layout.pop(was)
+            for b, gname in top_blocks:
+                if gname:
+                    b['group'] = gname
+                else:
+                    b.pop('group', None)
+            for was, gname in top_systems:
+                now = systems_out[was]
+                if gname:
+                    if not isinstance(self._raw.get('layout'), dict):
+                        self._raw['layout'] = {}
+                    layout = self._raw['layout']
+                    entry = layout.get(now)
+                    layout[now] = {**(entry if isinstance(entry, dict) else {}), 'group': gname}
+                    continue
+                layout = self._raw.get('layout')
+                entry = layout.get(now) if isinstance(layout, dict) else None
+                if not isinstance(entry, dict) or 'group' not in entry:
+                    continue
+                del entry['group']
+                if not entry:
+                    del layout[now]
+            for g in groups_out:
+                decl = g['decl']
+                to = home_of(g['system'])
+                if to:
+                    decl['system'] = to
+                else:
+                    decl.pop('system', None)
+                if g['system'] != path:
+                    continue
+                decl['name'] = group_rename[g['id']]
+                up = group_rename.get(g['parent']) if g['parent'] else around_name
+                if up:
+                    decl['group'] = up
+                else:
+                    decl.pop('group', None)
             for sh in self._raw.get('shapes') or []:
                 if isinstance(sh, dict) and is_within(sh.get('system') or '', path):
                     to = reparent(sh.get('system') or '', path, parent)
@@ -3661,6 +3762,474 @@ class Model:
                                'index_lists': list(begin.get('index_lists') or []),
                                'transport': 'operation', 'operation': operation, 'argument': argument}
         return self._append('expressions', raw, system, position)  # type: ignore[return-value]
+
+    # --- groups ----------------------------------------------------------------------------------
+    # A named set of the blocks of one sub-system, which changes no id and no number: what a
+    # model file says about one is in groups.py. A group is addressed by its id, ``group:`` and
+    # its qualified name (``group:NearField.Wells``), which no block or sub-system can have. Each
+    # edit here is the application's of the same name in src/domain/edit.js.
+
+    #: The narrowest and widest a group's kept area may be (``MIN_SIZE.w`` and ``SHAPE_MAX`` in edit.js).
+    GROUP_SIZE = (60, 4000)
+
+    def _group_index(self) -> Dict[str, Dict[str, Any]]:
+        return _group_index(self._raw, self.systems)
+
+    def _group_info(self, group: Any, index: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, Any]:
+        """A group's entry in the index, or an EditError naming what was asked for."""
+        info = (self._group_index() if index is None else index).get(group) if isinstance(group, str) else None
+        if info is not None:
+            return info
+        split = split_group_id(group)
+        if split:
+            raise EditError(f"No group '{split[1]}'" + (f" in '{split[0]}'" if split[0] else ' at the top level'))
+        raise EditError(f"'{group}' is not a group's id: a group is named by 'group:' and its qualified name"
+                        + (f", as in 'group:{group}'" if isinstance(group, str) and group else ''))
+
+    def _group_name_problem(self, name: Any, system: str, allow: Optional[str] = None,
+                            index: Optional[Dict[str, Dict[str, Any]]] = None) -> Optional[str]:
+        if not is_name(name):
+            return (f"'{name}' is not a valid name: use letters, digits and underscore, "
+                    'and do not start with a digit.')
+        if group_id(system, name) != allow and group_id(system, name) in (self._group_index() if index is None
+                                                                          else index):
+            return f"There is already a group called '{name}' in " + (f"'{system}'." if system else 'the top level.')
+        return None
+
+    def _group_of_in(self, name: Any, index: Mapping[str, Any]) -> Optional[str]:
+        if is_group_id(name):
+            info = index.get(name)
+            return info['parent'] if info else None
+        hit = self._find(name) if isinstance(name, str) else None
+        if hit is not None:
+            return _group_of_block(hit[1], index)
+        return _group_of_system(self._raw, name, index) if isinstance(name, str) else None
+
+    def _member_kind(self, name: Any, index: Mapping[str, Any]) -> Optional[str]:
+        """What a member of a group is: ``'block'``, ``'system'`` or ``'group'``, or None."""
+        if not isinstance(name, str):
+            return None
+        if is_group_id(name):
+            return 'group' if name in index else None
+        if self._find(name) is not None:
+            return 'block'
+        if name and name in self._system_set():
+            return 'system'
+        return None
+
+    def _member_canvas(self, name: str, kind: str, index: Mapping[str, Any]) -> str:
+        """The canvas a member is drawn on: a block's sub-system, a sub-system's parent, a group's own."""
+        if kind == 'group':
+            return index[name]['system']
+        if kind == 'block':
+            return system_of(self._find(name)[1])  # type: ignore[index]
+        return parent_of(name)
+
+    def _put_in_group(self, name: str, kind: str, local: Optional[str], index: Mapping[str, Any]) -> None:
+        """Writes which group a member is in: ``local`` is the group's own name, None for none."""
+        if kind in ('group', 'block'):
+            raw = index[name]['decl'] if kind == 'group' else self._find(name)[1]  # type: ignore[index]
+            if local:
+                raw['group'] = local
+            else:
+                raw.pop('group', None)
+            return
+        if local:
+            layout = self.layout
+            entry = layout.get(name)
+            layout[name] = {**(entry if isinstance(entry, dict) else {}), 'group': local}
+            return
+        layout = self._raw.get('layout')
+        entry = layout.get(name) if isinstance(layout, dict) else None
+        if not isinstance(entry, dict) or 'group' not in entry:
+            return
+        del entry['group']
+        if not entry:
+            del layout[name]  # type: ignore[union-attr]
+
+    def _clear_matrix_place(self, name: str) -> bool:
+        """Forgets where ``name`` was put on the transfer grid's diagonal (``clearMatrixPlace``):
+        its place was among the neighbours it has left."""
+        if is_group_id(name):
+            info = self._group_index().get(name)
+            if info is None or 'matrix' not in info['decl']:
+                return False
+            del info['decl']['matrix']
+            return True
+        layout = self._raw.get('layout')
+        entry = layout.get(name) if isinstance(layout, dict) else None
+        if not isinstance(entry, dict) or 'matrix' not in entry:
+            return False
+        del entry['matrix']
+        if not entry:
+            del layout[name]  # type: ignore[union-attr]
+        return True
+
+    def _drop_group_decl(self, decl: Dict[str, Any]) -> None:
+        groups = self._raw['groups']
+        del groups[next(k for k, g in enumerate(groups) if g is decl)]
+        if not groups:
+            del self._raw['groups']
+
+    @property
+    def groups(self) -> List[str]:
+        """Every group, as an id, in the file's order. Read as the application reads them: a
+        declaration for a sub-system the model does not have is no group, and of two
+        declarations of one id the first counts."""
+        return list(self._group_index())
+
+    def group_of(self, name: str) -> Optional[str]:
+        """The group something is in, as an id, or None: a block's (by its qualified name), a
+        sub-system's (by its path), or -- given a group's id -- the group that one is inside."""
+        return self._group_of_in(name, self._group_index())
+
+    def group_members(self, group: str, *, deep: bool = False) -> Dict[str, List[str]]:
+        """What a group holds: ``{'blocks': [...], 'systems': [...], 'groups': [...]}``, the
+        blocks by qualified name, the sub-systems by path and the groups by id. Only what is
+        directly in it, or with ``deep`` everything inside it however many groups down."""
+        index = self._group_index()
+        self._group_info(group, index)
+        return _group_members(self._raw, group, index, self.systems, deep=deep)
+
+    def add_group(self, name: Optional[str] = None, system: str = '', *, group: Any = ...,
+                  members: Iterable[str] = (), position: Optional[XY] = None) -> str:
+        """Makes a group in ``system`` and puts ``members`` in it -- blocks, sub-systems and
+        groups drawn on that sub-system's canvas. Returns its id.
+
+        ``name`` is ``Group``, ``Group1``, ... when not given; it has to be unique among the
+        groups of its sub-system only, as no equation names a group. ``group`` is the id of the
+        group the new one goes in, or None for the top of the sub-system; left out, a group made
+        of things that already share one goes inside the innermost they share. ``position`` is
+        where the area of a group made empty starts on the diagram."""
+        if system and system not in self._system_set():
+            raise EditError(f"No sub-system named '{system}'")
+        index = self._group_index()
+        if name is not None:
+            why = self._group_name_problem(name, system, index=index)
+            if why:
+                raise EditError(why)
+        wanted = [members] if isinstance(members, str) else list(members or ())
+        parent = group
+        if parent is ...:
+            # The innermost group every member is already in, if they share one.
+            chains = []
+            for n in wanted:
+                kind = self._member_kind(n, index)
+                own = (index[n]['parent'] if kind == 'group' else self._group_of_in(n, index)) if kind else None
+                chains.append(_group_chain(index, own) if own else [])
+            parent = None
+            if chains:
+                for gid in chains[0]:
+                    if all(gid in c for c in chains[1:]):
+                        parent = gid
+                    else:
+                        break
+            # One of another sub-system's groups is no place for this one: what is in it is on
+            # another canvas, which set_group says.
+            if parent and index[parent]['system'] != system:
+                parent = None
+        if parent:
+            p = self._group_info(parent, index)
+            if p['system'] != system:
+                raise EditError(f"'{p['name']}' is a group of " + (f"'{p['system']}'" if p['system'] else 'the top level')
+                                + ', not of ' + (f"'{system}'" if system else 'the top level'))
+        if name is None:
+            taken = {g['name'] for g in _groups_on(index, system)}
+            name = 'Group'
+            k = 1
+            while name in taken:
+                name = f'Group{k}'
+                k += 1
+        decl: Dict[str, Any] = {'name': name}
+        if system:
+            decl['system'] = system
+        if parent:
+            decl['group'] = _group_name(parent)
+        if position is not None:
+            x, y = _position_of(position)
+            if math.isfinite(x) and math.isfinite(y):
+                decl['x'] = _js_round(x)
+                decl['y'] = _js_round(y)
+        if not isinstance(self._raw.get('groups'), list):
+            self._raw['groups'] = []
+        self._raw['groups'].append(decl)
+        gid = group_id(system, name)
+        if wanted:
+            try:
+                self.set_group(wanted, gid)
+            except EditError:
+                self._drop_group_decl(decl)
+                raise
+        return gid
+
+    def set_group(self, names: Union[str, Iterable[str]], group: Optional[str] = None) -> List[str]:
+        """Puts blocks, sub-systems and groups into ``group`` (an id) or, with None, takes them
+        out of whatever group they are in, to the top of their sub-system. Returns every name
+        whose group changed.
+
+        A group holds what is on its own sub-system's canvas: something drawn on another is
+        refused (moving it there is ``move_block``'s or ``move_system``'s business, being a
+        change of its id), as is a group put into itself or into a group inside it. A
+        compartment takes along the transfers out of it and the inflows into it that were in the
+        group it is leaving. Checked first and then done, so all of them land or none does."""
+        index = self._group_index()
+        into = self._group_info(group, index) if group else None
+        wanted = list(dict.fromkeys([names] if isinstance(names, str) else (names or ())))
+        items = []
+        for name in wanted:
+            kind = self._member_kind(name, index)
+            if not kind:
+                raise EditError(f"'{_group_name(name)}' is not a block, a sub-system or a group")
+            canvas = self._member_canvas(name, kind, index)
+            if into and canvas != into['system']:
+                raise EditError(
+                    f"'{_group_name(name) if kind == 'group' else name}' is in "
+                    + (f"'{canvas}'" if canvas else 'the top level') + f", and '{into['name']}' is a group of "
+                    + (f"'{into['system']}'" if into['system'] else 'the top level')
+                    + ": a group holds what is on its own sub-system's canvas. Move it there first, "
+                    'with move_block or move_system.')
+            if kind == 'group' and into and _group_within(index, group, name):
+                raise EditError(f"'{into['name']}' cannot go into itself" if group == name else
+                                f"'{_group_name(name)}' cannot go into '{into['name']}', which is inside it")
+            items.append((name, kind, index[name]['parent'] if kind == 'group' else self._group_of_in(name, index)))
+        local = into['name'] if into else None
+        target = None if group is None else group
+        changed: List[str] = []
+        for name, kind, was in items:
+            if was == target:
+                continue
+            self._put_in_group(name, kind, local, index)
+            # Its place on the grid's diagonal was among the neighbours it has left.
+            self._clear_matrix_place(name)
+            changed.append(name)
+            if kind != 'block':
+                continue
+            collection, block = self._find(name)  # type: ignore[misc]
+            if SINGULAR[collection] not in HOLDS_INVENTORY:
+                continue
+            attached = [t for t in self._raw.get('transfers') or [] if isinstance(t, dict) and t.get('from') == name]
+            attached += [i for i in self._raw.get('inflows') or [] if isinstance(i, dict) and i.get('to') == name]
+            for conn in attached:
+                q = qualified_name(conn)
+                if q in wanted or system_of(conn) != system_of(block):
+                    continue
+                if _group_of_block(conn, index) != was:
+                    continue
+                if local:
+                    conn['group'] = local
+                else:
+                    conn.pop('group', None)
+                changed.append(q)
+        return changed
+
+    def rename_group(self, group: str, new_name: str) -> str:
+        """Renames a group, and what its members say. Nothing else names one -- an equation
+        cannot -- and no id changes. Returns the group's new id."""
+        index = self._group_index()
+        info = self._group_info(group, index)
+        if new_name == info['name']:
+            return group
+        why = self._group_name_problem(new_name, info['system'], allow=group, index=index)
+        if why:
+            raise EditError(why)
+        old = info['name']
+        for g in _group_list(self._raw):
+            if (g.get('system') or '') == info['system'] and g is not info['decl'] and g.get('group') == old:
+                g['group'] = new_name
+        info['decl']['name'] = new_name
+        for b in self._all_raw():
+            if system_of(b) == info['system'] and b.get('group') == old:
+                b['group'] = new_name
+        layout = self._raw.get('layout')
+        for path in self.systems:
+            if parent_of(path) != info['system']:
+                continue
+            entry = layout.get(path) if isinstance(layout, dict) else None
+            if isinstance(entry, dict) and entry.get('group') == old:
+                entry['group'] = new_name
+        return group_id(info['system'], new_name)
+
+    def dissolve_group(self, group: str) -> Optional[str]:
+        """Takes a group away and leaves what was in it where the group was: in the group around
+        it, or at the top of the sub-system. Nothing is deleted. Returns the group its members
+        are now in."""
+        index = self._group_index()
+        info = self._group_info(group, index)
+        outer = info['parent']
+        local = index[outer]['name'] if outer else None
+        held = _group_members(self._raw, group, index, self.systems)
+        for kind, key in (('group', 'groups'), ('block', 'blocks'), ('system', 'systems')):
+            for name in held[key]:
+                self._put_in_group(name, kind, local, index)
+        self._drop_group_decl(info['decl'])
+        return outer
+
+    def delete_group(self, group: str) -> Dict[str, List[str]]:
+        """Deletes a group and everything in it, however deep: its blocks, the sub-systems in it
+        with all they hold, and the groups inside it. Refused, as any delete is, while something
+        outside still reads what would go. Returns ``{'removed': [...], 'systems': [...]}``:
+        every block that went, the connections that could not outlive an end included, and the
+        sub-systems that went with them."""
+        index = self._group_index()
+        self._group_info(group, index)
+        deep = _group_members(self._raw, group, index, self.systems, deep=True)
+        result = self._delete_selection(deep['blocks'] + deep['systems'])
+        going = {group, *deep['groups']}
+        self._raw['groups'] = [g for g in _group_list(self._raw)
+                               if group_id(g.get('system') or '', g['name']) not in going]
+        if not self._raw['groups']:
+            del self._raw['groups']
+        return result
+
+    def _delete_selection(self, names: Iterable[str]) -> Dict[str, List[str]]:
+        """Deletes blocks and sub-systems as one edit, a sub-system with everything inside it
+        (``deleteSelection``): what still reads them is judged across the whole set."""
+        wanted = list(dict.fromkeys(names))
+        paths = self.systems
+        chosen = [n for n in wanted if n in paths]
+        roots = [p for p in chosen if not any(q != p and is_within(p, q) for q in chosen)]
+        blocks = []
+        for n in wanted:
+            if n in paths:
+                continue
+            hit = self._find(n)
+            if hit is None or any(is_within(system_of(hit[1]), p) for p in roots):
+                continue
+            blocks.append(n)
+        inside = [qualified_name(b) for p in roots for b in list(self._all_raw()) if is_within(system_of(b), p)]
+        removed = self.delete_blocks(list(dict.fromkeys(blocks + inside)))
+        if roots:
+            def gone(p: str) -> bool:
+                return any(is_within(p, c) for c in roots)
+
+            if isinstance(self._raw.get('groups'), list):
+                going = [g for g in _group_list(self._raw) if gone(g.get('system') or '')]
+                if going:
+                    self._raw['groups'] = [g for g in self._raw['groups'] if not any(g is x for x in going)]
+                    if not self._raw['groups']:
+                        del self._raw['groups']
+            # The shapes drawn inside them go with them, as they go with a sub-system deleted
+            # with everything in it.
+            shapes = self._raw.get('shapes')
+            if isinstance(shapes, list) and shapes:
+                ids = {sh.get('id') for sh in shapes if isinstance(sh, dict) and gone(sh.get('system') or '')}
+                self._raw['shapes'] = [sh for sh in shapes if not (isinstance(sh, dict) and sh.get('id') in ids)]
+            self._invalidate()
+            self._raw['systems'] = [p for p in self.systems if not gone(p)]
+            if self.transports:
+                self._raw['transports'] = [p for p in self.transports if not gone(p)]
+            if self._disabled_systems():
+                off = [p for p in self._disabled_systems() if not gone(p)]
+                if off:
+                    self._raw['disabled_systems'] = off
+                else:
+                    self._raw.pop('disabled_systems', None)
+            layout = self._raw.get('layout')
+            if isinstance(layout, dict):
+                for key in list(layout):
+                    edge = _parse_edge_key(key)
+                    named, on = edge if edge else (key, None)
+                    if any(is_within(named, c) or (on and is_within(on, c)) for c in roots):
+                        del layout[key]
+            self._invalidate()
+        return {'removed': removed, 'systems': roots}
+
+    def group_collapsed(self, group: str) -> bool:
+        """Whether a group is drawn folded up into one node."""
+        return self._group_info(group)['decl'].get('collapsed') is True
+
+    def set_group_collapsed(self, group: str, collapsed: bool = True) -> None:
+        """Folds a group up into one node on the diagram, or opens it out again."""
+        decl = self._group_info(group)['decl']
+        if collapsed:
+            decl['collapsed'] = True
+        else:
+            decl.pop('collapsed', None)
+
+    def group_box(self, group: str) -> Dict[str, Optional[float]]:
+        """The area a group keeps on the diagram, ``{'x', 'y', 'w', 'h'}``, each None when not
+        kept. The diagram draws the area round the group's members and this together; ``x``
+        and ``y`` are also where its node is drawn when it is folded up."""
+        decl = self._group_info(group)['decl']
+        return {k: decl[k] if _finite_number(decl.get(k)) else None for k in ('x', 'y', 'w', 'h')}
+
+    def set_group_box(self, group: str, **box: Optional[float]) -> None:
+        """Keeps a group's area: any of ``x``, ``y``, ``w`` and ``h``; one given as None is
+        forgotten. A width or height is kept between :attr:`GROUP_SIZE`'s two."""
+        decl = self._group_info(group)['decl']
+        for key in box:
+            if key not in ('x', 'y', 'w', 'h'):
+                raise EditError(f"A group's area has no '{key}': x, y, w and h")
+            v = box[key]
+            if v is not None and not _finite_number(v):
+                raise EditError(f"'{v}' is not a number for a group's {key}")
+        for key in ('x', 'y', 'w', 'h'):
+            if key not in box:
+                continue
+            v = box[key]
+            if v is None:
+                decl.pop(key, None)
+            else:
+                lo, hi = self.GROUP_SIZE
+                decl[key] = _js_round(min(hi, max(lo, v)) if key in ('w', 'h') else v)
+
+    def shift_group(self, group: str, dx: float, dy: float) -> None:
+        """Moves a group on the diagram with everything in it: its kept area, the blocks and
+        sub-system nodes in it however many groups down, the bends of the lines drawn wholly
+        among them and the loose ends hanging off them. What has never been placed stays
+        unplaced."""
+        index = self._group_index()
+        info = self._group_info(group, index)
+        for v in (dx, dy):
+            if not _finite_number(v):
+                raise EditError(f"'{v}' is not a distance to move a group by")
+        if not dx and not dy:
+            return
+        deep = _group_members(self._raw, group, index, self.systems, deep=True)
+        layout = self._raw.get('layout')
+
+        def move(key: str) -> None:
+            entry = layout.get(key) if isinstance(layout, dict) else None
+            if not isinstance(entry, dict) or not _finite_number(entry.get('x')) or not _finite_number(entry.get('y')):
+                return
+            entry['x'] = _js_round(entry['x'] + dx)
+            entry['y'] = _js_round(entry['y'] + dy)
+
+        for g in [group] + deep['groups']:
+            decl = index[g]['decl'] if g in index else None
+            if decl is not None and _finite_number(decl.get('x')) and _finite_number(decl.get('y')):
+                decl['x'] = _js_round(decl['x'] + dx)
+                decl['y'] = _js_round(decl['y'] + dy)
+        for name in deep['blocks'] + deep['systems']:
+            move(name)
+        # A line goes with the group when what it is drawn between here does: a block in the
+        # group, or anything inside a sub-system in it. Its bend is on the canvas it is drawn
+        # whole on; a pipe into another sub-system has a place of its own on this one.
+        here = info['system']
+        held = set(deep['blocks'])
+
+        def covered(name: str) -> bool:
+            return name in held or any(is_within(parent_of(name), p) for p in deep['systems'])
+
+        inflows = [i for i in self._raw.get('inflows') or [] if isinstance(i, dict)]
+        transfers = [t for t in self._raw.get('transfers') or [] if isinstance(t, dict)]
+        for conn, is_inflow in [(t, False) for t in transfers] + [(i, True) for i in inflows]:
+            q = qualified_name(conn)
+            ends = [e for e in ([None] if is_inflow else [conn.get('from')]) + [conn.get('to')] if e is not None]
+            if not ends:
+                continue
+            visible = [e for e in ends if is_within(parent_of(e), here)]
+            if not visible or not all(covered(e) for e in visible):
+                continue
+            if len(visible) < len(ends):
+                move(_edge_key(q, here))
+                continue
+            steps = [parts(parent_of(e)) for e in ends]
+            k = 0
+            while all(k < len(st) and st[k] == steps[0][k] for st in steps):
+                k += 1
+            if '.'.join(steps[0][:k]) == here:
+                move(_edge_key(q))
 
     # --- layout, shapes, derived outputs -------------------------------------------------------
 

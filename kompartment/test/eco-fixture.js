@@ -920,6 +920,82 @@ export const COLOUR_XML = `<?xml version="1.0" encoding="UTF-8"?>
 </data-model>`;
 
 // ---------------------------------------------------------------------------
+// Groups (../src/domain/groups.js): a `type="group"` sub-system, which is no
+// namespace -- its blocks' ids are the sub-system's around it -- nested in
+// another, holding a sub-system, a transfer, a source's transfer and a
+// discrete one; two of one name in one sub-system; one named with a space.
+
+export const GROUP_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<data-model>
+	<project-properties name="Grouped"/>
+	<hierarchy-model>
+		<sub-system-block></sub-system-block>
+		<sub-system-block name="Near"><id>Near</id></sub-system-block>
+		<sub-system-block name="Wells" type="group"><id>Near&#46;Wells</id><sub-system>Near</sub-system></sub-system-block>
+		<sub-system-block name="Deep wells" type="group"><id>Near&#46;Deep_wells</id><sub-system>Near&#46;Wells</sub-system></sub-system-block>
+		<sub-system-block name="Farm"><id>Near&#46;Farm</id><sub-system>Near&#46;Wells</sub-system></sub-system-block>
+		<sub-system-block name="Inputs" type="group"><id>Inputs</id></sub-system-block>
+		<sub-system-block name="Inputs" type="group"><id>Inputs2</id></sub-system-block>
+		<sub-system-block name="Empty" type="group"><id>Near&#46;Empty</id><sub-system>Near</sub-system></sub-system-block>
+	</hierarchy-model>
+	<block-model>
+		<component name="Src" type="source"><id>Src</id></component>
+		<component name="Pond" type="compartment" dimension="0">
+			<id>Near&#46;Pond</id><sub-system>Near&#46;Wells</sub-system>
+			<entry type="compartment"><initial-condition><![CDATA[1]]></initial-condition></entry>
+		</component>
+		<component name="Bore" type="compartment" dimension="0">
+			<id>Near&#46;Bore</id><sub-system>Near&#46;Deep_wells</sub-system>
+			<entry type="compartment"><initial-condition><![CDATA[0]]></initial-condition></entry>
+		</component>
+		<component name="Loose" type="compartment" dimension="0">
+			<id>Near&#46;Loose</id><sub-system>Near</sub-system>
+			<entry type="compartment"><initial-condition><![CDATA[0]]></initial-condition></entry>
+		</component>
+		<component name="Soil" type="compartment" dimension="0">
+			<id>Near&#46;Farm&#46;Soil</id><sub-system>Near&#46;Farm</sub-system>
+			<entry type="compartment"><initial-condition><![CDATA[0]]></initial-condition></entry>
+		</component>
+		<component name="k" type="parameter" dimension="0">
+			<id>k</id><sub-system>Inputs</sub-system>
+			<entry type="parameter"><value><![CDATA[0.5]]></value></entry>
+		</component>
+		<component name="j" type="parameter" dimension="0">
+			<id>j</id><sub-system>Inputs2</sub-system>
+			<entry type="parameter"><value><![CDATA[0.1]]></value></entry>
+		</component>
+		<component name="Tick" type="discrete&#45;event" dimension="0">
+			<id>Near&#46;Tick</id><sub-system>Near</sub-system>
+			<entry type="discrete&#45;event">
+				<first-expression><![CDATA[time]]></first-expression>
+				<second-expression><![CDATA[5.0]]></second-expression>
+				<direction><![CDATA[RIGHT]]></direction>
+			</entry>
+		</component>
+		<connection name="Seep" type="transfer" source="Near&#46;Pond" target="Near&#46;Bore" dimension="0">
+			<id>Near&#46;Seep</id><sub-system>Near&#46;Wells</sub-system>
+			<entry type="transfer"><transfer-equation><![CDATA[k]]></transfer-equation></entry>
+		</connection>
+		<connection name="Feed" type="transfer" source="Src" target="Near&#46;Pond" dimension="0">
+			<id>Feed</id><sub-system>Near&#46;Wells</sub-system>
+			<entry type="transfer"><transfer-equation><![CDATA[1]]></transfer-equation><multiply-with-donor><![CDATA[false]]></multiply-with-donor></entry>
+		</connection>
+		<connection name="Dump" type="transfer" source="Near&#46;Pond" target="Near&#46;Loose" dimension="0">
+			<id>Near&#46;Dump</id><sub-system>Near&#46;Deep_wells</sub-system>
+			<entry type="transfer">
+				<transfer-equation><![CDATA[1.0]]></transfer-equation>
+				<transfer-event><![CDATA[Tick]]></transfer-event>
+				<multiply-with-donor><![CDATA[true]]></multiply-with-donor>
+			</entry>
+		</connection>
+	</block-model>
+	<simulation-settings>
+		<start-time>0.0</start-time><end-time>10.0</end-time><time-unit>year</time-unit>
+		<java-solver>java&#45;ode15s</java-solver>
+	</simulation-settings>
+</data-model>`;
+
+// ---------------------------------------------------------------------------
 // An assessment's stored runs (../src/io/ecoruns.js)
 
 /**

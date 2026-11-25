@@ -63,6 +63,7 @@ import { importModelXML, importEcoFile, ImportError } from '../src/io/eco.js';
 import {
 	makeZip, MODEL_XML, VIEWS_XML, REAL_SHAPES_XML, SHEET_XML, toUtf16BE, TRANSPORT_XML,
 	GENERAL_VARIABLE_XML, STORED_MODEL_XML, STORED, storedRunFiles, TRANSFER_EVENT_XML, COLOUR_XML,
+	GROUP_XML,
 } from './eco-fixture.js';
 import { expandTransports } from '../src/sim/transport.js';
 import {
@@ -11664,6 +11665,24 @@ test('the canvas carries shapes that are not part of the model', async () => {
 	ed.addShape(gone, 'rect', { system: 'S' });
 	ed.deleteSystem(gone, 'S', { contents: 'delete' });
 	assert(!ed.shapes(gone).length, 'a shape outlived the canvas it was drawn on');
+	// So they do when the sub-system goes as part of a selection deleted on
+	// the diagram, or with a group that holds it: left behind, they would
+	// come back on any sub-system given the same name.
+	const picked = {
+		compartments: [{ name: 'B', initial: '0', system: 'S.T' }, { name: 'C', initial: '0' }],
+		systems: ['S', 'S.T'],
+	};
+	ed.addShape(picked, 'rect', { system: 'S.T' });
+	const kept = ed.addShape(picked, 'rect', {});
+	ed.deleteSelection(picked, ['S', 'C']);
+	assert(ed.shapes(picked).map((sh) => sh.id).join() === kept.id, JSON.stringify(ed.shapes(picked)));
+	const held = {
+		compartments: [{ name: 'B', initial: '0', system: 'S' }],
+		systems: ['S'], groups: [{ name: 'G' }], layout: { S: { group: 'G' } },
+	};
+	ed.addShape(held, 'rect', { system: 'S' });
+	ed.deleteGroup(held, 'group:G');
+	assert(!ed.shapes(held).length && !ed.systems(held).length, JSON.stringify(held));
 
 	// --- and they survive the engine --------------------------------------
 	const carried = new Project({
@@ -11819,8 +11838,9 @@ test('the grid can be turned off, and so can snapping to it', async () => {
 	// drag, and a shape being moved or resized — two axes each, and the node
 	// drag asks twice per axis: once for the anchored form and once for the
 	// fallback with no members to anchor to. And the bar over the diagram
-	// places a block two ways, by a click and by a drag, two axes each.
-	assert((graph.match(/this\._snap\(/g) ?? []).length === 18,
+	// places a block two ways, by a click and by a drag, two axes each; and a
+	// group is dragged by its band, two axes.
+	assert((graph.match(/this\._snap\(/g) ?? []).length === 20,
 		'a drag that places something is not asking about the grid');
 
 	// The block under the pointer lands *on* the lattice, and the rest move by
@@ -22138,12 +22158,24 @@ test('autoLayout keeps an influence-only model in dependency order', () => {
 test('autoLayout leaves no two blocks on top of each other, in any example', async () => {
 	const { readFileSync, readdirSync } = await import('node:fs');
 	const dir = new URL('../examples/', import.meta.url);
+	// Every kind the diagram draws. The blocks that remember, the triggers,
+	// the events, the functions, the far-field paths and the waste packages
+	// were once left out of the layout, so an imported model drew all of them
+	// in one pile at the corner of the canvas.
 	const KIND = {
 		compartments: 'compartment', expressions: 'expression', parameters: 'parameter',
 		lookups: 'lookup', index_reductions: 'index_reduction', block_reductions: 'block_reduction',
+		min_maxes: 'min_max', running_means: 'running_mean', snapshots: 'snapshot', delays: 'delay',
+		triggers: 'trigger', events: 'event', functions: 'function', farfields: 'farfield',
+		waste_packages: 'waste_package',
 	};
-	for (const f of readdirSync(dir).filter((x) => x.endsWith('.json'))) {
-		const m = JSON.parse(readFileSync(new URL(f, dir), 'utf8'));
+	const files = readdirSync(dir).filter((x) => x.endsWith('.json'))
+		.map((f) => [f, JSON.parse(readFileSync(new URL(f, dir), 'utf8'))]);
+	// ...and a model as an Ecolego import leaves it: recorders, a trigger and
+	// the event a discrete transfer becomes, and no position for any of them.
+	files.push(['an imported model', importModelXML(TRANSFER_EVENT_XML).project]);
+	files.push(['an imported model with colours', importModelXML(COLOUR_XML).project]);
+	for (const [f, m] of files) {
 		// The examples ship with positions of their own; this is about what
 		// the layout does when there are none.
 		delete m.layout;
@@ -24546,6 +24578,53 @@ await (async () => {
 			}
 			sameText(got, want, name);
 		}
+	});
+
+	test('groups go out as Ecolego keeps them and come back as they went', async () => {
+		// Each a sub-system of the kind Ecolego calls a group, its id its own
+		// sub-system's and its name, written before what is in it -- a
+		// sub-system in a group after the group -- and every member naming it
+		// as its sub-system. One named like a block beside it goes out under a
+		// name of its own, said in the report.
+		const { xml, report } = eco.exportModelXML(fx.GROUPS);
+		const hierarchy = xml.slice(xml.indexOf('<hierarchy-model>'), xml.indexOf('</hierarchy-model>'));
+		const blocks = [...hierarchy.matchAll(/<sub-system-block name="([^"]*)"(?: type="([^"]*)")?>\s*<id>([^<]*)<\/id>[\s\S]*?(?:<sub-system>([^<]*)<\/sub-system>)?\s*<enabled>/g)]
+			.map(([, name, type, id, up]) => `${type ?? 'system'} ${id}${up ? ` in ${up}` : ''}`);
+		assert(JSON.stringify(blocks) === JSON.stringify([
+			'system Basin', 'group Basin.Wells in Basin', 'group Basin.Deep in Basin.Wells', 'group Inputs',
+			'group Basin.Lake_group in Basin', 'system Basin.Inner in Basin.Wells',
+		]), JSON.stringify(blocks));
+		// A connection beside the block it leaves, in its group, as Ecolego
+		// keeps one; one from outside in its own, with its source.
+		for (const [id, home] of [['Basin.Pond', 'Basin.Wells'], ['Basin.Bore', 'Basin.Deep'], ['k', 'Inputs'],
+			['Basin.Lake', 'Basin.Lake_group'], ['Basin.Down', 'Basin.Wells'], ['Basin.Inner.Sump', 'Basin.Inner'],
+			['Basin.Dried', 'Basin.Wells'], ['Basin.Leak', 'Basin.Wells'], ['Basin.Rain', 'Basin.Deep'],
+			['Basin.Rain_source', 'Basin.Deep']]) {
+			assert(new RegExp(`<id>${id.replace(/\./g, '\\.')}</id>\\s*<guid><!\\[CDATA\\[[^\\]]*\\]\\]></guid>\\s*<sub-system>${home.replace(/\./g, '\\.')}</sub-system>`).test(xml),
+				`${id} is not written in ${home}`);
+		}
+		assert(report.renamed.filter((r) => /Lake/.test(r.from)).map((r) => `${r.from} -> ${r.to}`).join() === 'Basin.Lake -> Basin.Lake_group',
+			JSON.stringify(report.renamed));
+		assert(report.rewritten.filter((r) => /beside its donor/.test(r.how)).map((r) => r.name).join() === 'Basin.Leak',
+			JSON.stringify(report.rewritten));
+		// Read back, the groups and what each holds are as they went, the one
+		// named after the compartment under the name it went out with.
+		const back = importModelXML(xml).project;
+		assert(JSON.stringify(back.groups) === JSON.stringify([
+			{ name: 'Wells', system: 'Basin' }, { name: 'Deep', system: 'Basin', group: 'Wells' },
+			{ name: 'Inputs' }, { name: 'Lake_group', system: 'Basin' },
+		]), JSON.stringify(back.groups));
+		const filed = (p) => Object.fromEntries(Object.entries(p).filter(([k, v]) => Array.isArray(v) && k !== 'groups')
+			.flatMap(([k, v]) => v.filter((b) => b?.group).map((b) => [`${k}:${ed.qualifiedName(b)}`, b.group])));
+		const sorted = (o) => JSON.stringify(Object.entries(o).sort());
+		// Leak comes back where Ecolego keeps it, and Rain, from outside, as a
+		// transfer from nowhere in its own group.
+		const { 'inflows:Basin.Rain': rain, ...rest } = filed(fx.GROUPS);
+		assert(sorted(filed(back)) === sorted({
+			...rest, 'compartments:Basin.Lake': 'Lake_group', 'transfers:Basin.Seep': 'Lake_group',
+			'transfers:Basin.Leak': 'Wells', 'transfers:Basin.Rain': rain,
+		}), JSON.stringify(filed(back)));
+		assert(back.layout?.['Basin.Inner']?.group === 'Wells', JSON.stringify(back.layout));
 	});
 
 	test('a compartment with no unit keeps none through an .eco, and one with no <unit> is still Bq', () => {
@@ -33472,6 +33551,259 @@ test('the transfer grid folds its sub-systems', () => {
 	const folded = ed.matrixPlan(raw, new Set()).slots.find((x) => x.path === 'NF');
 	assert(folded.blocks === 2, `${folded.blocks} blocks`);
 	assert(folded.systems === 1, `${folded.systems} sub-systems`);
+});
+
+// --- groups -----------------------------------------------------------------
+
+/** A small model with two sub-systems, for the groups' tests. */
+const groupedModel = () => ({
+	name: 'g', systems: ['NF', 'NF.Inner', 'Bio'],
+	compartments: [
+		{ name: 'A', system: 'NF', initial: '1' }, { name: 'B', system: 'NF', initial: '0' },
+		{ name: 'C', system: 'NF', initial: '0' }, { name: 'D', system: 'NF.Inner', initial: '0' },
+		{ name: 'Lake', system: 'Bio', initial: '0' },
+	],
+	transfers: [
+		{ name: 'AB', from: 'NF.A', to: 'NF.B', rate: '0.1', system: 'NF' },
+		{ name: 'BC', from: 'NF.B', to: 'NF.C', rate: '0.2', system: 'NF', group: 'Elsewhere' },
+	],
+	parameters: [{ name: 'k', value: 1 }],
+});
+
+test('a group sorts the blocks of one sub-system and changes none of their names', async () => {
+	const { modelChanges } = await import('../src/domain/changes.js');
+	const raw = groupedModel();
+	raw.groups = [{ name: 'Elsewhere', system: 'NF' }];
+	const names = JSON.stringify(ed.allBlocks(raw).map((b) => ed.qualifiedName(b)));
+	const was = structuredClone(raw);
+	const fp = ed.integrationFingerprint(raw);
+
+	// Made of two compartments: they are in it under the names they had, and
+	// the transfer out of A, which was in no group either, goes with it. The
+	// one out of B said it was in another group, and stays as it was filed.
+	const id = ed.addGroup(raw, { system: 'NF', members: ['NF.A', 'NF.B'] });
+	assert(id === 'group:NF.Group', id);
+	assert(JSON.stringify(ed.allBlocks(raw).map((b) => ed.qualifiedName(b))) === names, 'a name changed');
+	assert(ed.groupOf(raw, 'NF.A') === id && ed.groupOf(raw, 'NF.B') === id && ed.groupOf(raw, 'NF.C') === null,
+		'the members are not the ones asked for');
+	assert(raw.transfers[0].group === 'Group' && raw.transfers[1].group === 'Elsewhere',
+		JSON.stringify(raw.transfers));
+	// A sub-system is filed in its layout entry, having no object of its own.
+	ed.setGroup(raw, ['NF.Inner'], id);
+	assert(raw.layout['NF.Inner'].group === 'Group' && ed.groupOf(raw, 'NF.Inner') === id, JSON.stringify(raw.layout));
+
+	// A group holds what is on its own canvas; and nothing goes into itself.
+	expectError(() => ed.setGroup(raw, ['Bio.Lake'], id), /own sub-system's canvas/, 'another sub-system');
+	const inner = ed.addGroup(raw, { system: 'NF', members: ['NF.A'] });
+	assert(ed.groupOf(raw, inner) === id, 'a group made of one group’s members is not inside it');
+	expectError(() => ed.setGroup(raw, [id], inner), /which is inside it/, 'a group into its own');
+	expectError(() => ed.setGroup(raw, [id], id), /into itself/, 'a group into itself');
+
+	// Renamed, its members say the new name; two of one name are refused.
+	const renamed = ed.renameGroup(raw, id, 'Wells');
+	assert(renamed === 'group:NF.Wells' && ed.groupOf(raw, 'NF.B') === renamed
+		&& ed.groupOf(raw, inner) === renamed && ed.groupOf(raw, 'NF.Inner') === renamed, 'a member was left behind');
+	expectError(() => ed.renameGroup(raw, inner, 'Wells'), /already a group called 'Wells'/, 'a second Wells');
+	expectError(() => ed.renameGroup(raw, inner, '2 x'), /letters, digits/, 'a name that is no identifier');
+
+	// Ungrouped, what it held is in the group around it.
+	ed.dissolveGroup(raw, inner);
+	assert(ed.groupOf(raw, 'NF.A') === renamed && !ed.groupIndex(raw).has(inner), 'ungrouping lost a member');
+
+	// None of it moves a number, and none of it is a change a run is stale by.
+	assert(ed.integrationFingerprint(raw) === fp, 'a group moved a number');
+	assert(modelChanges(was, raw).length === 0, JSON.stringify(modelChanges(was, raw)));
+	// A block that leaves its sub-system leaves its group.
+	ed.moveBlocks(raw, ['NF.C'], 'Bio');
+	ed.moveBlocks(raw, ['NF.A'], 'Bio');
+	assert(ed.findBlock(raw, 'Bio.A').block.group === undefined, 'a moved block is still filed in NF');
+	// ...and a hand-written group naming what is not there is no group.
+	const loose = groupedModel();
+	loose.compartments[0].group = 'Nowhere';
+	loose.groups = [{ name: 'Loop', system: 'NF', group: 'Loop' }, { name: 'bad name' }, { name: 'X', system: 'Gone' }];
+	assert(ed.groupOf(loose, 'NF.A') === null && ed.groups(loose).join() === 'group:NF.Loop'
+		&& ed.groupIndex(loose).get('group:NF.Loop').parent === null, JSON.stringify(ed.groups(loose)));
+});
+
+test('a group goes where its sub-system goes, and comes out where it was when the sub-system is dissolved', () => {
+	const raw = groupedModel();
+	raw.groups = [{ name: 'G', system: 'NF' }, { name: 'G' }, { name: 'In', system: 'NF.Inner' }];
+	raw.compartments[0].group = 'G';
+	raw.compartments[3].group = 'In';
+	raw.layout = { NF: { x: 1, y: 2, group: 'G' } };
+	ed.renameSystem(raw, 'NF', 'Near');
+	assert(ed.groupOf(raw, 'Near.A') === 'group:Near.G' && ed.groupOf(raw, 'Near.Inner.D') === 'group:Near.Inner.In'
+		&& ed.groupOf(raw, 'Near') === 'group:G', JSON.stringify(raw.groups));
+	// Moved into another sub-system, it leaves the group of the one it left.
+	ed.moveSystem(raw, 'Near.Inner', 'Bio');
+	assert(ed.groupOf(raw, 'Bio.Inner.D') === 'group:Bio.Inner.In', 'the moved sub-system lost its own groups');
+	ed.moveSystem(raw, 'Bio.Inner', 'Near');
+	ed.setGroup(raw, ['Near.Inner'], 'group:Near.G');
+	ed.moveSystem(raw, 'Near.Inner', '');
+	assert(ed.groupOf(raw, 'Inner') === null, 'a sub-system moved out is still in the group it left');
+	// Dissolved: its groups come out numbered past those there, inside the
+	// group it sat in, and what was in none lands in that group.
+	ed.deleteSystem(raw, 'Near');
+	assert(ed.groups(raw).join() === 'group:G1,group:G,group:Inner.In', ed.groups(raw).join());
+	assert(ed.groupOf(raw, 'group:G1') === 'group:G' && ed.groupOf(raw, 'A') === 'group:G1'
+		&& ed.groupOf(raw, 'B') === 'group:G', JSON.stringify(raw));
+	// Deleted with what is in it, its groups go too.
+	const gone = groupedModel();
+	gone.groups = [{ name: 'G', system: 'NF' }, { name: 'H', system: 'NF.Inner' }, { name: 'K' }];
+	ed.deleteSystem(gone, 'NF', { contents: 'delete' });
+	assert(ed.groups(gone).join() === 'group:K', ed.groups(gone).join());
+});
+
+test('a copy of a sub-system takes its groups, and a block pasted where its group is not is in none', () => {
+	const raw = groupedModel();
+	raw.groups = [{ name: 'G', system: 'NF' }];
+	raw.compartments[0].group = 'G';
+	raw.compartments[1].group = 'G';
+	const r = ed.pasteBlocks(raw, ed.copySelection(raw, ['NF']), { system: '' });
+	const copy = r.systems[0];
+	assert(copy === 'NF1' && ed.groupOf(raw, 'NF1.A') === 'group:NF1.G', JSON.stringify(raw.groups));
+	// Beside its original it is filed with it; anywhere else, nowhere.
+	const beside = ed.pasteBlocks(raw, ed.copySelection(raw, ['NF.A']), { system: 'NF' });
+	assert(ed.groupOf(raw, beside.added[0]) === 'group:NF.G', beside.added[0]);
+	const away = ed.pasteBlocks(raw, ed.copySelection(raw, ['NF.A']), { system: 'Bio' });
+	assert(ed.findBlock(raw, away.added[0]).block.group === undefined, 'a block pasted into Bio says it is in G');
+});
+
+test('the transfer grid frames a group as it does a sub-system, dashed, and folds it', () => {
+	const raw = groupedModel();
+	raw.groups = [{ name: 'Wells', system: 'NF' }, { name: 'Deep', system: 'NF', group: 'Wells' },
+		{ name: 'Inputs' }];
+	raw.compartments[0].group = 'Wells';
+	raw.compartments[1].group = 'Deep';
+	raw.parameters[0].group = 'Inputs';
+	raw.layout = { 'NF.Inner': { group: 'Wells' } };
+	const shape = (open, shut = []) => ed.matrixPlan(raw, new Set(open), new Set(shut)).slots
+		.map((x) => (x.kind === 'block' ? x.local
+			: x.kind === 'group' ? `[${x.local}]`
+				: x.kind === 'head' ? `<${x.local}>` : '~'))
+		.join(' ');
+	// A group is open unless folded; one holding nothing the grid draws -- a
+	// group of parameters -- is left off it.
+	assert(shape(['NF']) === '[Bio] <NF> C <Wells> A [Inner] <Deep> B', shape(['NF']));
+	assert(shape(['NF'], ['group:NF.Wells']) === '[Bio] <NF> C [Wells]', shape(['NF'], ['group:NF.Wells']));
+	const plan = ed.matrixPlan(raw, new Set(['NF']));
+	const wells = plan.frames.find((f) => f.path === 'group:NF.Wells');
+	assert(wells?.group === true && !plan.frames.find((f) => f.path === 'NF').group, JSON.stringify(plan.frames));
+	// A flux lands on the outermost thing folded: a group folds as a sub-system does.
+	const rep = (open, shut, name) => ed.matrixPlan(raw, new Set(open), new Set(shut)).representative(name);
+	assert(rep(['NF'], [], 'NF.B') === 'NF.B' && rep(['NF'], ['group:NF.Wells'], 'NF.B') === 'group:NF.Wells'
+		&& rep(['NF'], ['group:NF.Deep'], 'NF.B') === 'group:NF.Deep'
+		&& rep(['NF'], ['group:NF.Wells'], 'NF.Inner.D') === 'group:NF.Wells' && rep([], [], 'NF.B') === 'NF',
+	'a flux lands somewhere else');
+	// The folded tile counts what the grid would show inside it.
+	const folded = ed.matrixPlan(raw, new Set(['NF']), new Set(['group:NF.Wells'])).slots
+		.find((x) => x.path === 'group:NF.Wells');
+	assert(folded.blocks === 3 && folded.systems === 1, JSON.stringify(folded));
+	// A group moves along the diagonal among what sits beside it, taking its
+	// run with it, and its place is kept in its own declaration.
+	assert(ed.matrixOrder(raw, 'NF').join() === 'NF.C,group:NF.Wells', ed.matrixOrder(raw, 'NF').join());
+	assert(ed.moveOnMatrix(raw, 'group:NF.Wells', 'NF.C'), 'the group did not move');
+	assert(shape(['NF']) === '[Bio] <NF> <Wells> A [Inner] <Deep> B C', shape(['NF']));
+	assert(raw.groups[0].matrix === 0, JSON.stringify(raw.groups[0]));
+	expectError(() => ed.moveOnMatrix(raw, 'NF.A', 'NF.C'), /not beside/, 'a block out of its group’s run');
+});
+
+test('the tree files a group’s blocks under it, and the model’s other trees are as they were', () => {
+	const raw = groupedModel();
+	raw.groups = [{ name: 'Wells', system: 'NF' }, { name: 'Deep', system: 'NF', group: 'Wells' }];
+	raw.compartments[0].group = 'Wells';
+	raw.compartments[1].group = 'Deep';
+	raw.layout = { 'NF.Inner': { group: 'Wells' } };
+	const nf = ed.blockTree(raw, {}, { groups: true }).systems.find((x) => x.path === 'NF');
+	assert(nf.blocks.map((b) => b.name).join() === 'NF.AB,NF.BC,NF.C' && nf.systems.length === 0, JSON.stringify(nf.blocks));
+	const wells = nf.groups[0];
+	assert(wells.id === 'group:NF.Wells' && wells.blocks.map((b) => b.name).join() === 'NF.A'
+		&& wells.systems.map((x) => x.path).join() === 'NF.Inner' && wells.groups[0].blocks[0].name === 'NF.B', JSON.stringify(wells));
+	// Counted as a sub-system's are: everything in it, however deep.
+	assert(wells.deep === 3 && nf.count === 5 && nf.deep === 6, `${wells.deep} ${nf.count} ${nf.deep}`);
+	// A search keeps a group only while it holds a match.
+	const found = ed.blockTree(raw, { query: 'B' }, { groups: true }).systems.find((x) => x.path === 'NF');
+	assert(found.groups.length === 1 && found.groups[0].groups[0].blocks[0].name === 'NF.B', JSON.stringify(found));
+	// Without asking for them, the groups are not there, and nothing is missing.
+	const plain = ed.blockTree(raw, {}).systems.find((x) => x.path === 'NF');
+	assert(!plain.groups && plain.blocks.length === 5 && plain.systems.length === 1, JSON.stringify(plain.blocks));
+});
+
+test('an Ecolego group comes across as a group, and its blocks keep the ids Ecolego gave them', () => {
+	const { project, report } = importModelXML(GROUP_XML);
+	assert(JSON.stringify(project.groups) === JSON.stringify([
+		{ name: 'Wells', system: 'Near' }, { name: 'Deep_wells', system: 'Near', group: 'Wells' },
+		{ name: 'Inputs' }, { name: 'Inputs_1' }, { name: 'Empty', system: 'Near' },
+	]), JSON.stringify(project.groups));
+	// The sub-system in a group says so in its layout entry.
+	assert(JSON.stringify(project.layout) === '{"Near.Farm":{"group":"Wells"}}', JSON.stringify(project.layout));
+	const filed = {};
+	for (const [kind, list] of Object.entries(project)) {
+		if (!Array.isArray(list) || kind === 'groups') continue;
+		for (const b of list) if (b?.group) filed[`${kind}:${ed.qualifiedName(b)}`] = b.group;
+	}
+	assert(JSON.stringify(filed) === JSON.stringify({
+		'parameters:k': 'Inputs', 'parameters:j': 'Inputs_1', 'compartments:Near.Pond': 'Wells',
+		'compartments:Near.Bore': 'Deep_wells', 'transfers:Near.Seep': 'Wells', 'transfers:Near.Feed': 'Wells',
+		'events:Near.Dump': 'Deep_wells',
+	}), JSON.stringify(filed));
+	// Nothing is lost, so the report says nothing about them.
+	assert(!JSON.stringify(report.warnings).toLowerCase().includes('group'), JSON.stringify(report.warnings));
+	// And it is laid out a group at a time: each group's blocks inside a box
+	// nothing else of its canvas is in.
+	ed.autoLayout(project);
+	const idx = ed.groupIndex(project);
+	const box = (names) => {
+		const at = names.map((n) => ({ p: ed.getPosition(project, n), s: ed.blockSize(project, n, ed.findBlock(project, n)?.kind ?? 'system') }));
+		return {
+			x0: Math.min(...at.map((a) => a.p.x)), y0: Math.min(...at.map((a) => a.p.y)),
+			x1: Math.max(...at.map((a) => a.p.x + a.s.w)), y1: Math.max(...at.map((a) => a.p.y + a.s.h)),
+		};
+	};
+	const wells = ed.groupMembers(project, 'group:Near.Wells', idx, { deep: true });
+	const w = box([...wells.blocks, ...wells.systems].filter((n) => ed.getPosition(project, n)));
+	const loose = ed.getPosition(project, 'Near.Loose');
+	assert(loose && (loose.x >= w.x1 || loose.x + 136 <= w.x0 || loose.y >= w.y1 || loose.y + 54 <= w.y0),
+		`Loose is drawn inside Wells: ${JSON.stringify(loose)} in ${JSON.stringify(w)}`);
+	// An empty group is somewhere too.
+	assert(Number.isFinite(project.groups[4].x), JSON.stringify(project.groups[4]));
+});
+
+test('the diagram draws an open group as an area round its blocks, and a folded one as a node lines end on', async () => {
+	const { GraphEditor } = await import('../src/ui/graph.js');
+	const raw = groupedModel();
+	raw.groups = [{ name: 'Wells', system: 'NF' }, { name: 'Deep', system: 'NF', group: 'Wells' }];
+	raw.compartments[0].group = 'Wells';
+	raw.compartments[1].group = 'Deep';
+	raw.layout = {
+		'NF.A': { x: 100, y: 100 }, 'NF.B': { x: 400, y: 100 }, 'NF.C': { x: 700, y: 400 },
+		'NF.Inner': { x: 700, y: 100, group: 'Wells' },
+	};
+	const g = Object.assign(Object.create(GraphEditor.prototype), {
+		project: raw, system: 'NF', picked: new Set(), hooks: {},
+	});
+	const nodes = new Map(g._nodes().map((n) => [n.name, n]));
+	const frames = g._groupFrames(nodes);
+	const wells = frames.get('group:NF.Wells');
+	const deep = frames.get('group:NF.Deep');
+	// Round what it holds, with room for its name; the inner area inside the outer.
+	assert(deep.x === 400 - ed.GROUP_PAD && deep.y === 100 - ed.GROUP_HEAD, JSON.stringify(deep));
+	assert(wells.x === 100 - ed.GROUP_PAD && wells.y <= deep.y - ed.GROUP_HEAD
+		&& wells.x + wells.w >= deep.x + deep.w + ed.GROUP_PAD, JSON.stringify(wells));
+	// The pointer finds the innermost area it is in, or none.
+	g._frames = frames;
+	assert(g._groupAt({ x: 420, y: 120 }) === 'group:NF.Deep' && g._groupAt({ x: 110, y: 110 }) === 'group:NF.Wells'
+		&& g._groupAt({ x: 710, y: 410 }) === null, 'the wrong group under the pointer');
+	// Folded, the group is one node, drawn where its area began, and the
+	// line into what it hides ends on it.
+	raw.groups[0].collapsed = true;
+	const folded = g._nodes();
+	const node = folded.find((n) => n.name === 'group:NF.Wells');
+	assert(node?.kind === 'group' && node.x === 100 - ed.GROUP_PAD && !folded.some((n) => n.name === 'NF.A' || n.name === 'NF.Inner'),
+		JSON.stringify(folded.map((n) => n.name)));
+	assert(g._visibleEnd('NF.B') === 'group:NF.Wells' && g._visibleEnd('NF.Inner.D') === 'group:NF.Wells'
+		&& g._visibleEnd('NF.C') === 'NF.C', 'a line does not end on the folded group');
+	assert(g._groupFrames(new Map(folded.map((n) => [n.name, n]))).size === 0, 'a folded group still has an area');
 });
 
 test('folding a sub-system keeps every flux in and out of it', async () => {
@@ -43738,8 +44070,9 @@ test('every (i) outside the Simulation section has something to say, and its lin
 	assert(!bare.includes('**Probabilistic**') && full.includes('**Probabilistic**'), 'the Probabilistic filter described with no sample');
 	// Every kind of block the panels draw has a settings window, and so a
 	// topic -- all but the sub-system and the transport, which is a sub-system
-	// standing for a chain: its parts are blocks, with their own kinds' windows.
-	for (const kind of Object.keys(KIND_ICON).filter((k) => k !== 'system' && k !== 'transport')) {
+	// standing for a chain: its parts are blocks, with their own kinds' windows;
+	// and the group, which is a set of blocks and has no window of its own.
+	for (const kind of Object.keys(KIND_ICON).filter((k) => k !== 'system' && k !== 'transport' && k !== 'group')) {
 		check(`block:${kind}`, blockTopic(kind));
 	}
 	assert(blockTopic('nonsense') === null, 'a kind there is not has a topic');
@@ -43762,7 +44095,7 @@ test('the bar over the diagram opens the canvas menu’s own menus, and the menu
 	const labels = (items) => JSON.stringify(items.map((i) => i.heading ?? i.label ?? (i.separator ? '—' : '?')));
 	const menu = g._canvasMenu(at);
 	assert(labels(menu) === JSON.stringify(['Add here', 'Compartment', 'Expression', 'Parameter', 'Inflow',
-		'Other blocks', 'Sub-system', '—', 'Paste', 'Import…', '—', 'Show', 'Add shape…', 'Save as picture',
+		'Other blocks', 'Sub-system', 'Group', '—', 'Paste', 'Import…', '—', 'Show', 'Add shape…', 'Save as picture',
 		'Canvas']), labels(menu));
 	// Its submenus are the pieces the bar opens, so the two cannot drift.
 	const sub = (label) => menu.find((i) => i.label === label)?.items ?? [];
@@ -44423,7 +44756,9 @@ test('the grid’s right-click is the diagram’s menu on a block, and the place
 	// world outside, a band, a folded count, a transfer, an empty cell.
 	const menuAt = /function menuAt\(host, view, target\) \{([\s\S]*?)\n\}/.exec(matrix)?.[1] ?? '';
 	for (const re of [/if \(i === j\) \{/, /view\.hooks\.blockMenu\?\.\(row\.name, \[\]\)/, /systemMenu\(host, view, row, i\)/,
-		/outsideMenu\(host, view\)/, /placeMenu\(host, view, bandOf\(view\.frames, row, col, i, j\)\?\.path \?\? ''\)/,
+		/outsideMenu\(host, view\)/, /const band = bandOf\(view\.frames, row, col, i, j\);/,
+		/placeMenu\(host, view, band\?\.path \?\? ''\)/,
+		/if \(band\?\.group\) return placeMenu\(host, view, ed\.groupSystem\(band\.path\), band\.path\);/,
 		/summaryMenu\(host, view, i, j\)/, /view\.hooks\.blockMenu\?\.\(tile\.dataset\.name, another\.disabled \? \[\] : \[another\]\)/,
 		/items: \[\{ heading: 'Add' \}, pairItem\(view, i, j\)/]) {
 		assert(re.test(menuAt), `the grid's menu does not cover ${re}`);

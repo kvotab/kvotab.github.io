@@ -86,8 +86,11 @@ properties. Everything the Python package's *Model* edits is here: every
 `add_*!` block, values per index and distributions, edits that follow every
 reference through the model (`rename_block!`, `move_block!`, `delete_block!`,
 `set_dimensions!`, `set_connection_end!`), index lists and scenarios,
-materials, half-lives and decay chains, sub-systems and transports, derived
-outputs, review records and `check_model`. A value the application would
+materials, half-lives and decay chains, sub-systems and transports, groups
+(`add_group!`, `set_group!`, `rename_group!`, `dissolve_group!`,
+`delete_group!`, `shift_group!`; a group is named by its id,
+`"group:Near.Wells"`, and `m.groups` lists them), derived outputs, review
+records and `check_model`. A value the application would
 refuse throws an `EditError` in its words. The edits are checked against the
 Python package's, the model's file after each one byte for byte
 (`tools/edit_fixtures.py`, `test/model/edit.jl`).

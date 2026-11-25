@@ -748,4 +748,52 @@ export const COLOURS = {
 	],
 };
 
-export const EXPORT_MODELS = { EVERY_KIND, TRANSPORT, SWITCHES, SCENARIO_ONLY, NO_EQUIVALENT, PER_INDEX_DIRECTION, FARFIELD_PATHS, SPELLING, DISCRETE, COLOURS };
+/**
+ * Groups, as Ecolego keeps them: each a sub-system of the kind Ecolego calls a
+ * group, its id its own sub-system's path and its name, and whatever is in it
+ * naming it as its sub-system. Nested; one at the top; one holding a
+ * sub-system, which therefore goes out after it; a transfer, a trigger and an
+ * event (as the discrete transfer it is written as) in one. The group `Lake`
+ * shares its name with a compartment beside it, which an Ecolego id cannot, so
+ * it goes out as `Lake_group` and the report says so. Ecolego keeps a
+ * connection beside the block it leaves, in that block's group: `Leak`, filed
+ * in `Deep` while it leaves `Pond` in `Wells`, goes out in `Wells` and the
+ * report says so; `Rain`, from outside, goes out in its own group with the
+ * source written for it.
+ */
+export const GROUPS = {
+	name: 'Groups',
+	nuclides: ['Cs-137', 'I-129'],
+	index_lists: [{ name: 'RN', for_contaminants: true, indices: [{ name: 'Cs-137', enabled: true }, { name: 'I-129', enabled: true }] }],
+	simulation: { start_time: 0, end_time: 40, output_points: 9, spacing: 'linear', solver: 'ndf', rtol: 1e-8, abstol: 1e-12, time_unit: 'year' },
+	systems: ['Basin', 'Basin.Inner'],
+	groups: [
+		{ name: 'Wells', system: 'Basin' }, { name: 'Deep', system: 'Basin', group: 'Wells' },
+		{ name: 'Inputs' }, { name: 'Lake', system: 'Basin' },
+	],
+	parameters: [{ name: 'k', value: 0.1, unit: '1/year', group: 'Inputs' }],
+	compartments: [
+		{ name: 'Lake', system: 'Basin', index_lists: ['RN'], initial: '1000', handle_decay: false, group: 'Lake' },
+		{ name: 'Pond', system: 'Basin', index_lists: ['RN'], initial: '0', handle_decay: false, group: 'Wells' },
+		{ name: 'Bore', system: 'Basin', index_lists: ['RN'], initial: '0', handle_decay: false, group: 'Deep' },
+		{ name: 'Sump', system: 'Basin.Inner', index_lists: ['RN'], initial: '0', handle_decay: false },
+		{ name: 'Soil', index_lists: ['RN'], initial: '0', handle_decay: false },
+	],
+	expressions: [{ name: 'V', system: 'Basin', index_lists: [], equation: 'max(20 - time, 0)', group: 'Wells' }],
+	triggers: [{ name: 'Gone', system: 'Basin', index_lists: [], first: '0', second: 'V', direction: 'rising', group: 'Deep' }],
+	transfers: [
+		{ name: 'Seep', system: 'Basin', from: 'Basin.Lake', to: 'Basin.Pond', index_lists: ['RN'], rate: 'k', group: 'Lake' },
+		{ name: 'Down', system: 'Basin', from: 'Basin.Pond', to: 'Basin.Bore', index_lists: ['RN'], rate: '0.05', group: 'Wells' },
+		{ name: 'Drain', system: 'Basin', from: 'Basin.Bore', to: 'Basin.Inner.Sump', index_lists: ['RN'], rate: '0.02', group: 'Deep' },
+		{ name: 'Out', system: 'Basin.Inner', from: 'Basin.Inner.Sump', to: 'Soil', index_lists: ['RN'], rate: '0.01' },
+		{ name: 'Leak', system: 'Basin', from: 'Basin.Pond', to: 'Soil', index_lists: ['RN'], rate: '0.001', group: 'Deep' },
+	],
+	inflows: [{ name: 'Rain', system: 'Basin', to: 'Basin.Pond', index_lists: ['RN'], rate: '1', unit: 'Bq/year', group: 'Deep' }],
+	events: [
+		{ name: 'Dried', system: 'Basin', timing: 'trigger', trigger: 'Gone', group: 'Wells',
+			actions: [{ kind: 'move', from: 'Basin.Pond', to: 'Soil', fraction: '0.5' }] },
+	],
+	layout: { 'Basin.Inner': { group: 'Wells' } },
+};
+
+export const EXPORT_MODELS = { EVERY_KIND, TRANSPORT, SWITCHES, SCENARIO_ONLY, NO_EQUIVALENT, PER_INDEX_DIRECTION, FARFIELD_PATHS, SPELLING, DISCRETE, COLOURS, GROUPS };

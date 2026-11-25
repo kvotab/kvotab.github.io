@@ -73,7 +73,8 @@ from ..indexlists import (
 )
 from ..jsmath import exp as _js_exp, log as _js_log
 from ..jsonio import js_number
-from ..names import RESERVED, base_name, parent_of, resolve_reference
+from ..groups import group_index, group_of_block, group_of_system, is_group_id
+from ..names import RESERVED, base_name, parent_of, qualify, resolve_reference
 from ..simulation import shorthand_points
 from ..stats.pdf import PDF_KINDS, complete, quantile
 from .ecoequation import TO_ROUNDING, WORKED_OTHERWISE, ecolego_equation, reads_of, unsupported_calls
@@ -631,6 +632,9 @@ def _build_model_xml(model: Any, modified: DateLike) -> Tuple[str, ExportReport,
 class _Context:
     def __init__(self, raw: Dict[str, Any], report: ExportReport) -> None:
         self.raw = raw
+        # The model's groups and what each is written as: see ``plan_groups``.
+        self.groups: Dict[str, Dict[str, Any]] = {}
+        self.group_out: Dict[str, Dict[str, str]] = {}
         self.report = report
         self.project_name = _trim(_or(raw.get('name'), '')) or 'model'
         sim = raw.get('simulation')
@@ -1004,6 +1008,45 @@ class _Context:
         # The paths first: the transfers into and out of one are written to what it became.
         self.plan_paths()
         self.plan_fluxes()
+        # Last, so that a group gives way to every name the rest has taken.
+        self.plan_groups()
+
+    def plan_groups(self) -> None:
+        """The model's groups, as Ecolego's: each a sub-system of the kind
+        Ecolego calls a group, whose id is its own sub-system's path and its
+        name; one named like a block or a sub-system beside it is written under a
+        name of its own (``planGroups``)."""
+        written = {''} | set(self.system_paths_list())
+        self.groups = {gid: g for gid, g in group_index(self.raw).items() if g['system'] in written}
+        self.group_out: Dict[str, Dict[str, str]] = {}
+        for g in self.groups.values():
+            names = self.names_in(g['system'])
+            local = g['name']
+            if local in names:
+                local = f"{g['name']}_group"
+                n = 2
+                while local in names:
+                    local = f"{g['name']}_group_{n}"
+                    n += 1
+                self.report.rename(qualify(g['system'], g['name']), qualify(g['system'], local))
+            names.add(local)
+            self.group_out[g['id']] = {'name': local, 'id': qualify(g['system'], local)}
+
+    def home_of(self, block: Mapping[str, Any]) -> Any:
+        """What a block's ``<sub-system>`` names: the group it is in, or else its
+        own sub-system (``homeOf``)."""
+        gid = group_of_block(block, self.groups) if self.groups else None
+        return self.group_out[gid]['id'] if gid else _or(block.get('system', _UNDEF), '')
+
+    def connection_home(self, t: Mapping[str, Any]) -> Any:
+        """Where a connection is written: beside the block it leaves, in that
+        block's group, which is where Ecolego keeps it; one from outside the
+        model in its own group (``connectionHome``)."""
+        found = self.blocks.get(t['from']) if t.get('from') is not None else None
+        donor = found['block'] if found else None
+        if donor is None or _or(donor.get('system', _UNDEF), '') != _or(t.get('system', _UNDEF), ''):
+            return self.home_of(t)
+        return self.home_of(donor)
 
     def decide_before(self) -> None:
         """The expressions Ecolego is to work out before a run, and the initial
@@ -1691,7 +1734,8 @@ class _Context:
     def plan_fluxes(self) -> None:
         raw, report = self.raw, self.report
 
-        def boundary(name: Any, system: str, type_: str) -> str:
+        def boundary(name: Any, system: str, type_: str, of: Mapping[str, Any]) -> str:
+            # ``of`` is the connection it is made for, which it is written beside.
             names = self.names_in(system)
             local = f'{_str(name)}_{type_}'
             n = 2
@@ -1700,7 +1744,7 @@ class _Context:
                 n += 1
             names.add(local)
             bid = f'{system}.{local}' if system else local
-            self.boundaries.append({'name': local, 'id': bid, 'system': system, 'type': type_})
+            self.boundaries.append({'name': local, 'id': bid, 'system': system, 'type': type_, 'of': of})
             return bid
 
         for collection in ('transfers', 'inflows'):
@@ -1762,9 +1806,9 @@ class _Context:
                                    'compartment from outside; it comes back as a transfer')
                 system = _str(_or(t.get('system', _UNDEF), ''))
                 if source is None:
-                    plan['source'] = boundary(t.get('name', _UNDEF), system, 'source')
+                    plan['source'] = boundary(t.get('name', _UNDEF), system, 'source', t)
                 if target is None:
-                    plan['sink'] = boundary(t.get('name', _UNDEF), system, 'sink')
+                    plan['sink'] = boundary(t.get('name', _UNDEF), system, 'sink', t)
                 if source is None and not inflow and t.get('multiply_by_donor') is True:
                     report.warn(f"'{q}' has no donor and says it multiplies by one; it is written as the absolute "
                                 'flux it is.')
@@ -1789,7 +1833,8 @@ class _Context:
                         'to': None if a['to'] is None else self.resolve_end(a['to'], b),
                         'dims': _or(self.end_dims(a['from'], b), []), 'share': a['fraction']}
                 if plan['to'] is None:
-                    plan['sink'] = boundary(name, system, 'sink')
+                    plan['sink'] = boundary(name, system, 'sink', {'from': plan['from'], 'system': system,
+                                                                   'group': b.get('group')})
                 self.event_plans.append(plan)
                 names.append(_str(name))
             many = '' if len(actions) == 1 else f"{len(actions)} transfers, {', '.join(names)},"
@@ -2488,14 +2533,53 @@ def _write_hierarchy(w: _XmlWriter, ctx: _Context) -> None:
     w.open('sub-system-block')
     w.cdata('guid', guid_for(ctx.project_name, 'root'))
     w.close('sub-system-block')
-    for path in ctx.system_paths_list():
+    # What a sub-system or a group is in comes before it: Ecolego finds it by its
+    # id as it reads. A pass at a time, in the model's order (``writeHierarchy``).
+    groups = ctx.groups or {}
+    items: List[Dict[str, Any]] = [
+        {'key': path, 'up': (group_of_system(raw, path, groups) if groups else None) or parent_of(path)}
+        for path in ctx.system_paths_list()]
+    items += [{'key': g['id'], 'up': g['parent'] or g['system'], 'group': g} for g in groups.values()]
+
+    def id_of(key: str) -> str:
+        return ctx.group_out[key]['id'] if is_group_id(key) else key
+
+    def write(item: Dict[str, Any]) -> None:
+        if item.get('group'):
+            out = ctx.group_out[item['key']]
+            w.open('sub-system-block', [('name', out['name']), ('type', 'group')])
+            w.text('id', out['id'])
+            w.cdata('guid', guid_for(ctx.project_name, f"group:{out['id']}"))
+            if item['up']:
+                w.text('sub-system', id_of(item['up']))
+            w.text('enabled', 'true')
+            w.close('sub-system-block')
+            return
+        path = item['key']
         w.open('sub-system-block', [('name', base_name(path)), ('type', 'transport' if path in transports else None)])
         w.text('id', path)
         w.cdata('guid', guid_for(ctx.project_name, f'system:{path}'))
-        if parent_of(path):
-            w.text('sub-system', parent_of(path))
+        if item['up']:
+            w.text('sub-system', id_of(item['up']))
         w.text('enabled', 'false' if path in off else 'true')
         w.close('sub-system-block')
+
+    written = {''}
+    left = items
+    while left:
+        later = []
+        for item in left:
+            if item['up'] not in written:
+                later.append(item)
+                continue
+            write(item)
+            written.add(item['key'])
+        if len(later) == len(left):
+            # In something that is not written: written as it stands, rather than not at all.
+            for item in later:
+                write(item)
+            break
+        left = later
     w.close('hierarchy-model')
 
 
@@ -2517,8 +2601,10 @@ def _write_blocks(w: _XmlWriter, ctx: _Context) -> None:
         w.open('component', [('name', b['name']), ('type', b['type']), ('dimension', '0'), ('index-lists', '')])
         w.text('id', b['id'])
         w.cdata('guid', guid_for(ctx.project_name, f"block:{b['id']}"))
-        if b['system']:
-            w.text('sub-system', b['system'])
+        # Beside the connection it is made for (``writeBlocks``).
+        home = ctx.connection_home(b['of']) if b.get('of') is not None else b['system']
+        if _truthy(home):
+            w.text('sub-system', home)
         w.text('enabled', 'true')
         w.close('component')
     for collection in ('transfers', 'inflows'):
@@ -2555,8 +2641,13 @@ def _write_discrete_transfer(w: _XmlWriter, ctx: _Context, plan: Dict[str, Any])
     w.open('connection', [('name', name), ('type', 'transfer'), ('source', plan['from']),
                           ('target', plan['sink'] if plan['to'] is None else plan['to']),
                           *_dim_attrs(ctx, plan['dims'])])
+    own = {'system': system, 'group': event.get('group')}
+    home = ctx.connection_home({**own, 'from': plan['from']})
+    if home != ctx.home_of(own):
+        ctx.report.rewrite('event', plan['q'], f"{_str(name)} is written in {home or 'the top level'}, where the block it "
+                           'takes its share of is: Ecolego keeps a transfer beside its donor, in the group the donor is in')
     _write_common(w, ctx, {'system': system, 'enabled': event.get('enabled'), 'unit': 'unitless',
-                           'comment': event.get('comment', _UNDEF), 'color': event.get('color', _UNDEF)}, tid)
+                           'comment': event.get('comment', _UNDEF), 'color': event.get('color', _UNDEF)}, tid, None, home)
     if event.get('enabled') is not False:
         ctx.result_ids.append(tid)
     w.open('entry', [('type', 'transfer')])
@@ -2573,11 +2664,14 @@ def _dim_attrs(ctx: _Context, dims: Sequence[Any], intersection: bool = False) -
 
 
 def _write_common(w: _XmlWriter, ctx: _Context, block: Dict[str, Any], q: str,
-                  collection: Optional[str] = None) -> None:
+                  collection: Optional[str] = None, home: Any = _UNDEF) -> None:
     w.text('id', q)
     w.cdata('guid', guid_for(ctx.project_name, f'block:{q}'))
-    if _truthy(block.get('system')):
-        w.text('sub-system', block['system'])
+    # Where it goes: a connection's as ``connection_home`` says, else its
+    # sub-system, or the group it is in there (``writeCommon``).
+    at = ctx.home_of(block) if home is _UNDEF else home
+    if _truthy(at):
+        w.text('sub-system', at)
     w.text('enabled', 'false' if block.get('enabled') is False else 'true')
     unit = _trim(_or(block.get('unit', _UNDEF), ''))
     if unit:
@@ -2994,10 +3088,14 @@ def _write_connection(w: _XmlWriter, ctx: _Context, t: Dict[str, Any], plan: Dic
         ('source', _or(plan['from'], plan.get('source'))), ('target', _or(plan['to'], plan.get('sink'))),
         *_dim_attrs(ctx, plan['file_dims'], plan['intersection']),
     ])
-    _write_common(w, ctx, t, q)
+    collection = 'inflows' if plan['collection'] == 'inflows' else 'transfers'
+    home = ctx.connection_home(t)
+    if home != ctx.home_of(t):
+        ctx.report.rewrite(KIND_WORD.get(collection), q, f"written in {home or 'the top level'}, where the block it "
+                           'leaves is: Ecolego keeps a transfer beside its donor, in the group the donor is in')
+    _write_common(w, ctx, t, q, None, home)
     if t.get('enabled', _UNDEF) is not False:
         ctx.result_ids.append(q)
-    collection = 'inflows' if plan['collection'] == 'inflows' else 'transfers'
     absolute = plan['from'] is None
 
     def rate(text: Any) -> str:

@@ -55,7 +55,8 @@ import {
 	deriveElements, sharedDims, summedDims, lineage,
 	COMPARTMENT_LIST, TRANSFER_LIST, SOURCE_INDEX, TARGET_INDEX,
 } from '../domain/indexlists.js';
-import { resolveReference, parentOf, baseName } from '../domain/systems.js';
+import { resolveReference, parentOf, baseName, qualify } from '../domain/systems.js';
+import { groupIndex, groupOfBlock, groupOfSystem, isGroupId } from '../domain/groups.js';
 import { interpolationFromEco } from '../domain/lookup.js';
 import { operationFromEco } from '../domain/reduce.js';
 import { extremeFromEco, directionFromEco } from '../domain/recorders.js';
@@ -906,6 +907,62 @@ class Context {
 		// what it became.
 		this.planPaths();
 		this.planFluxes();
+		// Last, so that a group gives way to every name the rest has taken.
+		this.planGroups();
+	}
+
+	/**
+	 * The model's groups, as Ecolego's: each a sub-system of the kind Ecolego
+	 * calls a group, whose id is its own sub-system's path and its name -- a
+	 * group declares no namespace, so it takes its id from the one it is in,
+	 * as a block does. Its name and a block's in one sub-system are therefore
+	 * one id, which Ecolego cannot hold twice; a group named like a block or a
+	 * sub-system beside it is written under a name of its own, and the report
+	 * says so.
+	 */
+	planGroups() {
+		/**
+		 * Every group, by id: see ../domain/groups.js. Those of the sub-systems
+		 * that are written: one whose every block is left out is not, and its
+		 * groups go with it.
+		 */
+		const written = new Set(['', ...this.systemPathsList()]);
+		this.groups = new Map([...groupIndex(this.raw)].filter(([, g]) => written.has(g.system)));
+		/** What each is written as: its name, and its id in the file. */
+		this.groupOut = new Map();
+		for (const g of this.groups.values()) {
+			const set = this.namesIn(g.system);
+			let local = g.name;
+			if (set.has(local)) {
+				local = `${g.name}_group`;
+				for (let n = 2; set.has(local); n++) local = `${g.name}_group_${n}`;
+				this.report.rename(qualify(g.system, g.name), qualify(g.system, local));
+			}
+			set.add(local);
+			this.groupOut.set(g.id, { name: local, id: qualify(g.system, local) });
+		}
+	}
+
+	/**
+	 * What a block's `<sub-system>` names: the group it is in, which is how an
+	 * Ecolego file says a block is in one, or else its own sub-system.
+	 */
+	homeOf(block) {
+		const gid = this.groups?.size ? groupOfBlock(block, this.groups) : null;
+		return gid ? this.groupOut.get(gid).id : (block.system ?? '');
+	}
+
+	/**
+	 * Where a connection is written: where Ecolego keeps it, which is wherever
+	 * the block it leaves is -- in that block's group, if it is in one. Ecolego
+	 * puts a connection there as it reads it, whatever the file says. One that
+	 * leaves no block of the model's -- from outside it -- goes in its own
+	 * group, and so does the source it is written from.
+	 */
+	connectionHome(t) {
+		const donor = t.from == null ? null : this.blocks.get(t.from)?.block;
+		if (!donor || (donor.system ?? '') !== (t.system ?? '')) return this.homeOf(t);
+		return this.homeOf(donor);
 	}
 
 	/** Everything that reads what is left out, until nothing more falls. */
@@ -1603,13 +1660,14 @@ class Context {
 	 */
 	planFluxes() {
 		const { raw, report } = this;
-		const boundary = (name, system, type) => {
+		// `of` is the connection it is made for, which it is written beside.
+		const boundary = (name, system, type, of) => {
 			const set = this.namesIn(system);
 			let local = `${name}_${type}`;
 			for (let n = 2; set.has(local); n++) local = `${name}_${type}_${n}`;
 			set.add(local);
 			const id = system ? `${system}.${local}` : local;
-			this.boundaries.push({ name: local, id, system, type });
+			this.boundaries.push({ name: local, id, system, type, of });
 			return id;
 		};
 		for (const collection of ['transfers', 'inflows']) {
@@ -1672,8 +1730,8 @@ class Context {
 					report.rewrite('inflow', q, 'written as a transfer from a source, which is how Ecolego feeds a '
 						+ 'compartment from outside; it comes back as a transfer');
 				}
-				if (from == null) plan.source = boundary(t.name, t.system ?? '', 'source');
-				if (to == null) plan.sink = boundary(t.name, t.system ?? '', 'sink');
+				if (from == null) plan.source = boundary(t.name, t.system ?? '', 'source', t);
+				if (to == null) plan.sink = boundary(t.name, t.system ?? '', 'sink', t);
 				if (from == null && !inflow && t.multiply_by_donor === true) {
 					report.warn(`'${q}' has no donor and says it multiplies by one; it is written as the absolute flux it is.`);
 				}
@@ -1698,7 +1756,7 @@ class Context {
 					from: this.resolveEnd(a.from, b), to: a.to == null ? null : this.resolveEnd(a.to, b),
 					dims: this.endDims(a.from, b) ?? [], share: a.fraction,
 				};
-				if (plan.to == null) plan.sink = boundary(name, system, 'sink');
+				if (plan.to == null) plan.sink = boundary(name, system, 'sink', { from: plan.from, system, group: b.group });
 				this.eventPlans.push(plan);
 				names.push(name);
 			});
@@ -2447,13 +2505,55 @@ function writeHierarchy(w, ctx) {
 	w.open('sub-system-block');
 	w.cdata('guid', guidFor(ctx.projectName, 'root'));
 	w.close('sub-system-block');
-	for (const path of ctx.systemPathsList()) {
+	// Ecolego finds what a sub-system is in by its id as it reads, so what it
+	// is in comes first: a sub-system's parent, or the group it sits in, and a
+	// group's own sub-system or the group around it. Taken in the model's
+	// order, a pass at a time, each as soon as what it is in has been written
+	// -- which for a model with no groups is one pass, in the order it always
+	// was.
+	const groups = ctx.groups ?? new Map();
+	const items = [
+		...ctx.systemPathsList().map((path) => ({
+			key: path, up: (groups.size ? groupOfSystem(raw, path, groups) : null) ?? parentOf(path),
+		})),
+		...[...groups.values()].map((g) => ({ key: g.id, up: g.parent ?? g.system, group: g })),
+	];
+	const idOf = (key) => (isGroupId(key) ? ctx.groupOut.get(key).id : key);
+	const write = (item) => {
+		if (item.group) {
+			const out = ctx.groupOut.get(item.key);
+			w.open('sub-system-block', [['name', out.name], ['type', 'group']]);
+			w.text('id', out.id);
+			w.cdata('guid', guidFor(ctx.projectName, `group:${out.id}`));
+			if (item.up) w.text('sub-system', idOf(item.up));
+			w.text('enabled', 'true');
+			w.close('sub-system-block');
+			return;
+		}
+		const path = item.key;
 		w.open('sub-system-block', [['name', baseName(path)], ['type', transports.has(path) ? 'transport' : null]]);
 		w.text('id', path);
 		w.cdata('guid', guidFor(ctx.projectName, `system:${path}`));
-		if (parentOf(path)) w.text('sub-system', parentOf(path));
+		if (item.up) w.text('sub-system', idOf(item.up));
 		w.text('enabled', off.has(path) ? 'false' : 'true');
 		w.close('sub-system-block');
+	};
+	const written = new Set(['']);
+	let left = items;
+	while (left.length) {
+		const next = [];
+		for (const item of left) {
+			if (!written.has(item.up)) { next.push(item); continue; }
+			write(item);
+			written.add(item.key);
+		}
+		if (next.length === left.length) {
+			// In something that is not written: written as it stands, rather
+			// than not at all.
+			for (const item of next) write(item);
+			break;
+		}
+		left = next;
 	}
 	w.close('hierarchy-model');
 }
@@ -2477,7 +2577,10 @@ function writeBlocks(w, ctx) {
 		w.open('component', [['name', b.name], ['type', b.type], ['dimension', '0'], ['index-lists', '']]);
 		w.text('id', b.id);
 		w.cdata('guid', guidFor(ctx.projectName, `block:${b.id}`));
-		if (b.system) w.text('sub-system', b.system);
+		// Beside the connection it is made for: a source in that connection's
+		// group, which is where Ecolego then keeps the connection.
+		const home = b.of ? ctx.connectionHome(b.of) : b.system;
+		if (home) w.text('sub-system', home);
 		w.text('enabled', 'true');
 		w.close('component');
 	}
@@ -2524,9 +2627,15 @@ function writeDiscreteTransfer(w, ctx, plan) {
 		['source', plan.from], ['target', plan.to ?? plan.sink],
 		...dimAttrs(ctx, plan.dims),
 	]);
+	const own = { system: plan.system, group: plan.event.group };
+	const home = ctx.connectionHome({ ...own, from: plan.from });
+	if (home !== ctx.homeOf(own)) {
+		ctx.report.rewrite('event', plan.q, `${plan.name} is written in ${home || 'the top level'}, where the block it `
+			+ 'takes its share of is: Ecolego keeps a transfer beside its donor, in the group the donor is in');
+	}
 	writeCommon(w, ctx, {
 		system: plan.system, enabled: plan.event.enabled, unit: 'unitless', comment: plan.event.comment, color: plan.event.color,
-	}, id);
+	}, id, null, home);
 	if (plan.event.enabled !== false) ctx.resultIds.push(id);
 	w.open('entry', [['type', 'transfer']]);
 	w.cdata('transfer-equation', ctx.equation(equationText(plan.share, '1'), plan.q, 'events'));
@@ -2536,11 +2645,16 @@ function writeDiscreteTransfer(w, ctx, plan) {
 	w.close('connection');
 }
 
-/** The id, GUID, place, switch, unit and comment every block carries. */
-function writeCommon(w, ctx, block, q, collection = null) {
+/**
+ * The id, GUID, place, switch, unit and comment every block carries. `home`,
+ * when given, is where it goes (a connection's: see `connectionHome`); else
+ * its sub-system, or the group it is in there.
+ */
+function writeCommon(w, ctx, block, q, collection = null, home = undefined) {
 	w.text('id', q);
 	w.cdata('guid', guidFor(ctx.projectName, `block:${q}`));
-	if (block.system) w.text('sub-system', block.system);
+	const at = home === undefined ? ctx.homeOf(block) : home;
+	if (at) w.text('sub-system', at);
 	w.text('enabled', block.enabled === false ? 'false' : 'true');
 	const unit = String(block.unit ?? '').trim();
 	if (unit) w.text('unit', unit);
@@ -2983,9 +3097,14 @@ function writeConnection(w, ctx, t, plan) {
 		['source', plan.from ?? plan.source], ['target', plan.to ?? plan.sink],
 		...dimAttrs(ctx, dims, plan.intersection),
 	]);
-	writeCommon(w, ctx, t, q);
-	if (t.enabled !== false) ctx.resultIds.push(q);
 	const collection = plan.collection === 'inflows' ? 'inflows' : 'transfers';
+	const home = ctx.connectionHome(t);
+	if (home !== ctx.homeOf(t)) {
+		ctx.report.rewrite(KIND_WORD[collection], q, `written in ${home || 'the top level'}, where the block it leaves `
+			+ 'is: Ecolego keeps a transfer beside its donor, in the group the donor is in');
+	}
+	writeCommon(w, ctx, t, q, null, home);
+	if (t.enabled !== false) ctx.resultIds.push(q);
 	const absolute = plan.from == null;
 	const rate = (text) => ctx.equation(availabilityRate(equationText(text, '0'), plan.availability), q, collection);
 	// On unless it says `false`, as `Project` reads it. It is one setting of

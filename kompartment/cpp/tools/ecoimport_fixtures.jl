@@ -534,6 +534,23 @@ xcase("colours", full_model(; blocks_extra=
          entries=[entry("discrete-event", tag("first-expression", "time") * tag("second-expression", "5"))]) *
     transfer("Jump", "kt4", "k1", "k3", "1"; donor="true", body=colour("-39271"), per=[entry("transfer", tag("transfer-event", "Go"))])))
 
+# Groups: a sorting of one sub-system's blocks and no namespace, kept as one -- nested, holding a
+# sub-system, a transfer, a source's and a discrete one; a name to tidy, one taken twice, one that
+# is a prototype key, one empty -- and a sub-system in one saying so in its layout entry.
+const GROUPS = subsystem(nothing, nothing) * subsystem("Near", "n") *
+               subsystem(" 1 well-head ", "n.w"; parent="n", type="group") *
+               subsystem("Deep wells", "n.d"; parent="n.w", type="group") * subsystem("Farm", "n.f"; parent="n.w") *
+               subsystem("Inputs", "gi", type="group") * subsystem("Inputs", "gi2", type="group") *
+               subsystem("__proto__", "gp", type="group") * subsystem("Empty", "n.e"; parent="n", type="group")
+xcase("groups", full_model(; hierarchy=GROUPS, blocks_extra=
+    compartment("Pond", "n.p"; sub="n.w") * compartment("Bore", "n.b"; sub="n.d") * compartment("Loose", "n.l"; sub="n") *
+    compartment("Soil", "n.f.s"; sub="n.f") * parameter("kg", "kg", "0.5"; sub="gi") * parameter("jg", "jg", "0.1"; sub="gi2") *
+    parameter("pg", "pg", "1"; sub="gp") *
+    transfer("Seep", "n.sp", "n.p", "n.b", "0.1"; sub="n.w") *
+    comp("discrete-event", "Tick", "n.tk"; sub="n",
+         entries=[entry("discrete-event", tag("first-expression", "time") * tag("second-expression", "5"))]) *
+    transfer("Dump", "n.dm", "n.p", "n.l", "1"; sub="n.d", donor="true", per=[entry("transfer", tag("transfer-event", "Tick"))])))
+
 # Sub-system interfaces.
 iface(type, name, id, objs; sub=nothing, enabled=nothing) =
     comp(type, name, id; sub, body=(enabled === nothing ? "" : "<enabled>$enabled</enabled>") *

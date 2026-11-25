@@ -120,7 +120,16 @@ const idOf = (slot) => (slot.kind === 'block' ? slot.name
 /** What to call it on screen, and what to call it in a tooltip. */
 const nameOf = (slot) => (slot.kind === 'outside' ? OUTSIDE : slot.local);
 const fullOf = (slot) => (slot.kind === 'block' ? slot.name
-	: slot.kind === 'outside' ? 'outside the model' : slot.path);
+	: slot.kind === 'outside' ? 'outside the model'
+		: slot.group ? `group ${slot.local}` : slot.path);
+
+/** A sub-system's frame along each edge of a cell it is on the edge of. */
+const SHADOW = {
+	top: 'inset 0 2px 0 0 var(--matrix-frame)',
+	bottom: 'inset 0 -2px 0 0 var(--matrix-frame)',
+	left: 'inset 2px 0 0 0 var(--matrix-frame)',
+	right: 'inset -2px 0 0 0 var(--matrix-frame)',
+};
 
 /** Whether a slot is inside the open sub-system at `f`. */
 const within = (f, at) => at > f.from && at <= f.to;
@@ -402,11 +411,15 @@ const movableId = (slot) => (slot?.kind === 'block' ? slot.name
 export function arrangeUnits(grid, at) {
 	const id = movableId(grid.slots[at]);
 	if (id == null) return null;
-	const parent = parentOf(id);
+	// The run it moves along: its sub-system, and the group it is in there.
+	// A grid made without groups says nothing of either, and the sub-system
+	// is then what the name says.
+	const runOf = (slot, of) => slot.home ?? parentOf(of);
+	const parent = runOf(grid.slots[at], id);
 	const units = [];
 	grid.slots.forEach((slot, i) => {
 		const of = movableId(slot);
-		if (of == null || parentOf(of) !== parent) return;
+		if (of == null || runOf(slot, of) !== parent) return;
 		const to = slot.kind === 'head'
 			? (grid.frames.find((f) => f.path === slot.path)?.to ?? i) : i;
 		units.push({ id: of, from: i, to });
@@ -813,12 +826,16 @@ function menuAt(host, view, target) {
 				items: [...arrangeItems(host, view, i), ...(shared ? [{ separator: true }, ...shared.items] : [])],
 			};
 		}
+		if ((row.kind === 'group' || row.kind === 'head') && row.group) return groupMenu(host, view, row, i);
 		if (row.kind === 'group' || row.kind === 'head') return systemMenu(host, view, row, i);
 		return outsideMenu(host, view);
 	}
-	// An open sub-system's band, which is a place in it rather than a pair.
+	// An open sub-system's band, which is a place in it rather than a pair --
+	// and an open group's, a place in its sub-system that is in the group.
 	if (row.kind === 'head' || col.kind === 'head') {
-		return placeMenu(host, view, bandOf(view.frames, row, col, i, j)?.path ?? '');
+		const band = bandOf(view.frames, row, col, i, j);
+		if (band?.group) return placeMenu(host, view, ed.groupSystem(band.path), band.path);
+		return placeMenu(host, view, band?.path ?? '');
 	}
 	const tile = t.closest('[data-name]');
 	if (tile) {
@@ -893,6 +910,24 @@ function addFlux(view, kind, a, b) {
 }
 
 /** A sub-system's tile, at slot `at`: the fold, its place, and the menu the diagram gives it. */
+/** A group's tile: open or fold it, move it along, and the diagram's menu for it. */
+function groupMenu(host, view, slot, at) {
+	const open = slot.kind === 'head';
+	const fold = {
+		label: open ? `Fold ${slot.local} up` : `Open ${slot.local}`,
+		hint: 'click',
+		title: open
+			? 'Back to one row and one column, where every flux in and out of it lands'
+			: 'What it holds on the grid, framed together, each block under the name it always had',
+		onPick: () => view.hooks.onToggleSystem?.(slot.path),
+	};
+	const shared = view.hooks.blockMenu?.(slot.path, []) ?? null;
+	return {
+		title: shared?.title ?? `group ${slot.local}`,
+		items: [fold, ...arrangeItems(host, view, at), ...(shared ? [{ separator: true }, ...shared.items] : [])],
+	};
+}
+
 function systemMenu(host, view, slot, at) {
 	const open = slot.kind === 'head';
 	const fold = {
@@ -918,8 +953,10 @@ function arrangeItems(host, view, at) {
 	const plan = arrangeUnits(view, at);
 	if (!plan) return [];
 	const { id, units, self } = plan;
-	const system = parentOf(id);
-	const where = system ? baseName(system) : 'the top level';
+	const slot = view.slots[at];
+	const system = ed.isGroupId(id) ? ed.groupSystem(id) : parentOf(id);
+	const where = slot?.inGroup ? `group ${ed.groupName(slot.inGroup)}`
+		: system ? baseName(system) : 'the top level';
 	const prev = units[self - 1];
 	const next = units[self + 1];
 	const alone = units.length < 2
@@ -1022,13 +1059,13 @@ function outsideMenu(host, view) {
  * The margin round the grid, or the band along an open sub-system: a place in
  * the model, `''` for the top level, and what can be put there.
  */
-function placeMenu(host, view, system) {
-	const paste = view.hooks.pasteItem?.(system) ?? null;
+function placeMenu(host, view, system, group = null) {
+	const paste = group ? null : view.hooks.pasteItem?.(system) ?? null;
 	return {
-		title: system ? `sub-system ${system}` : 'the top level',
+		title: group ? `group ${ed.groupName(group)}` : system ? `sub-system ${system}` : 'the top level',
 		items: [
 			{ heading: 'Add here' },
-			...addItems(host, view, system),
+			...addItems(host, view, system, group),
 			...(paste ? [{ separator: true }, paste] : []),
 			...foldItems(view),
 			...orderItems(host, view, system),
@@ -1073,10 +1110,10 @@ function orderItems(host, view, system) {
  * made of is drawn nowhere on the grid, and is on the diagram's menu and
  * beside the tree's search, where it can be seen arriving.
  */
-function addItems(host, view, system) {
+function addItems(host, view, system, group = null) {
 	const transport = !!system && ed.isTransport(view.project, system);
 	const item = (label, title, what) => ({
-		label, title, onPick: () => addBlock(host, view, what, system),
+		label, title, onPick: () => addBlock(host, view, what, system, group),
 	});
 	return [
 		item('Compartment', 'A box that holds an inventory over time', 'compartment'),
@@ -1096,7 +1133,7 @@ function addItems(host, view, system) {
 }
 
 /** Makes one of `addItems`' blocks, selects it and brings it into view. */
-function addBlock(host, view, what, system) {
+function addBlock(host, view, what, system, group = null) {
 	const { project, hooks } = view;
 	try {
 		const made = {
@@ -1105,6 +1142,8 @@ function addBlock(host, view, what, system) {
 			waste_package: () => qualifiedName(ed.addWastePackage(project, { system })),
 			system: () => ed.addSystem(project, { parent: system }),
 		}[what]();
+		// Made on a group's band, it is in the group.
+		if (group) ed.setGroup(project, [made], group);
 		// Unfolded to where it went: inside a fold it would arrive nowhere
 		// to be seen.
 		if (system) hooks.onUnfoldTo?.(system);
@@ -1185,8 +1224,8 @@ function viewItems(host) {
  * @returns {{slots: object[], frames: object[], kinds: Map<string, string>,
  *   inside: Map<string, number>, pairAt: (i: number, j: number) => object[]}}
  */
-export function matrixGrid(project, open = new Set()) {
-	const { slots, frames, representative } = ed.matrixPlan(project, open);
+export function matrixGrid(project, open = new Set(), shut = new Set()) {
+	const { slots, frames, representative } = ed.matrixPlan(project, open, shut);
 	// What each block on the diagonal is, looked up once rather than once per
 	// cell it heads: a row and a column each, of a grid that may be forty
 	// thousand cells.
@@ -1279,13 +1318,14 @@ export function renderMatrix(host, project, selection, hooks = {}, opts = {}) {
 	const comps = (project.compartments ?? []).map((c) => qualifiedName(c));
 	const paths = (project.farfields ?? []).map((f) => qualifiedName(f));
 
-	// Which sub-systems are unfolded. The view's, not the model's: it changes
-	// nothing and is never saved.
+	// Which sub-systems are unfolded, and which groups folded. The view's,
+	// not the model's: it changes nothing and is never saved.
 	const open = opts.open ?? new Set();
+	const shut = opts.shut ?? new Set();
 	// What the panel's gestures read -- see `wire`. Filed before anything is
 	// drawn, so that the empty panel of a new model has its menu too.
 	const view = {
-		project, selection, hooks, open,
+		project, selection, hooks, open, shut,
 		slots: [], frames: [], kinds: new Map(), pairAt: () => [],
 	};
 	views.set(host, view);
@@ -1298,7 +1338,7 @@ export function renderMatrix(host, project, selection, hooks = {}, opts = {}) {
 		return;
 	}
 
-	const grid = matrixGrid(project, open);
+	const grid = matrixGrid(project, open, shut);
 	const { slots, frames, kinds, inside } = grid;
 	Object.assign(view, grid);
 
@@ -1320,23 +1360,48 @@ export function renderMatrix(host, project, selection, hooks = {}, opts = {}) {
 	// -- a sub-system whose last member is itself a sub-system shares its
 	// bottom and right edge -- so the shadows are composed rather than set as
 	// a border, which cannot stack. The outermost frame wins the colour.
+	//
+	// A group's frame is dashed, as its area is on the diagram: the lighter
+	// of the two containers, which changes no name. A dash cannot be a
+	// shadow, so it is a stripe of background along the cell's edge instead,
+	// and those stack the same way.
 	const edgesAt = (i, j) => {
 		const parts = [];
+		const dashes = [];
 		let depth = null;
 		for (const f of frames) {
 			const inRows = i >= f.from && i <= f.to;
 			const inCols = j >= f.from && j <= f.to;
 			if (!inRows || !inCols) continue;
-			const want = [];
-			if (i === f.from) want.push('inset 0 2px 0 0 var(--matrix-frame)');
-			if (i === f.to) want.push('inset 0 -2px 0 0 var(--matrix-frame)');
-			if (j === f.from) want.push('inset 2px 0 0 0 var(--matrix-frame)');
-			if (j === f.to) want.push('inset -2px 0 0 0 var(--matrix-frame)');
-			if (!want.length) continue;
-			for (const w of want) if (!parts.includes(w)) parts.push(w);
+			const edges = [];
+			if (i === f.from) edges.push('top');
+			if (i === f.to) edges.push('bottom');
+			if (j === f.from) edges.push('left');
+			if (j === f.to) edges.push('right');
+			if (!edges.length) continue;
+			for (const side of edges) {
+				if (f.group) {
+					if (!dashes.includes(side)) dashes.push(side);
+					continue;
+				}
+				const w = SHADOW[side];
+				if (!parts.includes(w)) parts.push(w);
+			}
 			depth = depth == null ? f.depth : Math.min(depth, f.depth);
 		}
-		return { shadow: parts.join(', '), depth };
+		return { shadow: parts.join(', '), dashes, depth };
+	};
+	const dash = (cell, frame) => {
+		if (frame.shadow) cell.style.setProperty('box-shadow', frame.shadow);
+		if (!frame.dashes.length) return;
+		const across = (side) => side === 'top' || side === 'bottom';
+		cell.style.setProperty('background-image', frame.dashes.map((side) =>
+			`repeating-linear-gradient(${across(side) ? 90 : 180}deg, `
+			+ 'var(--matrix-group-frame) 0 5px, transparent 5px 9px)').join(', '));
+		cell.style.setProperty('background-size', frame.dashes.map((side) =>
+			(across(side) ? '100% 2px' : '2px 100%')).join(', '));
+		cell.style.setProperty('background-position', frame.dashes.join(', '));
+		cell.style.setProperty('background-repeat', frame.dashes.map(() => 'no-repeat').join(', '));
 	};
 
 	for (let i = 0; i < slots.length; i++) {
@@ -1350,7 +1415,7 @@ export function renderMatrix(host, project, selection, hooks = {}, opts = {}) {
 			// --- the diagonal: the thing itself ---------------------------
 			if (i === j) {
 				tr.append(diagonalCell(r, {
-					project, selection, hooks, isPath, kinds, inside, frame,
+					project, selection, hooks, isPath, kinds, inside, frame, dash,
 				}));
 				continue;
 			}
@@ -1363,12 +1428,15 @@ export function renderMatrix(host, project, selection, hooks = {}, opts = {}) {
 			if (r.kind === 'head' || c.kind === 'head') {
 				const band = bandOf(frames, r, c, i, j);
 				const td = el('td', {
-					className: band ? 'matrix-band' : 'matrix-void',
+					className: `${band ? 'matrix-band' : 'matrix-void'}${band?.group ? ' is-group-band' : ''}`,
 					title: band
-						? `${band.path} \u2014 everything inside it is framed here`
+						? (band.group
+							? `group ${ed.groupName(band.path)} \u2014 what it holds is framed here, `
+								+ 'under the names it always had'
+							: `${band.path} \u2014 everything inside it is framed here`)
 						: '',
 				});
-				if (frame.shadow) td.style.setProperty('box-shadow', frame.shadow);
+				dash(td, frame);
 				tr.append(td);
 				continue;
 			}
@@ -1390,7 +1458,7 @@ export function renderMatrix(host, project, selection, hooks = {}, opts = {}) {
 					here.some((t) => selection?.name === qualifiedName(t)) ? 'is-selected' : '',
 				].filter(Boolean).join(' '),
 			});
-			if (frame.shadow) td.style.setProperty('box-shadow', frame.shadow);
+			dash(td, frame);
 			if (here.length) td.dataset.names = here.map((t) => qualifiedName(t)).join('\u0000');
 
 			// Which way this cell runs. Above the diagonal the receiver is
@@ -1459,7 +1527,7 @@ export function renderMatrix(host, project, selection, hooks = {}, opts = {}) {
 
 /** The diagonal: a block, a folded sub-system, or an open one's header. */
 function diagonalCell(slot, ctx) {
-	const { project, selection, hooks, isPath, kinds, inside, frame } = ctx;
+	const { project, selection, hooks, isPath, kinds, inside, frame, dash } = ctx;
 	// `matrix-slot-<kind>`, not `matrix-<kind>`: a block's slot would then be
 	// `matrix-block`, the tile's own class, and the cell took the tile's
 	// border, corners and `inset: 2px` -- which on a cell that is
@@ -1470,7 +1538,8 @@ function diagonalCell(slot, ctx) {
 				: slot.kind === 'block' && isPath.has(slot.name) ? ' matrix-path' : ''}`,
 		scope: 'row',
 	});
-	if (frame.shadow) th.style.setProperty('box-shadow', frame.shadow);
+	if (dash) dash(th, frame);
+	else if (frame.shadow) th.style.setProperty('box-shadow', frame.shadow);
 
 	if (slot.kind === 'outside') {
 		th.title = 'The world beyond the model: its row is what comes in from '
@@ -1479,6 +1548,38 @@ function diagonalCell(slot, ctx) {
 		// grid does not have one cell that is a bare word. Not a control:
 		// there is nothing to select and nothing to open.
 		th.append(el('span', { className: 'matrix-block matrix-nowhere' }, OUTSIDE));
+		return th;
+	}
+
+	// A group of the model's, folded or open: the same tile as a sub-system's,
+	// dashed as its frame is, and a click folds it and selects it.
+	if ((slot.kind === 'group' || slot.kind === 'head') && slot.group) {
+		const isOpen = slot.kind === 'head';
+		const held = slot.kind === 'group'
+			? [
+				`${slot.blocks} block${slot.blocks === 1 ? '' : 's'}`,
+				slot.systems ? `${slot.systems} sub-system${slot.systems === 1 ? '' : 's'}` : '',
+				inside.get(slot.path) ? `${inside.get(slot.path)} flux inside` : '',
+			].filter(Boolean).join(', ')
+			: '';
+		const btn = el('button', {
+			className: `matrix-block matrix-system matrix-group${isOpen ? ' is-open' : ''}`,
+			type: 'button',
+			title: `group ${slot.local} \u2014 ${isOpen
+				? 'open: what it holds is framed here. A click folds it up and selects it.'
+				: `folded up, holding ${held}. A click opens it and selects it.`}`
+				+ ' Its blocks keep their names. Drag it along the diagonal to move it, with everything in it.',
+		});
+		btn.dataset.name = slot.path;
+		if (selection?.name === slot.path) btn.classList.add('is-selected');
+		btn.append(el('span', { className: 'matrix-fold' }, isOpen ? '\u25be' : '\u25b8'));
+		btn.append(el('span', { className: 'matrix-system-name' }, slot.local));
+		if (!isOpen && held) btn.append(el('span', { className: 'matrix-system-held' }, held));
+		btn.addEventListener('click', () => {
+			hooks.onToggleSystem?.(slot.path);
+			hooks.onSelect?.({ kind: 'group', name: slot.path });
+		});
+		th.append(btn);
 		return th;
 	}
 

@@ -48,7 +48,7 @@ const _ED_SHAPE_DASHES = ("solid", "dashed", "dotted")
 const _ED_SHAPE_TEXT_FONTS = ("sans", "scribble", "serif", "mono")
 const _ED_SHAPE_TEXT_ALIGNS = ("left", "center", "right")
 const _ED_NOT_REVIEWED = ("x", "y", "w", "h", "shape", "colour", "color", "label", "collapsed", "comment", "note",
-                          "notes", "qa")
+                          "notes", "qa", "group")
 
 _edge_key(name, view=nothing) = view === nothing ? _EDGE_PREFIX * name : "$(_EDGE_PREFIX)$(name)@$(view)"
 
@@ -2205,6 +2205,9 @@ function move_block!(m::Model, name, system="")
     _ed_retarget_layout!(m, q -> q == name ? target : nothing)
     raw["name"] = local_
     py_truthy(system) ? (raw["system"] = system) : delete!(raw, "system")
+    # A group is a set of one sub-system's blocks, so a block that leaves the sub-system leaves
+    # its group.
+    delete!(raw, "group")
     _ed_invalidate!(m)
     if _kind_name(b) == "compartment"
         attached = Any[t for t in _py_iter(get(m.raw, "transfers", nothing)) if get(t, "from", nothing) == target]
@@ -2425,7 +2428,15 @@ function move_system!(m::Model, path, parent="")
         local_ = "$(base_name(path))$k"
         k += 1
     end
-    return _ed_relocate_system!(m, path, qualify(parent, local_))
+    target = _ed_relocate_system!(m, path, qualify(parent, local_))
+    # The group it sat in was one of the sub-system it has left.
+    lay = get(m.raw, "layout", nothing)
+    entry = lay isa AbstractDict ? get(lay, target, nothing) : nothing
+    if entry isa AbstractDict && haskey(entry, "group")
+        delete!(entry, "group")
+        isempty(entry) && delete!(lay, target)
+    end
+    return target
 end
 
 """`path` with its prefix `old` replaced by `new` (`reparent`)."""
@@ -2447,6 +2458,659 @@ function _ed_disabled_systems(m::Model)
         isempty(s) || push!(out, s)
     end
     return out
+end
+
+# --- groups --------------------------------------------------------------------------------
+# A named set of the blocks of one sub-system, which changes no id and no number: the
+# application's src/domain/groups.js, as far as the edits here need it. A declaration in
+# `groups` is `{name, system?, group?}`; a block says `group`, and a sub-system its layout entry
+# does.
+
+const _ED_GROUP_NAME = r"\A[A-Za-z_][A-Za-z0-9_]*\z"
+
+"""The declarations as the file has them, the malformed ones left out (`groupList`)."""
+function _ed_group_list(raw)
+    gs = get(raw, "groups", nothing)
+    out = Any[]
+    gs isa AbstractVector || return out
+    for g in gs
+        g isa AbstractDict || continue
+        nm = get(g, "name", nothing)
+        (nm isa AbstractString && occursin(_ED_GROUP_NAME, nm)) || continue
+        sys = get(g, "system", nothing)
+        (sys === nothing || sys isa AbstractString) || continue
+        push!(out, g)
+    end
+    return out
+end
+
+_ed_group_id(system, name) = "group:" * qualify(system, name)
+
+"""Every group, by id: `id`, `name`, `system`, `parent`, `decl` (`groupIndex`)."""
+function _ed_group_index(raw, paths)
+    index = OrderedDict{String,Dict{String,Any}}()
+    declared = _ed_group_list(raw)
+    isempty(declared) && return index
+    known = Set{String}([""])
+    for p in paths
+        push!(known, p)
+    end
+    for g in declared
+        sys = get(g, "system", nothing)
+        sys = (sys === nothing || isempty(sys)) ? "" : String(sys)
+        sys in known || continue
+        gid = _ed_group_id(sys, g["name"])
+        haskey(index, gid) && continue
+        index[gid] = Dict{String,Any}("id" => gid, "name" => g["name"], "system" => sys, "parent" => nothing,
+                                      "decl" => g)
+    end
+    for info in values(index)
+        p = get(info["decl"], "group", nothing)
+        (p isa AbstractString && !isempty(p)) || continue
+        pid = _ed_group_id(info["system"], p)
+        (pid != info["id"] && haskey(index, pid)) && (info["parent"] = pid)
+    end
+    for info in values(index)
+        seen = Set{String}([info["id"]])
+        at = info
+        while at["parent"] !== nothing
+            if at["parent"] in seen
+                at["parent"] = nothing
+                break
+            end
+            push!(seen, at["parent"])
+            at = index[at["parent"]]
+        end
+    end
+    return index
+end
+
+function _ed_group_of_block(b, index)
+    nm = get(b, "group", nothing)
+    (nm isa AbstractString && !isempty(nm)) || return nothing
+    gid = _ed_group_id(system_of(b), nm)
+    return haskey(index, gid) ? gid : nothing
+end
+
+function _ed_group_of_system(raw, path, index)
+    lay = get(raw, "layout", nothing)
+    entry = lay isa AbstractDict ? get(lay, path, nothing) : nothing
+    nm = entry isa AbstractDict ? get(entry, "group", nothing) : nothing
+    (py_truthy(path) && nm isa AbstractString && !isempty(nm)) || return nothing
+    gid = _ed_group_id(parent_of(path), nm)
+    return haskey(index, gid) ? gid : nothing
+end
+
+const _ED_GROUP_PREFIX = "group:"
+
+"""Whether `key` is a group's id rather than a block's or a sub-system's name (`is_group_id`)."""
+_ed_is_group_id(key) = key isa AbstractString && length(key) > length(_ED_GROUP_PREFIX) && startswith(key, _ED_GROUP_PREFIX)
+
+"""A group's id taken apart, `(system, name)`, or `nothing` (`split_group_id`)."""
+function _ed_split_group_id(key)
+    _ed_is_group_id(key) || return nothing
+    q = String(chop(key; head=length(_ED_GROUP_PREFIX), tail=0))
+    return (parent_of(q), base_name(q))
+end
+
+"""The name a group's id ends in, or the key itself when it is not one (`group_name`)."""
+function _ed_group_name(key)
+    split = _ed_split_group_id(key)
+    split === nothing || return split[2]
+    return key === nothing ? "" : _py_str(key)
+end
+
+"""The groups `gid` is in, outermost first, ending with `gid` itself (`group_chain`)."""
+function _ed_group_chain(index, gid)
+    out = String[]
+    at = gid
+    while at isa AbstractString && !isempty(at) && haskey(index, at)
+        pushfirst!(out, at)
+        at = index[at]["parent"]
+    end
+    return out
+end
+
+"""Whether group `gid` is `outer` or lies inside it, however deep (`group_within`)."""
+function _ed_group_within(index, gid, outer)
+    at = gid
+    while at isa AbstractString && !isempty(at)
+        at == outer && return true
+        info = get(index, at, nothing)
+        at = info === nothing ? nothing : info["parent"]
+    end
+    return false
+end
+
+"""The groups of one sub-system, in the file's order (`groups_on`)."""
+_ed_groups_on(index, system) = Any[g for g in values(index) if g["system"] == _py_or_text(system)]
+
+"""What a group holds, `blocks`, `systems` and `groups`, directly or however deep (`group_members`)."""
+function _ed_group_members(raw, gid, index, paths; deep=false)
+    out = JDict("blocks" => String[], "systems" => String[], "groups" => String[])
+    info = get(index, gid, nothing)
+    info === nothing && return out
+    inside(g) = deep ? _ed_group_within(index, g, gid) : g == gid
+    for g in values(index)
+        (g["id"] != gid && g["parent"] !== nothing && inside(g["parent"])) && push!(out["groups"], g["id"])
+    end
+    for c in COLLECTIONS
+        for b in _py_iter(get(raw, c, nothing))
+            (b isa AbstractDict && system_of(b) == info["system"]) || continue
+            g = _ed_group_of_block(b, index)
+            (g !== nothing && inside(g)) && push!(out["blocks"], qualify(info["system"], get(b, "name", nothing)))
+        end
+    end
+    for path in paths
+        parent_of(path) == info["system"] || continue
+        g = _ed_group_of_system(raw, path, index)
+        (g !== nothing && inside(g)) && push!(out["systems"], path)
+    end
+    return out
+end
+
+# --- groups, edited -------------------------------------------------------------------------------
+# The Python package's `Model.add_group` and the rest, each the application's edit of the same
+# name in src/domain/edit.js. A group is addressed by its id, `group:` and its qualified name.
+
+"""What `add_group!` is given when its `group` is left out: the innermost group its members share."""
+struct _EdInnermost end
+
+"""The narrowest and widest a group's kept area may be (`GROUP_SIZE`)."""
+const _ED_GROUP_SIZE = (60, 4000)
+
+_ed_group_index(m::Model) = _ed_group_index(m.raw, systems(m))
+
+_ed_finite_number(v) = v isa Real && !(v isa Bool) && isfinite(v)
+
+"""A group's entry in the index, or an `EditError` naming what was asked for (`_group_info`)."""
+function _ed_group_info(m::Model, group, index=nothing)
+    index = index === nothing ? _ed_group_index(m) : index
+    info = group isa AbstractString ? get(index, group, nothing) : nothing
+    info === nothing || return info
+    split = _ed_split_group_id(group)
+    split === nothing ||
+        throw(EditError("No group '$(split[2])'" * (isempty(split[1]) ? " at the top level" : " in '$(split[1])'")))
+    throw(EditError("'$(_py_str(group))' is not a group's id: a group is named by 'group:' and its qualified name" *
+                    ((group isa AbstractString && !isempty(group)) ? ", as in 'group:$(group)'" : "")))
+end
+
+function _ed_group_name_problem(m::Model, name, system; allow=nothing, index=nothing)
+    (name isa AbstractString && occursin(_ED_GROUP_NAME, name)) ||
+        return "'$(_py_str(name))' is not a valid name: use letters, digits and underscore, and do not start with a digit."
+    gid = _ed_group_id(system, name)
+    if gid != allow && haskey(index === nothing ? _ed_group_index(m) : index, gid)
+        return "There is already a group called '$name' in " * (py_truthy(system) ? "'$(_py_str(system))'." : "the top level.")
+    end
+    return nothing
+end
+
+function _ed_group_of_in(m::Model, name, index)
+    if _ed_is_group_id(name)
+        info = get(index, name, nothing)
+        return info === nothing ? nothing : info["parent"]
+    end
+    name isa AbstractString || return nothing
+    hit = _ed_find(m, name)
+    hit === nothing || return _ed_group_of_block(hit[2], index)
+    return _ed_group_of_system(m.raw, name, index)
+end
+
+"""What a member of a group is: `"block"`, `"system"` or `"group"`, or `nothing`."""
+function _ed_member_kind(m::Model, name, index)
+    name isa AbstractString || return nothing
+    _ed_is_group_id(name) && return haskey(index, name) ? "group" : nothing
+    _ed_find(m, name) === nothing || return "block"
+    (!isempty(name) && name in _ed_system_set(m)) && return "system"
+    return nothing
+end
+
+"""The canvas a member is drawn on: a block's sub-system, a sub-system's parent, a group's own."""
+function _ed_member_canvas(m::Model, name, kind, index)
+    kind == "group" && return index[name]["system"]
+    kind == "block" && return system_of(_ed_find(m, name)[2])
+    return parent_of(name)
+end
+
+"""Writes which group a member is in: `local_` is the group's own name, `nothing` for none."""
+function _ed_put_in_group!(m::Model, name, kind, local_, index)
+    if kind == "group" || kind == "block"
+        raw = kind == "group" ? index[name]["decl"] : _ed_find(m, name)[2]
+        py_truthy(local_) ? (raw["group"] = local_) : delete!(raw, "group")
+        return
+    end
+    if py_truthy(local_)
+        lay = layout(m)
+        entry = get(lay, name, nothing)
+        made = JDict()
+        if entry isa AbstractDict
+            for (k, v) in entry
+                made[k] = v
+            end
+        end
+        made["group"] = local_
+        lay[name] = made
+        return
+    end
+    lay = get(m.raw, "layout", nothing)
+    entry = lay isa AbstractDict ? get(lay, name, nothing) : nothing
+    (entry isa AbstractDict && haskey(entry, "group")) || return
+    delete!(entry, "group")
+    isempty(entry) && delete!(lay, name)
+    return
+end
+
+"""Forgets where `name` was put on the transfer grid's diagonal (`clearMatrixPlace`)."""
+function _ed_clear_matrix_place!(m::Model, name)
+    if _ed_is_group_id(name)
+        info = get(_ed_group_index(m), name, nothing)
+        (info === nothing || !haskey(info["decl"], "matrix")) && return false
+        delete!(info["decl"], "matrix")
+        return true
+    end
+    lay = get(m.raw, "layout", nothing)
+    entry = lay isa AbstractDict ? get(lay, name, nothing) : nothing
+    (entry isa AbstractDict && haskey(entry, "matrix")) || return false
+    delete!(entry, "matrix")
+    isempty(entry) && delete!(lay, name)
+    return true
+end
+
+function _ed_drop_group_decl!(m::Model, decl)
+    gs = m.raw["groups"]
+    deleteat!(gs, findfirst(g -> g === decl, gs))
+    isempty(gs) && delete!(m.raw, "groups")
+    return
+end
+
+"""
+    groups(m) -> Vector{String}
+
+Every group, as an id, in the file's order (`m.groups`). A declaration for a
+sub-system the model does not have is no group, and of two declarations of
+one id the first counts.
+"""
+groups(m::Model) = collect(String, keys(_ed_group_index(m)))
+
+"""
+    group_of(m, name) -> Union{String,Nothing}
+
+The group something is in, as an id: a block's (by its qualified name), a
+sub-system's (by its path), or -- given a group's id -- the group that one is
+inside.
+"""
+group_of(m::Model, name) = _ed_group_of_in(m, name, _ed_group_index(m))
+
+"""
+    group_members(m, group; deep=false) -> JDict
+
+What a group holds: `blocks` by qualified name, `systems` by path and `groups`
+by id -- directly, or with `deep` however many groups down.
+"""
+function group_members(m::Model, group; deep=false)
+    index = _ed_group_index(m)
+    _ed_group_info(m, group, index)
+    return _ed_group_members(m.raw, group, index, systems(m); deep=py_truthy(deep))
+end
+
+"""
+    add_group!(m, name=nothing, system=""; group, members=(), position=nothing) -> String
+
+Makes a group in `system` and puts `members` in it; returns its id. `name` is
+`Group`, `Group1`, ... when not given. `group` is the id of the group the new
+one goes in, or `nothing` for the top of the sub-system; left out, a group
+made of things that already share one goes inside the innermost they share.
+`position` is where the area of a group made empty starts on the diagram.
+"""
+function add_group!(m::Model, name=nothing, system=""; group=_EdInnermost(), members=(), position=nothing)
+    (py_truthy(system) && !(system in _ed_system_set(m))) && throw(EditError("No sub-system named '$(_py_str(system))'"))
+    index = _ed_group_index(m)
+    if name !== nothing
+        why = _ed_group_name_problem(m, name, system; index=index)
+        why === nothing || throw(EditError(why))
+    end
+    wanted = members isa AbstractString ? Any[members] : (py_truthy(members) ? collect(Any, members) : Any[])
+    parent = group
+    if parent isa _EdInnermost
+        # The innermost group every member is already in, if they share one.
+        chains = Vector{String}[]
+        for n in wanted
+            kind = _ed_member_kind(m, n, index)
+            own = kind === nothing ? nothing : (kind == "group" ? index[n]["parent"] : _ed_group_of_in(m, n, index))
+            push!(chains, own === nothing ? String[] : _ed_group_chain(index, own))
+        end
+        parent = nothing
+        if !isempty(chains)
+            for gid in chains[1]
+                all(c -> gid in c, chains[2:end]) || break
+                parent = gid
+            end
+        end
+        # One of another sub-system's groups is no place for this one: what is in it is on
+        # another canvas, which `set_group!` says.
+        (parent !== nothing && index[parent]["system"] != system) && (parent = nothing)
+    end
+    if py_truthy(parent)
+        p = _ed_group_info(m, parent, index)
+        if p["system"] != system
+            throw(EditError("'$(p["name"])' is a group of " * (isempty(p["system"]) ? "the top level" : "'$(p["system"])'") *
+                            ", not of " * (py_truthy(system) ? "'$(_py_str(system))'" : "the top level")))
+        end
+    end
+    if name === nothing
+        taken = Set{String}(g["name"] for g in _ed_groups_on(index, system))
+        name = "Group"
+        k = 1
+        while name in taken
+            name = "Group$k"
+            k += 1
+        end
+    end
+    decl = JDict("name" => name)
+    py_truthy(system) && (decl["system"] = system)
+    py_truthy(parent) && (decl["group"] = _ed_group_name(parent))
+    if position !== nothing
+        x, y = _position_of(position)
+        if isfinite(x) && isfinite(y)
+            decl["x"] = _ed_js_round(x)
+            decl["y"] = _ed_js_round(y)
+        end
+    end
+    get(m.raw, "groups", nothing) isa AbstractVector || (m.raw["groups"] = Any[])
+    push!(m.raw["groups"], decl)
+    gid = _ed_group_id(system, name)
+    if !isempty(wanted)
+        try
+            set_group!(m, wanted, gid)
+        catch e
+            e isa EditError && _ed_drop_group_decl!(m, decl)
+            rethrow()
+        end
+    end
+    return gid
+end
+
+"""
+    set_group!(m, names, group=nothing) -> Vector{String}
+
+Puts blocks, sub-systems and groups into `group` (an id) or, with `nothing`,
+takes them out of whatever group they are in. A group holds what is on its own
+sub-system's canvas; a compartment takes along the transfers out of it and the
+inflows into it that were in the group it is leaving. Checked first and then
+done. Returns every name whose group changed.
+"""
+function set_group!(m::Model, names, group=nothing)
+    index = _ed_group_index(m)
+    into = py_truthy(group) ? _ed_group_info(m, group, index) : nothing
+    wanted = unique(names isa AbstractString ? Any[names] : (py_truthy(names) ? collect(Any, names) : Any[]))
+    items = Tuple{Any,String,Any}[]
+    for name in wanted
+        kind = _ed_member_kind(m, name, index)
+        kind === nothing && throw(EditError("'$(_ed_group_name(name))' is not a block, a sub-system or a group"))
+        canvas = _ed_member_canvas(m, name, kind, index)
+        if into !== nothing && canvas != into["system"]
+            throw(EditError("'$(kind == "group" ? _ed_group_name(name) : name)' is in " *
+                            (isempty(canvas) ? "the top level" : "'$canvas'") * ", and '$(into["name"])' is a group of " *
+                            (isempty(into["system"]) ? "the top level" : "'$(into["system"])'") *
+                            ": a group holds what is on its own sub-system's canvas. Move it there first, " *
+                            "with move_block or move_system."))
+        end
+        if kind == "group" && into !== nothing && _ed_group_within(index, group, name)
+            throw(EditError(group == name ? "'$(into["name"])' cannot go into itself" :
+                            "'$(_ed_group_name(name))' cannot go into '$(into["name"])', which is inside it"))
+        end
+        push!(items, (name, kind, kind == "group" ? index[name]["parent"] : _ed_group_of_in(m, name, index)))
+    end
+    local_ = into === nothing ? nothing : into["name"]
+    changed = String[]
+    for (name, kind, was) in items
+        was == group && continue
+        _ed_put_in_group!(m, name, kind, local_, index)
+        # Its place on the grid's diagonal was among the neighbours it has left.
+        _ed_clear_matrix_place!(m, name)
+        push!(changed, name)
+        kind == "block" || continue
+        collection, blk = _ed_find(m, name)
+        _BK_SINGULAR[collection] in _ED_HOLDS_INVENTORY || continue
+        attached = Any[t for t in _py_iter(get(m.raw, "transfers", nothing))
+                       if t isa AbstractDict && get(t, "from", nothing) == name]
+        append!(attached, Any[i for i in _py_iter(get(m.raw, "inflows", nothing))
+                              if i isa AbstractDict && get(i, "to", nothing) == name])
+        for conn in attached
+            q = qualified_name(conn)
+            (q in wanted || system_of(conn) != system_of(blk)) && continue
+            _ed_group_of_block(conn, index) == was || continue
+            py_truthy(local_) ? (conn["group"] = local_) : delete!(conn, "group")
+            push!(changed, q)
+        end
+    end
+    return changed
+end
+
+"""
+    rename_group!(m, group, new_name) -> String
+
+Renames a group, and what its members say; no id changes. Returns its new id.
+"""
+function rename_group!(m::Model, group, new_name)
+    index = _ed_group_index(m)
+    info = _ed_group_info(m, group, index)
+    new_name == info["name"] && return group
+    why = _ed_group_name_problem(m, new_name, info["system"]; allow=group, index=index)
+    why === nothing || throw(EditError(why))
+    old = info["name"]
+    for g in _ed_group_list(m.raw)
+        (_py_or_text(get(g, "system", nothing)) == info["system"] && g !== info["decl"] &&
+         get(g, "group", nothing) == old) && (g["group"] = new_name)
+    end
+    info["decl"]["name"] = new_name
+    for b in _ed_all_raw(m)
+        (system_of(b) == info["system"] && get(b, "group", nothing) == old) && (b["group"] = new_name)
+    end
+    lay = get(m.raw, "layout", nothing)
+    for path in systems(m)
+        parent_of(path) == info["system"] || continue
+        entry = lay isa AbstractDict ? get(lay, path, nothing) : nothing
+        (entry isa AbstractDict && get(entry, "group", nothing) == old) && (entry["group"] = new_name)
+    end
+    return _ed_group_id(info["system"], new_name)
+end
+
+"""
+    dissolve_group!(m, group) -> Union{String,Nothing}
+
+Takes a group away and leaves what was in it where the group was. Returns the
+group its members are now in.
+"""
+function dissolve_group!(m::Model, group)
+    index = _ed_group_index(m)
+    info = _ed_group_info(m, group, index)
+    outer = info["parent"]
+    local_ = outer === nothing ? nothing : index[outer]["name"]
+    held = _ed_group_members(m.raw, group, index, systems(m))
+    for (kind, key) in (("group", "groups"), ("block", "blocks"), ("system", "systems"))
+        for name in held[key]
+            _ed_put_in_group!(m, name, kind, local_, index)
+        end
+    end
+    _ed_drop_group_decl!(m, info["decl"])
+    return outer
+end
+
+"""
+    delete_group!(m, group) -> JDict
+
+Deletes a group and everything in it, however deep; refused while something
+outside still reads what would go. Returns `removed` and `systems`.
+"""
+function delete_group!(m::Model, group)
+    index = _ed_group_index(m)
+    _ed_group_info(m, group, index)
+    deep = _ed_group_members(m.raw, group, index, systems(m); deep=true)
+    result = _ed_delete_selection!(m, vcat(deep["blocks"], deep["systems"]))
+    going = Set{String}(vcat(String[group], deep["groups"]))
+    m.raw["groups"] = Any[g for g in _ed_group_list(m.raw)
+                          if !(_ed_group_id(_py_or_text(get(g, "system", nothing)), g["name"]) in going)]
+    isempty(m.raw["groups"]) && delete!(m.raw, "groups")
+    return result
+end
+
+"""Deletes blocks and sub-systems as one edit, a sub-system with all inside it (`deleteSelection`)."""
+function _ed_delete_selection!(m::Model, names)
+    wanted = unique(collect(Any, names))
+    paths = systems(m)
+    chosen = Any[n for n in wanted if n in paths]
+    roots = String[p for p in chosen if !any(q -> q != p && is_within(p, q), chosen)]
+    blocks_ = Any[]
+    for n in wanted
+        n in paths && continue
+        hit = _ed_find(m, n)
+        (hit === nothing || any(p -> is_within(system_of(hit[2]), p), roots)) && continue
+        push!(blocks_, n)
+    end
+    inside = Any[qualified_name(b) for p in roots for b in _ed_all_raw(m) if is_within(system_of(b), p)]
+    removed = delete_blocks!(m, unique(vcat(blocks_, inside)))
+    if !isempty(roots)
+        gone(p) = any(c -> is_within(p, c), roots)
+        if get(m.raw, "groups", nothing) isa AbstractVector
+            going = Any[g for g in _ed_group_list(m.raw) if gone(_py_or_text(get(g, "system", nothing)))]
+            if !isempty(going)
+                m.raw["groups"] = Any[g for g in m.raw["groups"] if !any(x -> x === g, going)]
+                isempty(m.raw["groups"]) && delete!(m.raw, "groups")
+            end
+        end
+        # The shapes drawn inside them go with them, as with a sub-system deleted with everything in it.
+        shapes_ = get(m.raw, "shapes", nothing)
+        if shapes_ isa AbstractVector && !isempty(shapes_)
+            ids = Set{Any}(get(sh, "id", nothing) for sh in shapes_
+                           if sh isa AbstractDict && gone(_py_or_text(get(sh, "system", nothing))))
+            m.raw["shapes"] = Any[sh for sh in shapes_ if !(sh isa AbstractDict && get(sh, "id", nothing) in ids)]
+        end
+        _ed_invalidate!(m)
+        m.raw["systems"] = Any[p for p in systems(m) if !gone(p)]
+        trs = transports(m)
+        isempty(trs) || (m.raw["transports"] = Any[p for p in trs if !gone(p)])
+        ds = _ed_disabled_systems(m)
+        if !isempty(ds)
+            off = Any[p for p in ds if !gone(p)]
+            isempty(off) ? delete!(m.raw, "disabled_systems") : (m.raw["disabled_systems"] = off)
+        end
+        lay = get(m.raw, "layout", nothing)
+        if lay isa AbstractDict
+            for key in collect(keys(lay))
+                edge = _parse_edge_key(key)
+                named, on = edge === nothing ? (key, nothing) : edge
+                any(c -> is_within(named, c) || (py_truthy(on) && is_within(on, c)), roots) && delete!(lay, key)
+            end
+        end
+        _ed_invalidate!(m)
+    end
+    return JDict("removed" => removed, "systems" => roots)
+end
+
+"""Whether a group is drawn folded up into one node."""
+group_collapsed(m::Model, group) = get(_ed_group_info(m, group)["decl"], "collapsed", nothing) === true
+
+"""Folds a group up into one node on the diagram, or opens it out again."""
+function set_group_collapsed!(m::Model, group, collapsed=true)
+    decl = _ed_group_info(m, group)["decl"]
+    py_truthy(collapsed) ? (decl["collapsed"] = true) : delete!(decl, "collapsed")
+    return nothing
+end
+
+"""The area a group keeps on the diagram: `x`, `y`, `w`, `h`, each `nothing` when not kept."""
+function group_box(m::Model, group)
+    decl = _ed_group_info(m, group)["decl"]
+    return JDict(k => (_ed_finite_number(get(decl, k, nothing)) ? decl[k] : nothing) for k in ("x", "y", "w", "h"))
+end
+
+"""Keeps a group's area: any of `x`, `y`, `w` and `h`; one given as `nothing` is forgotten."""
+function set_group_box!(m::Model, group; box...)
+    decl = _ed_group_info(m, group)["decl"]
+    for (k, v) in box
+        key = String(k)
+        key in ("x", "y", "w", "h") || throw(EditError("A group's area has no '$key': x, y, w and h"))
+        (v === nothing || _ed_finite_number(v)) || throw(EditError("'$(_py_str(v))' is not a number for a group's $key"))
+    end
+    given = Dict{String,Any}(String(k) => v for (k, v) in box)
+    lo, hi = _ED_GROUP_SIZE
+    for key in ("x", "y", "w", "h")
+        haskey(given, key) || continue
+        v = given[key]
+        if v === nothing
+            delete!(decl, key)
+        else
+            decl[key] = _ed_js_round(key in ("w", "h") ? min(hi, max(lo, v)) : v)
+        end
+    end
+    return nothing
+end
+
+"""
+    shift_group!(m, group, dx, dy)
+
+Moves a group on the diagram with everything in it: its kept area, the blocks
+and sub-system nodes in it however deep, the bends of the lines drawn wholly
+among them and the loose ends hanging off them.
+"""
+function shift_group!(m::Model, group, dx, dy)
+    index = _ed_group_index(m)
+    info = _ed_group_info(m, group, index)
+    for v in (dx, dy)
+        _ed_finite_number(v) || throw(EditError("'$(_py_str(v))' is not a distance to move a group by"))
+    end
+    (iszero(dx) && iszero(dy)) && return nothing
+    deep = _ed_group_members(m.raw, group, index, systems(m); deep=true)
+    lay = get(m.raw, "layout", nothing)
+    function move(key)
+        entry = lay isa AbstractDict ? get(lay, key, nothing) : nothing
+        (entry isa AbstractDict && _ed_finite_number(get(entry, "x", nothing)) &&
+         _ed_finite_number(get(entry, "y", nothing))) || return
+        entry["x"] = _ed_js_round(entry["x"] + dx)
+        entry["y"] = _ed_js_round(entry["y"] + dy)
+        return
+    end
+    for g in vcat(String[group], deep["groups"])
+        decl = haskey(index, g) ? index[g]["decl"] : nothing
+        if decl !== nothing && _ed_finite_number(get(decl, "x", nothing)) && _ed_finite_number(get(decl, "y", nothing))
+            decl["x"] = _ed_js_round(decl["x"] + dx)
+            decl["y"] = _ed_js_round(decl["y"] + dy)
+        end
+    end
+    for name in vcat(deep["blocks"], deep["systems"])
+        move(name)
+    end
+    # A line goes with the group when what it is drawn between here does; its bend is on the
+    # canvas it is drawn whole on, and a pipe into another sub-system has a place of its own here.
+    here = info["system"]
+    held = Set{String}(deep["blocks"])
+    covered(name) = name in held || any(p -> is_within(parent_of(name), p), deep["systems"])
+    conns = Tuple{Any,Bool}[]
+    for t in _py_iter(get(m.raw, "transfers", nothing))
+        t isa AbstractDict && push!(conns, (t, false))
+    end
+    for i in _py_iter(get(m.raw, "inflows", nothing))
+        i isa AbstractDict && push!(conns, (i, true))
+    end
+    for (conn, is_inflow) in conns
+        q = qualified_name(conn)
+        ends = Any[e for e in Any[is_inflow ? nothing : get(conn, "from", nothing), get(conn, "to", nothing)]
+                   if e !== nothing]
+        isempty(ends) && continue
+        visible = Any[e for e in ends if is_within(parent_of(e), here)]
+        (isempty(visible) || !all(covered, visible)) && continue
+        if length(visible) < length(ends)
+            move(_edge_key(q, here))
+            continue
+        end
+        steps = [path_parts(parent_of(e)) for e in ends]
+        k = 0
+        while all(st -> k < length(st) && st[k+1] == steps[1][k+1], steps)
+            k += 1
+        end
+        join(steps[1][1:k], ".") == here && move(_edge_key(q))
+    end
+    return nothing
 end
 
 function _ed_relocate_system!(m::Model, path, target)
@@ -2483,6 +3147,14 @@ function _ed_relocate_system!(m::Model, path, target)
             py_truthy(to) ? (sh["system"] = to) : delete!(sh, "system")
         end
     end
+    # And so do its groups, and those of every sub-system inside it.
+    for g in _ed_group_list(m.raw)
+        s = _py_or_text(get(g, "system", nothing))
+        if is_within(s, path)
+            to = _ed_reparent(s, path, target)
+            py_truthy(to) ? (g["system"] = to) : delete!(g, "system")
+        end
+    end
     _ed_invalidate!(m)
     return target
 end
@@ -2503,6 +3175,12 @@ function delete_system!(m::Model, path, contents="move")
     systems_out = OrderedDict{String,String}()
     if contents == "delete"
         delete_blocks!(m, [qualified_name(b) for b in _ed_all_raw(m) if is_within(system_of(b), path)])
+        # Its groups, and those of every sub-system inside it, go with what they held.
+        going = Any[g for g in _ed_group_list(m.raw) if is_within(_py_or_text(get(g, "system", nothing)), path)]
+        if !isempty(going)
+            m.raw["groups"] = Any[g for g in m.raw["groups"] if !any(x -> x === g, going)]
+            isempty(m.raw["groups"]) && delete!(m.raw, "groups")
+        end
         shapes_ = get(m.raw, "shapes", nothing)
         if shapes_ isa AbstractVector
             m.raw["shapes"] = Any[sh for sh in shapes_
@@ -2530,6 +3208,29 @@ function delete_system!(m::Model, path, contents="move")
             systems_out[p] = to
         end
         home_of(system) = system == path ? parent : get(systems_out, system, _ed_reparent(system, path, parent))
+        # Its groups come out with what they hold, numbered past the groups already there; what
+        # was in no group at its top lands in the group the sub-system itself sat in.
+        # `deleteSystem` in src/domain/edit.js.
+        group_idx = _ed_group_index(m.raw, systems_before)
+        around = _ed_group_of_system(m.raw, path, group_idx)
+        around_name = around === nothing ? nothing : group_idx[around]["name"]
+        taken_groups = Set{String}(g["name"] for g in values(group_idx) if g["system"] == parent)
+        group_rename = Dict{String,String}()
+        for g in values(group_idx)
+            g["system"] == path || continue
+            local_ = g["name"]
+            k = 1
+            while local_ in taken_groups
+                local_ = "$(g["name"])$k"
+                k += 1
+            end
+            push!(taken_groups, local_)
+            group_rename[g["id"]] = local_
+        end
+        out_group(gid) = gid === nothing ? around_name : get(group_rename, gid, nothing)
+        top_blocks = Any[(b, out_group(_ed_group_of_block(b, group_idx))) for b in _ed_all_raw(m) if system_of(b) == path]
+        top_systems = Any[(p, out_group(_ed_group_of_system(m.raw, p, group_idx))) for p in nested if parent_of(p) == path]
+        groups_out = Any[g for g in values(group_idx) if is_within(g["system"], path)]
         moved = OrderedDict{String,String}()
         taken = _ed_names(m)
         for b in _ed_all_raw(m)
@@ -2562,6 +3263,36 @@ function delete_system!(m::Model, path, contents="move")
                 v = pop!(lay, was)
                 lay[now] = v
             end
+        end
+        for (b, gname) in top_blocks
+            gname === nothing ? delete!(b, "group") : (b["group"] = gname)
+        end
+        for (was, gname) in top_systems
+            now = systems_out[was]
+            if gname !== nothing
+                get(m.raw, "layout", nothing) isa AbstractDict || (m.raw["layout"] = JDict())
+                lay = m.raw["layout"]
+                entry = get(lay, now, nothing)
+                fresh = JDict()
+                entry isa AbstractDict && merge!(fresh, entry)
+                fresh["group"] = gname
+                lay[now] = fresh
+                continue
+            end
+            lay = get(m.raw, "layout", nothing)
+            entry = lay isa AbstractDict ? get(lay, now, nothing) : nothing
+            (entry isa AbstractDict && haskey(entry, "group")) || continue
+            delete!(entry, "group")
+            isempty(entry) && delete!(lay, now)
+        end
+        for g in groups_out
+            decl = g["decl"]
+            to = home_of(g["system"])
+            py_truthy(to) ? (decl["system"] = to) : delete!(decl, "system")
+            g["system"] == path || continue
+            decl["name"] = group_rename[g["id"]]
+            up = g["parent"] === nothing ? around_name : get(group_rename, g["parent"], nothing)
+            up === nothing ? delete!(decl, "group") : (decl["group"] = up)
         end
         for sh in _py_iter(get(m.raw, "shapes", nothing))
             sh isa AbstractDict || continue

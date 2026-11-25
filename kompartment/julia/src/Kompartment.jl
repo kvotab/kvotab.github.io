@@ -148,7 +148,7 @@ export Model, Results, System, Project, from_json, to_json, save, simulation, se
 
 # The editing API. Left unexported for their generic names, reached as `Kompartment.name`
 # or as properties (`m.parameters`, `m.systems`, ...): check, update!, combinations,
-# reads, parameters, functions, events, systems, transports, materials, nuclides,
+# reads, parameters, functions, events, systems, groups, transports, materials, nuclides,
 # scenarios, shapes, derived, layout, Shape and the `distributions` module.
 export EditError, DistributionError, Block, Compartment, Transfer, Inflow, Parameter, Expression, Lookup,
        IndexReduction, BlockReduction, FunctionBlock, MinMax, RunningMean, Snapshot, Delay, Trigger, Farfield,
@@ -172,7 +172,9 @@ export EditError, DistributionError, Block, Compartment, Transfer, Inflow, Param
        half_life, set_half_life!, decay_chains, set_decay_chains!, reset_decay_chains!, add_decay_pair!,
        remove_decay_pair!, set_decay_ratio!, decay_unit, set_decay_unit!, material_dimension,
        add_system!, rename_system!, move_system!, delete_system!, set_system_enabled!, system_enabled,
-       system_position, set_system_position!, add_shape!, remove_shape!, move_shape!, add_derived!,
+       system_position, set_system_position!, group_of, group_members, add_group!, set_group!, rename_group!,
+       dissolve_group!, delete_group!, group_collapsed, set_group_collapsed!, group_box, set_group_box!,
+       shift_group!, add_shape!, remove_shape!, move_shape!, add_derived!,
        remove_derived!, record_review!, clear_review!, review_status, review_stamp, state_count, check_model,
        settle!, put_values!, add_output_series!, remove_output_series!, solver_settings
 

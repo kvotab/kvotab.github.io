@@ -33,6 +33,7 @@ from .blocks import (
 from .distributions import make_pdf
 from .equations import EquationSyntaxError
 from .errors import EditError, KompartmentError, ValidationError
+from .groups import group_id, is_group_id, split_group_id
 from .jsonio import dumps, read_model_file, write_model_file
 from .model import IndexList, Model, Shape, View
 from .simulation import OutputSeries, Simulation
@@ -46,6 +47,7 @@ __all__ = [
     'Delay', 'Trigger', 'Farfield', 'WastePackage', 'Event',
     'KompartmentError', 'EditError', 'ValidationError', 'EquationSyntaxError',
     'decay', 'distributions', 'make_pdf', 'dumps', 'read_model_file', 'write_model_file',
+    'group_id', 'is_group_id', 'split_group_id',
     'load', 'new', 'run', 'load_results',
 ]
 

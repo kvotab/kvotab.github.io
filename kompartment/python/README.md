@@ -226,6 +226,33 @@ m.add_transfer(tube, 'Lake')                  # out of its End
 m.add_transport_operation(tube, operation='mean')
 ```
 
+## Groups
+
+```python
+wells = m.add_group('Wells', 'Near', members=['Near.Pond', 'Near.Bore'])
+m.groups                                     # ['group:Near.Wells']
+m.group_of('Near.Pond')                      # 'group:Near.Wells'
+m.add_group('Deep', 'Near', members=['Near.Bore'])   # inside Wells, the group they share
+m.set_group(['Near.Pipe'], wells)            # into a group; None takes it out again
+m.group_members(wells, deep=True)            # {'blocks': [...], 'systems': [...], 'groups': [...]}
+m.rename_group(wells, 'Bores')               # returns the new id
+m.set_group_collapsed('group:Near.Bores')    # drawn folded up into one node
+m.shift_group('group:Near.Bores', 40, 0)     # moved on the diagram with all it holds
+m.dissolve_group('group:Near.Deep')          # what it held stays, in the group around it
+m.delete_group('group:Near.Bores')           # and everything in it
+```
+
+A group sorts the blocks of one sub-system and changes no id and no number:
+no equation names one and no run reads one. It is addressed by its id,
+`group:` and its qualified name (`kp.group_id('Near', 'Wells')`), which no
+block or sub-system can have, so a group may share a block's name. A group
+holds what is drawn on its own sub-system's canvas -- blocks, sub-systems and
+other groups -- and something on another canvas has to be moved there first.
+A compartment put in a group, or taken out of one, takes along the transfers
+out of it and the inflows into it that were filed with it. As in the
+application, a block moved to another sub-system leaves its group, and a
+sub-system renamed, moved or dissolved takes its groups along.
+
 ## Settings, the diagram, reviews
 
 ```python

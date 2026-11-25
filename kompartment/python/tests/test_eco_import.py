@@ -629,6 +629,17 @@ def run_js_cases() -> List[Case]:
                             ('a byte-order mark before it', '&#xFEFF;Gone'), ('a line separator after it', 'Gone&#x2028;'))],
         # block colours: the one each block was given, and none for a type's own
         xml('colours', fx('COLOUR_XML')),
+        # groups: a sorting of one sub-system's blocks, kept as one; nested, holding a
+        # sub-system, a transfer, a source's and a discrete one; one name twice; an empty one
+        xml('groups', fx('GROUP_XML')),
+        xml('groups, a name to tidy and one taken', replace(
+            fx('GROUP_XML'), 'name="Empty" type="group"', 'name="Inputs" type="group"').replace(
+            'name="Wells" type="group"', 'name=" 1 well-head " type="group"')),
+        xml('groups, one in a group the file has not declared yet', replace(
+            fx('GROUP_XML'), '<id>Near&#46;Deep_wells</id><sub-system>Near&#46;Wells</sub-system>',
+            '<id>Near&#46;Deep_wells</id><sub-system>Near&#46;Later</sub-system>')),
+        xml('groups, a prototype key for a name', replace(
+            fx('GROUP_XML'), 'name="Empty" type="group"', 'name="__proto__" type="group"')),
         # Ecolego's three material lists
         xml('material lists marked', material_lists(True)),
         xml('material lists unmarked', material_lists(False)),

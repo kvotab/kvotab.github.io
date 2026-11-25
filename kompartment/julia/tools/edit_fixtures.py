@@ -52,7 +52,9 @@ sys.path.insert(0, str(KOMPARTMENT / 'python'))
 
 import kompartment as kp  # noqa: E402
 from kompartment import distributions as dist  # noqa: E402
+from kompartment.groups import split_group_id  # noqa: E402
 from kompartment.jsonio import dumps  # noqa: E402
+from kompartment.names import parent_of  # noqa: E402
 from kompartment.model import IndexList, Shape, View  # noqa: E402
 from kompartment.simulation import OutputSeries, Simulation  # noqa: E402
 
@@ -1493,8 +1495,91 @@ def case_nested_layout():
     return c
 
 
+def case_groups():
+    # Groups sort the blocks of one sub-system and change no id: they go where their
+    # sub-system goes, a block or a sub-system that leaves leaves its group, and a dissolved
+    # sub-system's groups come out numbered past those around it. ``deleteSystem`` and the
+    # rest in src/domain/edit.js.
+    data = {'name': 'Grouped', 'systems': ['Outer', 'Outer.Inner', 'Y'],
+            'groups': [{'name': 'G', 'system': 'Outer'}, {'name': 'H', 'system': 'Outer', 'group': 'G'},
+                       {'name': 'G'}, {'name': 'W', 'system': 'Outer.Inner', 'collapsed': True},
+                       {'name': 'Loop', 'system': 'Y', 'group': 'Loop'}, {'name': 'bad name'}],
+            'compartments': [{'name': 'A', 'system': 'Outer', 'group': 'H', 'initial': '1'},
+                             {'name': 'B', 'system': 'Outer', 'initial': '0'},
+                             {'name': 'C', 'system': 'Outer.Inner', 'group': 'W', 'initial': '0'},
+                             {'name': 'D', 'system': 'Y', 'group': 'Nowhere', 'initial': '0'}],
+            'transfers': [{'name': 'AB', 'from': 'Outer.A', 'to': 'Outer.B', 'rate': '1', 'system': 'Outer',
+                           'group': 'H'}],
+            'layout': {'Outer': {'x': 1, 'y': 2, 'group': 'G'}, 'Outer.Inner': {'group': 'G'},
+                       'Outer.A': {'x': 3, 'y': 4}}}
+    c = Case('groups', data=data)
+    c.m('rename_system', 'Outer', 'Top').mget('layout')
+    c.m('move_block', 'Top.A', 'Y')
+    c.m('move_system', 'Top.Inner', '').mget('layout').mget('systems')
+    c.m('move_system', 'Inner', 'Top')
+    c.m('delete_system', 'Top')
+    c.m('delete_system', 'Inner', 'delete')
+    return c
+
+
+def case_group_edits():
+    # Every edit of a group the API has, what can be read off one, and the refusals:
+    # ``addGroup`` and the rest in src/domain/edit.js, which test_app_parity.py compares the
+    # Python package with.
+    data = {'name': 'Grouping', 'systems': ['Basin', 'Basin.Inner', 'Other'],
+            'groups': [{'name': 'Old', 'system': 'Basin', 'matrix': 2, 'x': 40, 'y': 60}],
+            'compartments': [{'name': 'Pond', 'system': 'Basin', 'initial': '1'},
+                             {'name': 'Well', 'system': 'Basin', 'initial': '0'},
+                             {'name': 'Lake', 'system': 'Basin', 'group': 'Old', 'initial': '0'},
+                             {'name': 'Deep', 'system': 'Basin.Inner', 'initial': '0'},
+                             {'name': 'Sea', 'initial': '0'}],
+            'parameters': [{'name': 'k', 'system': 'Basin', 'value': 0.1}],
+            'transfers': [{'name': 'Seep', 'from': 'Basin.Pond', 'to': 'Basin.Well', 'rate': 'k', 'system': 'Basin'},
+                          {'name': 'Down', 'from': 'Basin.Well', 'to': 'Basin.Inner.Deep', 'rate': '0.2',
+                           'system': 'Basin'},
+                          {'name': 'Out', 'from': 'Basin.Lake', 'to': 'Sea', 'rate': '0.3', 'system': 'Basin',
+                           'group': 'Old'}],
+            'inflows': [{'name': 'Rain', 'to': 'Basin.Pond', 'rate': '1', 'system': 'Basin'}],
+            'shapes': [{'id': 'sh1', 'figure': 'sticky', 'system': 'Basin.Inner', 'x': 0, 'y': 0, 'w': 100, 'h': 60},
+                       {'id': 'sh2', 'figure': 'rect', 'system': 'Basin', 'x': 5, 'y': 5, 'w': 100, 'h': 60}],
+            'layout': {'Basin.Pond': {'x': 100, 'y': 100, 'matrix': 0}, 'Basin.Well': {'x': 300, 'y': 100},
+                       'Basin.Lake': {'x': 500, 'y': 100}, 'Basin.Inner': {'x': 300, 'y': 300, 'matrix': 1},
+                       'Basin.Inner.Deep': {'x': 50, 'y': 50}, 'Basin.k': {'x': 100, 'y': 250},
+                       'edge:Basin.Seep': {'x': 200, 'y': 80}, 'Sea': {'x': 600, 'y': 400}}}
+    c = Case('group_edits', data=data)
+    c.mget('groups').m('group_of', 'Basin.Lake').m('group_of', 'group:Basin.Old').m('group_of', 'Nowhere')
+    c.m('group_members', 'group:Basin.Old').m('group_box', 'group:Basin.Old').m('group_collapsed', 'group:Basin.Old')
+    c.m('add_group', 'Wells', 'Basin', members=['Basin.Pond', 'Basin.Well'])
+    c.m('add_group', None, 'Basin', members=['Basin.Pond'])
+    c.m('add_group', 'Empty', 'Basin', group=None, position=(33.4, 50.6))
+    c.m('set_group', ['Basin.Inner', 'group:Basin.Empty', 'group:Basin.Old'], 'group:Basin.Wells')
+    c.m('set_group', 'Basin.Well', None).m('set_group', ['Basin.k'], 'group:Basin.Group')
+    c.m('group_members', 'group:Basin.Wells', deep=True).m('group_of', 'Basin.Pond').mget('groups')
+    c.m('rename_group', 'group:Basin.Wells', 'Bores').m('rename_group', 'group:Basin.Bores', 'Bores')
+    c.m('set_group_collapsed', 'group:Basin.Bores').m('group_collapsed', 'group:Basin.Bores')
+    c.m('set_group_box', 'group:Basin.Bores', x=10.5, y=20, w=5000, h=10).m('group_box', 'group:Basin.Bores')
+    c.m('shift_group', 'group:Basin.Bores', 15, -5.5).mget('layout')
+    c.m('set_group_box', 'group:Basin.Bores', w=None).m('set_group_collapsed', 'group:Basin.Bores', False)
+    c.m('add_group', 'Top', members=['Sea'])
+    # What is refused, and leaves the model as it was.
+    c.m('set_group', ['Sea'], 'group:Basin.Bores').m('set_group', ['Basin.Pond'], 'group:Basin.Nope')
+    c.m('set_group', ['Nothing'], None).m('set_group', ['group:Basin.Bores'], 'group:Basin.Group')
+    c.m('set_group', 'group:Basin.Bores', 'group:Basin.Bores')
+    c.m('add_group', 'Bores', 'Basin').m('add_group', '2x', 'Basin').m('add_group', 'G', 'Nowhere')
+    c.m('add_group', 'G', members=['Basin.Lake']).m('add_group', 'G', 'Basin', members=['Sea'])
+    c.m('rename_group', 'group:Basin.Bores', 'not a name').m('rename_group', 'Basin.Bores', 'X')
+    c.m('set_group_box', 'group:Basin.Bores', z=1).m('set_group_box', 'group:Basin.Bores', x='left')
+    c.m('shift_group', 'group:Basin.Bores', INF, 0).m('shift_group', 'group:Basin.Bores', True, 0)
+    c.m('dissolve_group', 'group:Nope').m('delete_group', 'group:Basin.Nope').m('group_box', None)
+    c.m('group_members', 'Basin.Pond')
+    # And the last two.
+    c.m('dissolve_group', 'group:Basin.Group')
+    c.m('delete_group', 'group:Basin.Bores').mget('systems').mget('shapes').mget('groups')
+    return c
+
+
 MADE_UP += [case_elements, case_raw_edits, case_layout_edges, case_numbering, case_reduction_entries,
-            case_more_connections, case_check_shapes, case_nested_layout]
+            case_more_connections, case_check_shapes, case_nested_layout, case_groups, case_group_edits]
 
 
 # --- the bundled examples ------------------------------------------------------------------------------------------
@@ -1658,7 +1743,9 @@ def random_op(rng, m):
     q = rng.choice(names) if names else 'Nothing'
     system = rng.choice(systems)
     fresh = rng.choice(NAMES) + rng.choice(('', '', str(rng.randint(1, 3))))
-    roll = rng.randrange(52)
+    roll = rng.randrange(58)
+    if roll >= 52:
+        return group_random_op(rng, m, roll, names, q, system, fresh)
     if roll >= 30:
         return more_random_op(rng, m, roll, names, systems, comps, lists, stored, q, system, fresh)
     if roll == 0:
@@ -1836,6 +1923,40 @@ def more_random_op(rng, m, roll, names, systems, comps, lists, stored, q, system
     if roll == 51 and m.transports:
         return ('m', rng.choice(('move_system', 'add_system')), (rng.choice(systems), rng.choice(m.transports)), {})
     return ('m', 'reads', (q,), {}) if names else ('m', 'check', (), {})
+
+
+def group_random_op(rng, m, roll, names, q, system, fresh):
+    """A group edit, drawn at random. What goes in a group is drawn from one canvas, with now
+    and then something from another, which is refused."""
+    groups = m.groups
+
+    def on(canvas):
+        return ([x for x in names if m[x].system == canvas] + [p for p in m.systems if parent_of(p) == canvas]
+                + [g for g in groups if split_group_id(g)[0] == canvas])
+
+    if roll == 52:
+        pool = on(system)
+        return ('m', 'add_group', (rng.choice((None, fresh)), system),
+                {'members': rng.sample(pool, min(len(pool), rng.randint(0, 3)))})
+    if groups and roll == 53:
+        g = rng.choice(groups)
+        pool = on(split_group_id(g)[0]) + ([q] if rng.random() < 0.2 else [])
+        return ('m', 'set_group', (rng.sample(pool, min(len(pool), rng.randint(1, 3))), rng.choice((g, g, None))), {})
+    if groups and roll == 54:
+        return ('m', 'rename_group', (rng.choice(groups), fresh), {})
+    if groups and roll == 55:
+        return ('m', rng.choice(('dissolve_group', 'dissolve_group', 'delete_group')), (rng.choice(groups),), {})
+    if groups and roll == 56:
+        g = rng.choice(groups)
+        what = rng.random()
+        if what < 0.4:
+            return ('m', 'shift_group', (g, rng.randint(-50, 50), rng.choice((0, 2.5, -7))), {})
+        if what < 0.7:
+            return ('m', 'set_group_box', (g,), rng.choice(({'x': 10, 'y': 20}, {'w': 300, 'h': None}, {'w': 10.4})))
+        return ('m', 'set_group_collapsed', (g, rng.random() < 0.5), {})
+    if groups or names:
+        return ('m', rng.choice(('group_of', 'group_members')), (rng.choice(groups + names),), {})
+    return ('m', 'check', (), {})
 
 
 def fuzz_case(name, seed, n, data=None, new=None):

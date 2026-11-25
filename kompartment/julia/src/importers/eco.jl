@@ -1024,8 +1024,9 @@ function _eco_settle_transfer_events!(project::JDict, report::EcoImportReport)
         _eco_truthy(get(t, "system", nothing)) && (block["system"] = t["system"])
         _eco_truthy(get(t, "comment", nothing)) && (block["comment"] = t["comment"])
         get(t, "enabled", nothing) === false && (block["enabled"] = false)
-        # The transfer's colour, on the block it became.
+        # The transfer's colour, on the block it became, and its group.
         _eco_truthy(get(t, "color", nothing)) && (block["color"] = t["color"])
+        _eco_truthy(get(t, "group", nothing)) && (block["group"] = t["group"])
         block["timing"] = "trigger"
         block["trigger"] = event
         block["actions"] = Any[JDict("kind" => "move", "from" => t["from"], "to" => get(t, "to", nothing),
@@ -1317,9 +1318,10 @@ end
 # --- sections -------------------------------------------------------------------------------
 
 # <hierarchy-model>: every sub-system, parents before children. A sub-system
-# is a namespace and gives its blocks a path; a group is only a visual
-# grouping and is flattened away; a transport is marked; one the file
-# switches off is carried as switched off. `readHierarchy`.
+# is a namespace and gives its blocks a path; a group is no namespace and
+# comes across as one of this tool's groups, of the sub-system around it, a
+# sub-system in one saying so in its layout entry; a transport is marked; one
+# the file switches off is carried as switched off. `readHierarchy`.
 function _eco_read_hierarchy(data_model::EcoXMLNode, project::JDict, names::_EcoNameMapper,
                              report::EcoImportReport)
     model = _eco_child(data_model, "hierarchy-model")
@@ -1327,10 +1329,16 @@ function _eco_read_hierarchy(data_model::EcoXMLNode, project::JDict, names::_Eco
     systems = String[]
     disabled_paths = String[]
     transports = String[]
-    out = (path_by_id=path_by_id, systems=systems, disabled_paths=disabled_paths, transports=transports)
+    # The groups, by the id their blocks name as their sub-system: the
+    # sub-system they sort and the name they have there.
+    group_by_id = Dict{String,Tuple{String,String}}()
+    out = (path_by_id=path_by_id, systems=systems, disabled_paths=disabled_paths, transports=transports,
+           group_by_id=group_by_id)
     model === nothing && return out
 
-    groups = 0
+    groups = Any[]
+    group_names = Dict{String,Set{String}}()
+    grouped = Tuple{String,String}[]
     for el in _eco_children(model, "sub-system-block")
         sid = _eco_child_text(el, "id")
         original = _eco_attr(el, "name")
@@ -1340,10 +1348,27 @@ function _eco_read_hierarchy(data_model::EcoXMLNode, project::JDict, names::_Eco
         parent_id = _eco_child_text(el, "sub-system")
         parent_path = _eco_truthy(parent_id) ? get(path_by_id, parent_id, "") : ""
         kind = _eco_attr(el, "type", "")
+        # The group it sits in, when its parent is one.
+        in_group = _eco_truthy(parent_id) ? get(group_by_id, parent_id, nothing) : nothing
 
         if kind == "group"
-            groups += 1
             path_by_id[sid] = parent_path
+            taken = get!(group_names, parent_path, Set{String}())
+            clean = _eco_js_identifier(_eco_js_trim(string(original)))
+            (!isempty(clean) && _eco_is_ascii_digit(clean[1])) && (clean = "_" * clean)
+            clean == "" && (clean = "Group")
+            local_ = clean
+            n = 1
+            while local_ in taken || local_ in _ECO_PROTOTYPE_KEYS
+                local_ = "$(clean)_$n"
+                n += 1
+            end
+            push!(taken, local_)
+            group_by_id[sid] = (parent_path, local_)
+            decl = JDict("name" => local_)
+            isempty(parent_path) || (decl["system"] = parent_path)
+            in_group === nothing || (decl["group"] = in_group[2])
+            push!(groups, decl)
             continue
         end
         if kind == "external"
@@ -1358,17 +1383,20 @@ function _eco_read_hierarchy(data_model::EcoXMLNode, project::JDict, names::_Eco
         push!(systems, path)
         kind == "transport" && push!(transports, path)
         _eco_child_bool(el, "enabled", true) || push!(disabled_paths, path)
+        in_group === nothing || push!(grouped, (path, in_group[2]))
     end
 
-    if groups != 0
-        _eco_warn!(report,
-            "$groups group$(groups == 1 ? " was" : "s were") flattened: a group is a " *
-            "visual grouping in Ecolego and does not scope names, so its blocks belong " *
-            "to the sub-system around it.")
-    end
     isempty(systems) || (project["systems"] = Any[systems...])
     isempty(transports) || (project["transports"] = Any[transports...])
     isempty(disabled_paths) || (project["disabled_systems"] = Any[disabled_paths...])
+    isempty(groups) || (project["groups"] = groups)
+    if !isempty(grouped)
+        layout = JDict()
+        for (path, name) in grouped
+            layout[path] = JDict("group" => name)
+        end
+        project["layout"] = layout
+    end
     return out
 end
 
@@ -1940,6 +1968,9 @@ function _eco_read_blocks(data_model::EcoXMLNode, project::JDict, names::_EcoNam
     # The colour each block was given, by the qualified name it ends up with;
     # put on the blocks once they all exist. See `_eco_block_colour`.
     colours = Dict{String,String}()
+    # And the group each is in, the same way. See `_eco_read_hierarchy`.
+    group_by_id = hierarchy.group_by_id
+    group_of = Dict{String,String}()
 
     block_name_by_id = OrderedDict{String,String}()
     path_by_id = hierarchy.path_by_id
@@ -2043,6 +2074,11 @@ function _eco_read_blocks(data_model::EcoXMLNode, project::JDict, names::_EcoNam
                qualified[ncodeunits(system)+2:end] : qualified
         colour = _eco_block_colour(el, type_)
         colour === nothing || (colours[isempty(system) ? name : "$system.$name"] = colour)
+        sub = _eco_child_text(el, "sub-system")
+        grouping = sub === nothing ? nothing : get(group_by_id, sub, nothing)
+        if grouping !== nothing && grouping[1] == system
+            group_of[isempty(system) ? name : "$system.$name"] = grouping[2]
+        end
         # Dimension lists in declared order, for resolving entry ids -- and,
         # where the file names none but says there is one, the list that
         # stands for the intersection of a transfer's two ends.
@@ -2409,6 +2445,23 @@ function _eco_read_blocks(data_model::EcoXMLNode, project::JDict, names::_EcoNam
             for block in _eco_list(project, collection)
                 colour = get(colours, _eco_qualified(block), nothing)
                 colour === nothing || (block["color"] = colour)
+            end
+        end
+    end
+
+    # The groups, as the colours are: by qualified name, and the second half of
+    # a transfer made in two in the group of the first. A source is a transfer
+    # the file draws out of one, and is in its group too.
+    for (whole, twin) in twins
+        haskey(group_of, whole) && (group_of[twin] = group_of[whole])
+    end
+    if !isempty(group_of)
+        for collection in ("compartments", "expressions", "transfers", "parameters", "functions", "inflows",
+                           "lookups", "index_reductions", "block_reductions",
+                           "min_maxes", "running_means", "snapshots", "delays", "triggers")
+            for block in _eco_list(project, collection)
+                group = get(group_of, _eco_qualified(block), nothing)
+                group === nothing || (block["group"] = group)
             end
         end
     end

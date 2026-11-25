@@ -505,8 +505,8 @@ function* importSteps(text, meta) {
 	// Anything the model uses that this tool has no equivalent for.
 	report.finish(project);
 	// Last, so the counts are of the model as it ended up rather than as the
-	// file spelled it: blocks are renamed, groups flattened, interfaces
-	// connected and unreachable targets dropped on the way here.
+	// file spelled it: blocks are renamed, interfaces connected and
+	// unreachable targets dropped on the way here.
 	project.description = describeModel(project, { ...provenance, ...meta });
 	// Who wrote it, as the file says -- beside the name and the description,
 	// where a model of this tool's own keeps it. And the name each of the
@@ -938,8 +938,9 @@ function settleTransferEvents(project, report) {
 		if (t.system) block.system = t.system;
 		if (t.comment) block.comment = t.comment;
 		if (t.enabled === false) block.enabled = false;
-		// The transfer's colour, on the block it became.
+		// The transfer's colour, on the block it became, and its group.
 		if (t.color) block.color = t.color;
+		if (t.group) block.group = t.group;
 		block.timing = 'trigger';
 		block.trigger = event;
 		block.actions = [{ kind: 'move', from: t.from, to: t.to ?? null, fraction: t.rate }];
@@ -1351,12 +1352,19 @@ function keyName(raw, what, report) {
  *
  * A sub-system is a namespace: a block inside one has the id
  * `Parent.Child.Block`, and that is the name the rest of this tool addresses it
- * by. A *group* (`type="group"`) is only a visual grouping -- Ecolego computes
- * the ids of its blocks against the enclosing namespace instead
- * so it contributes nothing to a path and is
- * flattened away here, which is what the ids in the file already say.
+ * by. A *group* (`type="group"`) is a way of sorting blocks and no namespace --
+ * Ecolego computes the ids of its blocks against the enclosing namespace
+ * instead -- so it contributes nothing to a path, which is what the ids in the
+ * file already say, and it comes across as what it is: one of this tool's
+ * groups, of the sub-system around it (see ../domain/groups.js). Its blocks say
+ * so as `group` (see `readBlocks`); a sub-system in one says so in its layout
+ * entry, a sub-system having no object of its own. A group's name is tidied
+ * into an identifier as a block's is, and numbered if two groups of one
+ * sub-system would share one; no equation can name a group, so nothing has to
+ * be rewritten to follow it.
  *
- * @returns {{pathById: Map<string, string>, systems: string[]}}
+ * @returns {{pathById: Map<string, string>, systems: string[],
+ *   groupById: Map<string, {system: string, name: string}>}}
  */
 function readHierarchy(dataModel, project, names, report) {
 	const model = child(dataModel, 'hierarchy-model');
@@ -1371,9 +1379,14 @@ function readHierarchy(dataModel, project, names, report) {
 	// Sub-systems that are transports: a chain of N compartments drawn as
 	// two. `type="transport"` is written on one.
 	const transports = [];
-	if (!model) return { pathById, systems, disabledPaths, transports };
+	// The groups, by the id their blocks name as their sub-system: the
+	// sub-system they sort and the name they have there.
+	const groupById = new Map();
+	if (!model) return { pathById, systems, disabledPaths, transports, groupById };
 
-	let groups = 0;
+	const groups = [];
+	const groupNames = new Map();
+	const grouped = [];
 	for (const el of children(model, 'sub-system-block')) {
 		const id = childText(el, 'id');
 		const original = el.attrs.name;
@@ -1383,10 +1396,24 @@ function readHierarchy(dataModel, project, names, report) {
 		const parentId = childText(el, 'sub-system');
 		const parentPath = parentId ? (pathById.get(parentId) ?? '') : '';
 		const kind = el.attrs.type ?? '';
+		// The group it sits in, when its parent is one.
+		const inGroup = parentId ? groupById.get(parentId) ?? null : null;
 
 		if (kind === 'group') {
-			groups++;
 			pathById.set(id, parentPath);
+			if (!groupNames.has(parentPath)) groupNames.set(parentPath, new Set());
+			const taken = groupNames.get(parentPath);
+			const clean = String(original).trim()
+				.replace(/[^A-Za-z0-9_]/g, '_')
+				.replace(/^([0-9])/, '_$1') || 'Group';
+			let local = clean;
+			for (let n = 1; taken.has(local) || PROTOTYPE_KEYS.has(local); n++) local = `${clean}_${n}`;
+			taken.add(local);
+			groupById.set(id, { system: parentPath, name: local });
+			const decl = { name: local };
+			if (parentPath) decl.system = parentPath;
+			if (inGroup) decl.group = inGroup.name;
+			groups.push(decl);
 			continue;
 		}
 		if (kind === 'external') {
@@ -1402,22 +1429,21 @@ function readHierarchy(dataModel, project, names, report) {
 		systems.push(path);
 		if (kind === 'transport') transports.push(path);
 		if (!childBool(el, 'enabled', true)) disabledPaths.push(path);
+		if (inGroup) grouped.push([path, inGroup.name]);
 	}
 
-	if (groups) {
-		report.warn(
-			`${groups} group${groups === 1 ? ' was' : 's were'} flattened: a group is a `
-			+ `visual grouping in Ecolego and does not scope names, so its blocks belong `
-			+ `to the sub-system around it.`,
-		);
-	}
 	if (systems.length) project.systems = systems;
 	if (transports.length) project.transports = transports;
 	// Carried as what it is: a switch on the sub-system, which this tool now
 	// has. The blocks inside keep their own switches untouched, as they do in
 	// Ecolego, so turning the sub-system back on is one click here as there.
 	if (disabledPaths.length) project.disabled_systems = disabledPaths;
-	return { pathById, systems, disabledPaths, transports };
+	if (groups.length) project.groups = groups;
+	if (grouped.length) {
+		project.layout = {};
+		for (const [path, name] of grouped) project.layout[path] = { group: name };
+	}
+	return { pathById, systems, disabledPaths, transports, groupById };
 }
 
 /**
@@ -1940,6 +1966,9 @@ function readBlocks(dataModel, project, names, indexIds, report, hierarchy = nul
 	// The colour each block was given, by the qualified name it ends up with;
 	// put on the blocks once they all exist. See `blockColour`.
 	const colours = new Map();
+	// And the group each is in, the same way. See `readHierarchy`.
+	const groupById = hierarchy?.groupById ?? new Map();
+	const groupOf = new Map();
 
 	// Pass one: block id -> mapped name, so connections can resolve endpoints.
 	// Boundary components are recorded separately: a transfer touching one gets
@@ -2060,6 +2089,8 @@ function readBlocks(dataModel, project, names, indexIds, report, hierarchy = nul
 			: qualified;
 		const colour = blockColour(el, type);
 		if (colour) colours.set(system ? `${system}.${name}` : name, colour);
+		const grouping = groupById.get(childText(el, 'sub-system'));
+		if (grouping && grouping.system === system) groupOf.set(system ? `${system}.${name}` : name, grouping.name);
 		// Dimension list objects, in declared order, for resolving entry ids --
 		// and, where the file names none but says there is one, the list that
 		// stands for the intersection of a transfer's two ends.
@@ -2472,6 +2503,23 @@ function readBlocks(dataModel, project, names, indexIds, report, hierarchy = nul
 			for (const block of project[collection] ?? []) {
 				const colour = colours.get(block.system ? `${block.system}.${block.name}` : block.name);
 				if (colour) block.color = colour;
+			}
+		}
+	}
+
+	// The groups, as the colours are: by qualified name, and the second half
+	// of a transfer made in two in the group of the first. A source is a
+	// transfer the file draws out of one, and is in its group too.
+	for (const [whole, twin] of twins) if (groupOf.has(whole)) groupOf.set(twin, groupOf.get(whole));
+	if (groupOf.size) {
+		for (const collection of [
+			'compartments', 'expressions', 'transfers', 'parameters', 'functions', 'inflows',
+			'lookups', 'index_reductions', 'block_reductions',
+			'min_maxes', 'running_means', 'snapshots', 'delays', 'triggers',
+		]) {
+			for (const block of project[collection] ?? []) {
+				const group = groupOf.get(block.system ? `${block.system}.${block.name}` : block.name);
+				if (group) block.group = group;
 			}
 		}
 	}

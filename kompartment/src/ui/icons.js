@@ -143,6 +143,9 @@ export const KIND_ICON = {
 	// container's shape and wears the chain it runs as, in the transport's
 	// own colour.
 	transport: { shape: 'folder', tone: 'transport', mark: 'chain' },
+	// A group is the lighter container: the folder again, with the dashed
+	// outline its area has on the diagram. See ../domain/groups.js.
+	group: { shape: 'folder', tone: 'group' },
 };
 
 const svg = (tag, attrs = {}) => {
@@ -173,7 +176,7 @@ function folder(g) {
 }
 
 /**
- * @param {string} kind a block kind, or `system`
+ * @param {string} kind a block kind, `system`, or `group`
  * @param {{title?: string}} [opts]
  * @returns {SVGSVGElement} a 16x16 icon
  */
