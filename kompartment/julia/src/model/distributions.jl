@@ -37,7 +37,7 @@ correlation `group`.
 module distributions
 
 using OrderedCollections: OrderedDict
-using ..Kompartment: JDict, _ed_pyfloat, _py_str, _py_repr, _py_g, py_truthy
+using ..Kompartment: JDict, _ed_pyfloat, _py_str, _py_repr, _py_g, py_truthy, js_trim
 
 """A distribution that cannot be written down."""
 struct DistributionError <: Exception
