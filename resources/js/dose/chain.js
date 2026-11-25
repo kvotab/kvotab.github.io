@@ -18,6 +18,13 @@
   with everything after them that is not reached another way. A member left
   out this way carries less than `cutoff` of the 100-year energy, so the dose
   it would have added is of that order or smaller.
+
+  A member reached along two ways (sidePaths): the way that brings less than
+  that share of the chain's 50-year energy, with the alpha energy weighted by
+  20 and without, is not followed, as in the calculations behind the published
+  coefficients, which follow a chain way by way. 209Pb after 213Bi is made by
+  213Po (97.91 %) and by 209Tl (2.09 %): what 209Tl leaves is 0.0004 of the
+  chain's energy, and the annex of Publication 158 has 213Bi without it.
 */
 
 export const LN2 = Math.LN2;
@@ -25,8 +32,9 @@ export const LN2 = Math.LN2;
 /**
  * @param {object} index  nuclide name -> {T (days), d: [[daughter, branch]...], E: [Ea, Ee, Ep]}
  * @param {string} parent
- * @param {object} [opt]  {last: number|null, cutoff: 1e-3, horizonDays: 36525, keep: (name) => bool}
- * @returns {{members: Array<{name, T, lambda, E}>, branches: Array<{from, to, b}>, dropped: string[]}}
+ * @param {object} [opt]  {last: number|null, cutoff: 1e-3, horizonDays: 36525, keep: (name) => bool,
+ *                        sidePaths: 0 | share (1e-3) below which a lesser way to a member is cut}
+ * @returns {{members: Array<{name, T, lambda, E}>, branches: Array<{from, to, b}>, dropped: string[], cut: Array<[from, to]>}}
  */
 export function buildChain(index, parent, opt = {}) {
   if (!index[parent]) throw new Error(`${parent} is not in the decay data`);
@@ -72,11 +80,44 @@ export function buildChain(index, parent, opt = {}) {
   }
   const at = new Map(names.map((n, i) => [n, i]));
   const members = names.map((n) => ({ name: n, T: index[n].T, lambda: LN2 / index[n].T, E: index[n].E }));
-  const branches = [];
+  let branches = [];
   names.forEach((n, i) => {
     for (const [d, b] of index[n].d || []) if (at.has(d) && b > 0) branches.push({ from: i, to: at.get(d), b });
   });
-  return { members, branches, dropped };
+  const cut = [];
+  if (opt.sidePaths > 0) {
+    const lesser = lesserWays(index, names, branches, opt.sidePaths);
+    for (const x of lesser) cut.push([names[x.from], names[x.to]]);
+    if (lesser.length) branches = branches.filter((x) => !lesser.includes(x));
+  }
+  return { members, branches, dropped, cut };
+}
+
+/**
+ * The ways into members that have more than one, each bringing less than
+ * `share` of the chain's energy over `horizon` days by both measures (alpha
+ * weighted by 20, and not): the energy the chain loses without that way. The
+ * way that brings a member most is never one of them.
+ */
+function lesserWays(index, names, branches, share, horizon = 18262.5) {
+  const into = new Map();
+  for (const x of branches) { if (!into.has(x.to)) into.set(x.to, []); into.get(x.to).push(x); }
+  const energy = (skip) => {
+    const u = batemanTransformations(index, names, horizon, skip);
+    let plain = 0, weighted = 0;
+    names.forEach((n, i) => { const [a, e, p] = index[n].E; plain += u[i] * (a + e + p); weighted += u[i] * (20 * a + e + p); });
+    return [plain, weighted];
+  };
+  let whole = null;
+  const out = [];
+  for (const ways of into.values()) {
+    if (ways.length < 2) continue;
+    whole ||= energy(null);
+    const loss = ways.map((x) => { const [p, w] = energy((j, i) => j === x.from && i === x.to); return Math.max(whole[0] > 0 ? 1 - p / whole[0] : 0, whole[1] > 0 ? 1 - w / whole[1] : 0); });
+    const most = loss.indexOf(Math.max(...loss));
+    ways.forEach((x, k) => { if (k !== most && loss[k] < share) out.push(x); });
+  }
+  return out;
 }
 
 /**
@@ -84,7 +125,7 @@ export function buildChain(index, parent, opt = {}) {
  * of the first, by integrating the linear decay system exactly (it is lower
  * triangular): each member's activity is a sum of exponentials.
  */
-export function batemanTransformations(index, names, horizon) {
+export function batemanTransformations(index, names, horizon, skip = null) {
   const lam = names.map((n) => LN2 / index[n].T);
   const at = new Map(names.map((n, i) => [n, i]));
   // A_i(t) = sum_k c[i][k] exp(-lam_k t)
@@ -94,7 +135,7 @@ export function batemanTransformations(index, names, horizon) {
     // inflow to i from each earlier member j: b_ji * lam_i * A_j
     for (let j = 0; j < i; j++) {
       for (const [d, b] of index[names[j]].d || []) {
-        if (at.get(d) !== i) continue;
+        if (at.get(d) !== i || (skip && skip(j, i))) continue;
         for (let k = 0; k < names.length; k++) {
           if (!c[j][k]) continue;
           const den = lam[i] - lam[k];

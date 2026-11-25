@@ -1429,7 +1429,8 @@ The printed coefficients round as before (98.9 % and 98.5 %).
   0.989–0.999 of the annex's → all 312 organ doses within 0.3 % (rms 0.50 →
   0.10 %).
 
-Still open (nothing more than 2.1 % off):
+Still open (nothing more than 2.1 % off; the first two items are closed in
+the next section):
 
 - Sr-82: kidneys 0.985, 0.984, 0.992, 1.000, 1.009 and 1.021 at the six
   ages, the adult's heart wall 1.012. Rb-82 lives 76 s; Sr-80, Sr-81 and
@@ -1443,4 +1444,65 @@ Still open (nothing more than 2.1 % off):
   figures.
 - Effective doses 0.2–0.3 % off: caesium at 3 months, 1 year and 15 years,
   Ra-228 and Ba-133 at 5 years, Ca-41 and Ca-45.
+
+## Strontium-82 and bismuth-213 (2026-11-26)
+
+Against the annex: organ doses more than 1 % off 32 → 6, more than 0.5 % off
+238 → 145 of 561,420, and for the first time none more than 2 % (the largest
+is 1.8 %, the testes of a 10-year-old after Se-70 swallowed). Effective doses
+within 0.1 % 98.4 → 98.5 %. OIR Data Viewer: effective doses within 0.5 %
+567 → 568 of 572. Printed coefficients that round to the printed value
+98.9 → 99.0 % and 98.5 → 98.6 %.
+
+- **Rubidium formed in strontium's soft tissue leaves at the rate of its own
+  "Other" at each age** (progeny.json, the strontium set: `unid.soft` like
+  "Other"). The page had the 10.3 d⁻¹ of Publication 134 para 484, which is
+  the rate from other tissue of that paragraph's condensed model; the
+  calculation for the public has rubidium's characteristic model with rates
+  by age (Other to blood 15.3, 13.9, 11.7, 10.2, 8.03 and 7.3 d⁻¹), found
+  the day before. Rb-82 lives 76 s, so the kidneys after Sr-82 show how
+  much of it reaches blood: with 10.3 d⁻¹ they were 0.985, 0.984, 0.992,
+  1.000, 1.009 and 1.021 of the annex's at the six ages, right exactly where
+  the two rates meet. With the model's own rate the annex asked +1.48,
+  +1.65, +0.78, −0.04, −0.92 and −2.08 % and gets +1.47, +1.64, +0.77, −0.05,
+  −0.92 and −2.08 %, liver and the adult's heart wall with them, in both
+  sexes. Sr-82 23 → 0 values more than 1 % off. (The opposite of lead's
+  7.39 d⁻¹ two sections up, where the stated number holds at every age:
+  there the model is the one the number was stated for.)
+
+- **The lesser way to a chain member is not followed where it brings less
+  than a thousandth of the chain's energy** (`OPTIONS103.sidePaths`, chain.js
+  `lesserWays`). Pb-209 after Bi-213 comes from Po-213 (97.91 %) and from
+  Tl-209 (2.09 %); what Tl-209 leaves is 0.0004 of the chain's energy over 50
+  years, 0.00002 with the alpha energy weighted by 20. The annex has Bi-213
+  without it. By injection and inhalation it cannot be seen. By ingestion
+  thallium formed in the gut is absorbed (f_A 1) where bismuth is not
+  (0.05), gathers in the testes, and leaves its lead there: the testes were
+  1.004, 1.011, 1.016, 1.021, 1.006 and 1.004 of the annex's, colon 1.004,
+  red marrow and bone surface 1.003, e 1.0014. Without that Pb-209 the annex
+  asked −0.42, −1.07, −1.62, −2.11, −0.59 and −0.42 % for the testes and gets
+  −0.42, −1.07, −1.62, −2.14, −0.58 and −0.42 %; every other tissue to
+  0.01 %. Thallium's own handling is right as it was: after Bi-212, whose
+  Tl-208 gives 63 % of a 10-year-old's testes dose by ingestion, the annex
+  asks 0.00 %. The rule as built: for a member with more than one way in,
+  the energy the chain loses without a way, by both measures; a way below a
+  thousandth is cut unless it is the member's main one. It cuts a way in 116
+  of 1,252 chains (Tl-210 to Pb-210 and At-218 to Bi-214 in radium's and
+  radon's, Bi-215 to Po-215, Pa-234 to U-234); ways that bring more stay
+  (I-131 by Te-131 after Te-131m, Nb-95 by Nb-95m, Pr-144 by Pr-144m, whose
+  loss the annex would show). Five other nuclides of the annex move, by up
+  to 0.2 % in their most affected organ, four of them towards it (rms over
+  their organ doses: Zr-87 0.053 → 0.016 %, I-119 0.023 → 0.012 %, Pb-195m
+  0.110 → 0.083 %, Sr-81 0.052 → 0.039 %; Ra-225 0.085 → 0.087 %). Ra-226's
+  model is 81 compartments smaller for it (491, with 768 equations).
+
+Still open:
+
+- Testes after Se-70 swallowed 0.982–0.991 (ovaries 0.993–0.997); by
+  injection 0.995. Half of what decays there is As-70 formed from the
+  selenium of the testes.
+- Pancreas, spleen and gonads after Se-70 and Se-72 0.3–0.6 % low.
+- Lead at 15 years 0.2–0.3 % high (Pb-202, Pb-205, Pb-210).
+- Effective doses 0.2–0.3 % off: caesium at 3 months, 1 year and 15 years
+  (the largest, 0.33 %), Ra-228 and Ba-133 at 5 years, Ca-41 and Ca-45.
 

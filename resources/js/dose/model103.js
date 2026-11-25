@@ -234,6 +234,17 @@ export const OPTIONS103 = {
                           // formed from 238Pu, 230Th from 234U and 239Pu from 243Cm are followed here but
                           // were left out there, and with their skin counted as named the adult female's
                           // skin dose was 1.20 to 1.21 of the OIR Data Viewer's; false = every member's
+  sidePaths: 'cut',       // a member made along two ways: 'cut' = the lesser way is not followed where it
+                          // brings less than a thousandth of the chain's energy over 50 years, with the
+                          // alpha energy weighted by 20 and without (chain.js lesserWays); 'follow' = every
+                          // way. The calculations behind the coefficients do not follow it: 209Pb after
+                          // 213Bi comes from 213Po (97.91 %) and from 209Tl (2.09 %, 0.0004 of the
+                          // energy), and by ingestion, where thallium formed in the gut is absorbed and
+                          // gathers in the testes, the annex of Publication 158 has the testes at
+                          // 0.996, 0.989, 0.984, 0.979, 0.994 and 0.996 of this page's with that 209Pb
+                          // followed, colon 0.996, red marrow 0.997; without it every tissue is within
+                          // 0.03 % at every age. Ways that bring more are followed there too (131I by
+                          // way of 131Te after 131mTe, 95Nb by way of 95mNb, 144Pr by way of 144mPr)
   nonexchAt: 'place',     // a progeny formed in a bone volume its model divides otherwise (radium or uranium
                           // in thorium's, ICRP 137 paras 811-812) is "produced in non-exchangeable bone":
                           // 'place' = it leaves at that part's rates and stays in the compartment it was
@@ -360,8 +371,8 @@ export function assemble103(data, spec) {
   const parentEl = elementOf(spec.nuclide);
   const E0 = elements[parentEl];
   if (!E0) throw new Error(`no ICRP 103 model for ${parentEl}`);
-  const chain = buildChain(index, spec.nuclide, { cutoff: spec.cutoff ?? 1e-4, last: spec.last, horizonDays: 36525 });
   const rules = { ...OPTIONS103, ...(spec.rules || {}) };
+  const chain = buildChain(index, spec.nuclide, { cutoff: spec.cutoff ?? 1e-4, last: spec.last, horizonDays: 36525, sidePaths: rules.sidePaths === 'cut' ? 1e-3 : 0 });
   const route = spec.route;
   const adultAge = E0.adultAge || 7300;
   const hatmAges = [100, 365, 1825, 3650, 5475, adultAge];

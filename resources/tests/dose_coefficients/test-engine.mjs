@@ -403,7 +403,7 @@ if (!SYSTEM || SYSTEM === '103') {
     // 218At, on a branch of 0.02 %, is no member whose tissues count: with astatine's thyroid counted, the members
     // after it leave the thyroid out of their rest of the body and a 3-month-old's thyroid has 0.90 of this
     ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas' }, 100, 4.2391e-10, 'Thyroid'],
-    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas', rules: { carried: false } }, 100, 3.8152e-10, 'Thyroid'],
+    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas', rules: { carried: false, sidePaths: 'follow' } }, 100, 3.8162e-10, 'Thyroid'],
     // antimony formed in the gut takes the fA of its forms other than in food (OPTIONS103.giProgenyFA); with the
     // highest, the brain has 1.5 times this
     ['103', { nuclide: 'Sb-124n', route: 'ingestion', form: 'food' }, 7300, 5.3939e-14, 'Brain'],
@@ -516,6 +516,18 @@ if (!SYSTEM || SYSTEM === '103') {
     // liver, the adult's liver after 115Ag has 1.008 of this and the red marrow 0.993, as they had of the annex's
     ['103', { nuclide: 'Ag-115', route: 'injection' }, 7300, 7.0937e-11, 'Liver'],
     ['103', { nuclide: 'Ag-115', route: 'injection' }, 7300, 9.4973e-12, 'Red marrow'],
+    // a member made along two ways: the lesser way is not followed where it brings less than a thousandth of the
+    // chain's energy (OPTIONS103.sidePaths). 209Pb after 213Bi by way of 209Tl (2.09 %): followed, the testes of
+    // a 10-year-old after 213Bi swallowed have 1.022 of this and the adult's colon 1.004, as they had of the annex's
+    ['103', { nuclide: 'Bi-213', route: 'ingestion', form: 'all' }, 3650, 1.1571e-11, 'Gonads'],
+    ['103', { nuclide: 'Bi-213', route: 'ingestion', form: 'all', rules: { sidePaths: 'follow' } }, 3650, 1.1820e-11, 'Gonads'],
+    ['103', { nuclide: 'Te-131m', route: 'injection', rules: { sidePaths: 'follow' } }, 7300, 3.2328e-8, 'Thyroid'],
+    ['103', { nuclide: 'Te-131m', route: 'injection' }, 7300, 3.2328e-8, 'Thyroid'],
+    // rubidium formed in strontium's soft tissue leaves at the rate of its own Other at each age (the strontium
+    // set): at the 10.3 d-1 of the condensed model the kidneys after 82Sr had 0.985 of this at 3 months and 1.021
+    // for adults, as they had of the annex's
+    ['103', { nuclide: 'Sr-82', route: 'injection' }, 100, 3.2757e-8, 'Kidneys'],
+    ['103', { nuclide: 'Sr-82', route: 'injection' }, 7300, 3.6206e-9, 'Kidneys'],
     ['60', { nuclide: 'Po-210', route: 'ingestion' }, 7300, 1.206e-6],
   ];
   for (const [sys, spec, age, want, tissue, sex = 'M'] of pins) {
@@ -683,6 +695,14 @@ if (!SYSTEM || SYSTEM === '103') {
     const a = await bornAt('Pb-210', 'Bi-210/ST1'), b = await bornAt('Pb-210', 'Bi-210/ST0'), c = await bornAt('Bi-210', 'Bi-210/ST1'), e = await bornAt('Bi-214', 'Po-214/Other');
     check('polonium formed in the ST1 of a bismuth that is a progeny is in its own soft tissue; in that bismuth\'s ST0, or in the ST1 of the bismuth taken in, in a compartment of its own there; lead formed from polonium in that soft tissue is in lead\'s ST1',
       String(a.to) === 'Po-210/Other' && String(b.to) === 'Po-210/ST0 (Bi-210)' && String(c.to) === 'Po-210/ST1 (Bi-210)' && String(e.to) === 'Pb-210/ST1', `${a.to} | ${b.to} | ${c.to} | ${e.to}`);
+    const sr = await bornAt('Sr-82', 'Sr-82/ST0', { intakeAge: 100 });
+    check('82Sr: rubidium formed in strontium\'s ST0 leaves for blood at the rate of its own Other at each age, 15.3 d-1 at 3 months and 7.3 for adults',
+      String(sr.to) === 'Rb-82/ST0 (Sr-82)' && JSON.stringify(sr.out('Rb-82/ST0 (Sr-82)')) === '[["Rb-82/Blood",[15.3,13.9,11.7,10.2,8.03,7.3]]]', `${sr.to} ${JSON.stringify(sr.out('Rb-82/ST0 (Sr-82)'))}`);
+    const cutOf = (n) => JSON.stringify(buildChain(d103.index, n, { cutoff: 1e-4, horizonDays: 36525, sidePaths: 1e-3 }).cut);
+    await d103.prepare('Te-131m'); await d103.prepare('Zr-95'); await d103.prepare('Ce-144');
+    check('the lesser way to a chain member is cut where it brings less than a thousandth of the energy: 209Pb by way of 209Tl after 213Bi, 210Pb by way of 210Tl and 214Bi by way of 218At after 226Ra; 131I by way of 131Te, 95Nb by way of 95mNb and 144Pr by way of 144mPr are followed',
+      cutOf('Bi-213') === '[["Tl-209","Pb-209"]]' && cutOf('Ra-226') === '[["At-218","Bi-214"],["Rn-218","Po-214"],["Tl-210","Pb-210"]]' && cutOf('Te-131m') === '[]' && cutOf('Zr-95') === '[]' && cutOf('Ce-144') === '[]',
+      `${cutOf('Bi-213')} ${cutOf('Ra-226')} ${cutOf('Te-131m')} ${cutOf('Zr-95')} ${cutOf('Ce-144')}`);
     const ag = await bornAt('Ag-115', 'Cd-115/Liver 1 (Ag-115)');
     check('115Ag: indium formed from the cadmium in silver\'s Liver 1 is in a compartment of its own there and leaves for plasma at 2.37 d-1, not in indium\'s Liver 1',
       String(ag.to) === 'In-115m/Liver 1 (Ag-115) (Cd-115)' && JSON.stringify(ag.out('In-115m/Liver 1 (Ag-115) (Cd-115)')) === '[["In-115m/Plasma",[2.37]]]', `${ag.to} ${JSON.stringify(ag.out('In-115m/Liver 1 (Ag-115) (Cd-115)'))}`);
