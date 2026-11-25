@@ -123,8 +123,9 @@ export const OPTIONS103 = {
                           // kidneys were 0.989, 0.996, 0.995, 0.982, 0.963 and 0.987 of the annex's at the
                           // six ages, least where radium's own part of the kidney dose is least; at once,
                           // all within 0.4 %, and no other tissue moves. (Radon that is itself taken in
-                          // has the two blood compartments of its own model, from which Publication 137
-                          // para 654 moves its progeny to plasma at 1000 d-1: progeny.json, the radon set.)
+                          // has the two blood compartments of its own model: its arterial blood is the
+                          // progeny's own blood there too, and from its venous blood they move to plasma
+                          // at 1000 d-1, the rate of Publication 137 para 654: progeny.json, the radon set.)
   boneShared: 'out',      // progeny produced in bone volume, where no OIR section gives their model:
                           // 'out' = the parent's rates out of bone volume only; 'turnover' = to blood
                           // at the bone turnover rate (the OIR sections' rule);

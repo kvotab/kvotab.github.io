@@ -1208,10 +1208,10 @@ off 349 → 311 of 561,420; the effective doses do not move.
 
   Radon that is itself taken in has the two blood compartments of its own
   model (arterial, venous), for which Publication 137 para 654 gives the
-  transfer of progeny to plasma at 1000 d⁻¹ in so many words. There the
-  transfer is kept: with the progeny of both in plasma at once the kidneys
-  after inhaled Rn-222 come out 5–6 % above the annex, where they are 3–4 %
-  below it now.
+  transfer of progeny to plasma at 1000 d⁻¹ in so many words. With the
+  progeny of both in plasma at once the kidneys after inhaled Rn-222 come
+  out 5–6 % above the annex, and with the transfer from both 3–4 % below
+  it. (The next section has what holds: the arterial blood alone.)
 
 Still open, radon taken in (Rn-222 as a gas: kidneys 0.963–0.971 at every
 age and liver 0.987–0.992; by ingestion kidneys 0.980–0.984; thoron's
@@ -1238,12 +1238,97 @@ kidneys are right). What is known:
   right to 0.1 % where lead or bismuth is the nuclide taken in. Bismuth
   leaving radon's "Other" at 85–100 d⁻¹ instead of 66.54, which the pass
   before had as a candidate, is out: skin and gonads, which radon's "Other"
-  holds, would then be 2 % low. Neither is polonium from arterial blood at
-  once, the absorption of the progeny formed in the gut (lead's f_A is
+  holds, would then be 2 % low. Neither is the absorption of the progeny
+  formed in the gut (lead's f_A is
   right to 1 %: the kidneys of a 3-month-old move by 28 % for 20 % of it),
   or fixed fractions of the plasma outflow for the compartments added to
-  lead as a progeny (the gonads of children 2–7 % high).
+  lead as a progeny (the gonads of children 2–7 % high). (Corrected: this
+  list also had "polonium from arterial blood at once" as ruled out,
+  because it gave 70 % of what the gas asks and too little by ingestion. It
+  was judged as the one cause of the whole gap; it is one of three. See the
+  next section.)
 - A second, smaller pattern is shared by radon, thoron and the radium
   isotopes whose lead is formed in the body: at 3 months and at 15 years
   the soft tissues are 1–2 % high and bone surface and red marrow 1–2.5 %
   low; at the other ages 0.3–0.6 %.
+
+## Radon taken in: what the papers behind its model show (2026-11-25, after the papers)
+
+Read: Leggett, Marsh, Gregoratto and Blanchardon, "A generic biokinetic model
+for noble gases with application to radon", J. Radiol. Prot. 33 (2013)
+413–432, and Samuels, Marsh and Leggett, "An age- and sex-specific
+biokinetic model for radon", J. Radiol. Prot. 43 (2023) 041502. Neither says
+more about the progeny than Publication 137 does. But the second prints, for
+the adult male after inhaled Rn-222, Rn-220 and Rn-219, the doses to six
+tissues with Publication 137's radon model and with Publication 158's, each
+from radon alone and with its progeny (its Tables 6–8). The annex has neither
+the older model nor radon alone. None of the paper's values are in this
+repository; the comparison is run from private tools.
+
+What the tables show:
+
+- With progeny and Publication 158's model the paper's values are the
+  annex's adult male to three figures (lungs apart, 1–2.5 % higher in the
+  paper), so the paper's other columns say how the annex was calculated.
+- **Radon alone is right.** With Publication 137's model, whose rates are
+  printed with four figures, the page's engine gives the paper's doses
+  within 0.3 % in the five tissues other than the lungs. With Publication
+  158's, whose tables have three figures, it is 0.2–0.8 % low in each of
+  them, 0.5 % on average, for all three isotopes (the adult's uptake from
+  the air of the lungs is 1043 d⁻¹ with four figures and 1.04E+03 in the
+  table). The whole kidney gap was therefore in the progeny. (The lungs:
+  within 0.5 % after Rn-222 and Rn-220, but 13 % lower here than in the
+  paper after Rn-219, with either model. The annex has no Rn-219, and its
+  lungs after the other two are the page's within 0.3 %.)
+- **Radon's arterial blood is the progeny's own blood** (progeny.json, the
+  radon set: `identify` "Rn:Blood-A"). With Publication 137's model, for
+  which that publication gives every rule, the kidneys with progeny were
+  0.979 of the paper's while breast, red marrow, bone surface and liver were
+  within 0.3 %, and only after Rn-222: the route of Po-218 (3.1 min) from
+  blood to Plasma 2 and from there to the kidneys. With what radon decays to
+  in arterial blood in the progeny's blood at once, and the 1000 d⁻¹ kept
+  for venous blood: 1.004. The same reading puts the Pb-211 that Rn-219
+  leaves in arterial blood (its Po-215 decays where it is formed) in lead's
+  plasma: the bone surface after Rn-219 0.987 → 0.999 of the paper's
+  (`identify` "Po:Plasma 2" for lead). In the annex the kidneys after
+  Rn-222 as a gas go from 0.963–0.971 to 0.986–0.997 at the six ages, both
+  sexes. Venous blood at once as well would give 1.07 with Publication
+  137's model; two fifths of the venous blood's and none of the arterial
+  would fit that model as well, but give 2 % too much by ingestion for
+  adults in the annex.
+- **Lead leaves a soft tissue that its model does not have at 7.39 d⁻¹ at
+  every age** (the lead and radon sets: `unid.soft`). Publication 137 para
+  482 gives 7.39 d⁻¹ as "the highest rate of transfer to plasma in the lead
+  model", and the page used the rate of lead's fast soft-tissue pool at each
+  age, which is 5.28 d⁻¹ at 3 months and 5.32 at 15 years. Thoron's children
+  in the annex settle it, tissue by tissue: at 3 months the change is kidneys
+  −2.2 %, muscle −1.1 %, red marrow +1.3 %, bone surface +2.0 % where the
+  annex asked −1.8, −1.3, +1.3 and +2.0 %; at 15 years −2.3, −1.0, +1.3 and
+  +2.5 % for −2.3, −1.7, +1.0 and +2.6 %. This is the "second, smaller
+  pattern" of the section before.
+
+The annex as a whole: organ doses more than 1 % off 311 → 160 and more than
+2 % off 25 → 3 of 561,420 (Sr-82's adult kidneys twice, Bi-213's testes at
+10 years); Rn-220 45 → 0 more than 1 % off, Rn-222 157 → 57 (none more than
+1.5 % after the gas, 2.0 % by ingestion), Ra-223 4 → 0. The effective doses
+do not move (97.9 % within 0.1 %). Of the printed coefficients only radon's,
+thoron's and Ra-226's move, by 0.07 % at most; the OIR Data Viewer's adults
+by injection are unchanged.
+
+Still open:
+
+- After the gas, kidneys and liver about 1 % low with Publication 158's
+  model, where with Publication 137's they are 0.3 % high. From the older
+  model to the newer the progeny passing through blood fall by 7 % here
+  (radon's "Other" holds 9 % less) and by about 3.5 % in the paper's
+  figures. Not it: a release from the yellow marrow that the newer model
+  adds, or from its red marrow (red marrow and bone surface would be
+  0.7–1.6 % low for 1 % in the kidneys).
+- By ingestion, kidneys 0.984–0.994 and muscle and brain 1.006–1.019, most
+  at 3 months. There nine tenths of the lead in blood is Pb-214 formed in
+  the stomach and absorbed from the small intestine, and what radon forms in
+  its own tissues hardly counts.
+- The three-figure rates of Publication 158's radon tables (0.4 % in every
+  tissue). The rates follow from blood flows, volumes and partition
+  coefficients; not rebuilt, the reference masses of each age would be
+  needed to more figures than the paper gives.
