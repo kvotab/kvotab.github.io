@@ -354,9 +354,15 @@
 	padding: 5px 8px;
 	line-height: 1;
 }
-:root[data-chrome="kvotab"] .kvot-full { color: var(--text-secondary); }
-:root[data-chrome="kvotab"] .kvot-full:hover { color: var(--text-primary); }
-:root[data-chrome="kvotab"] .kvot-theme { font-size: 14px; }
+/* Both drawn in the text's colour, the switch as the site's own (a moon
+   while light, a sun while dark; see sitechrome.js), not as coloured emoji. */
+:root[data-chrome="kvotab"] .kvot-full,
+:root[data-chrome="kvotab"] .kvot-theme { color: var(--text-secondary); }
+:root[data-chrome="kvotab"] .kvot-full:hover,
+:root[data-chrome="kvotab"] .kvot-theme:hover { color: var(--text-primary); }
+/* The switch is drawn at the site's 14px, the corners at 15px: half a pixel
+   more round the switch makes the two boxes side by side the same size. */
+:root[data-chrome="kvotab"] .kvot-theme { padding: 5.5px 8.5px; }
 :root[data-chrome="kvotab"] .kvot-home {
 	display: inline-flex;
 	align-items: center;

@@ -867,6 +867,13 @@ test('the site page’s full window puts its header and footer away in place, as
 	const css = readFileSync(new URL('../css/theme-kvotab.css', import.meta.url), 'utf8');
 	assert(/:root\[data-chrome="kvotab"\]:not\(\[data-chrome-full\]\) body \{/.test(css), 'the room is kept in the full window');
 	assert(/:root\[data-chrome="kvotab"\]:not\(\[data-chrome-full\]\) \.kvot-home,\n:root\[data-chrome="kvotab"\]:not\(\[data-chrome-full\]\) \.kvot-theme \{ display: none; \}/.test(css), 'the mark and the switch show outside the full window');
+	// The switch is the site's own drawing (a moon while light, a sun while
+	// dark, in the text's colour), not coloured emoji.
+	const site = readFileSync(new URL('../../resources/css/kvot.css', import.meta.url), 'utf8');
+	for (const d of ['M13.94 8.87A6 6 0 1 1 7.13 2.06 5 5 0 0 0 13.94 8.87z', 'M8 1.2v1.6M8 13.2v1.6M1.2 8h1.6M13.2 8h1.6M3.2 3.2l1.1 1.1M11.7 11.7l1.1 1.1M3.2 12.8l1.1-1.1M11.7 4.3l1.1-1.1']) {
+		assert(site.includes(d) && chrome.includes(`'${d}'`), 'the switch is not drawn as the site’s');
+	}
+	assert(!/\p{Extended_Pictographic}/u.test(chrome), 'the switch is coloured emoji');
 	// There the kvot mark takes the place of the tool's own rather than sitting beside it.
 	assert(/\n:root\[data-chrome="kvotab"\]\[data-chrome-full\] \.brand-mark \{ display: none; \}/.test(css), 'the tool’s mark beside the kvot mark in the full window');
 	// The home page in a new tab, as the footer's kvotab.se: the model lives in this page.

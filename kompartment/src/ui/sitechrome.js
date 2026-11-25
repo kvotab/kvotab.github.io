@@ -55,6 +55,25 @@ function corners(full) {
 	return s;
 }
 
+// The site's light/dark switch, drawn as the site draws it (.theme-toggle in
+// resources/css/kvot.css): a moon in outline while it is light, a sun while
+// it is dark, in the text's own colour rather than as coloured emoji.
+function themeIcon(dark) {
+	const s = document.createElementNS(SVG, 'svg');
+	for (const [k, v] of Object.entries({ viewBox: '0 0 16 16', width: 14, height: 14, 'aria-hidden': 'true', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.5, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })) s.setAttribute(k, String(v));
+	if (dark) {
+		const c = document.createElementNS(SVG, 'circle');
+		for (const [k, v] of Object.entries({ cx: 8, cy: 8, r: 3 })) c.setAttribute(k, String(v));
+		s.append(c);
+	}
+	const p = document.createElementNS(SVG, 'path');
+	p.setAttribute('d', dark
+		? 'M8 1.2v1.6M8 13.2v1.6M1.2 8h1.6M13.2 8h1.6M3.2 3.2l1.1 1.1M11.7 11.7l1.1 1.1M3.2 12.8l1.1-1.1M11.7 4.3l1.1-1.1'
+		: 'M13.94 8.87A6 6 0 1 1 7.13 2.06 5 5 0 0 0 13.94 8.87z');
+	s.append(p);
+	return s;
+}
+
 // Every copy of the two buttons says what is so now (the editor's bar and
 // the running app's each have a pair).
 function paint() {
@@ -65,8 +84,9 @@ function paint() {
 		b.replaceChildren(corners(full));
 	}
 	for (const b of document.querySelectorAll('.kvot-theme')) {
-		b.textContent = dark ? '☀️' : '🌙';
 		b.title = dark ? 'Switch to light mode' : 'Switch to dark mode';
+		b.setAttribute('aria-label', b.title);
+		b.replaceChildren(themeIcon(dark));
 	}
 }
 
