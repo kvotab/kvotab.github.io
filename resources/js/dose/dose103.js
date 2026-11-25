@@ -121,14 +121,15 @@ function chainRegions(sys) {
   member's own model spreads from blood does not go there. Publication 151
   describes progeny models so (Annex B: the characteristic model expanded by
   the compartments the linked models need), and the ICRP's coefficients show
-  it: arsenic formed from 70Se and 72Se has no pancreas, spleen or gonads in
-  its model, selenium has, and with arsenic's "Other" spread there too those
-  tissues were 1.04-1.07 of the annex of Publication 158's (testes up to
-  1.06), left out 0.995-0.998; 129La, whose barium and caesium lack
-  lanthanum's liver, kidneys, marrow and gonads, had salivary glands at 0.84,
-  thymus 0.88, breast 0.89 and testes 1.09 of the OIR Data Viewer's, and
-  every tissue at 1.000-1.005 with them left out. Tissues that a later member
-  names still take their share (chainRegions).
+  it: 129La, whose barium and caesium lack lanthanum's liver, kidneys, marrow
+  and gonads, had salivary glands at 0.84, thymus 0.88, breast 0.89 and
+  testes 1.09 of the OIR Data Viewer's, and every tissue at 1.000-1.005 with
+  them left out. Arsenic formed from 70Se and 72Se showed the same for
+  selenium's pancreas, spleen and gonads (1.04-1.07 of the annex of
+  Publication 158's with arsenic's "Other" spread there, 0.995-0.998 left
+  out); its progeny model names them itself, with the small uptake that
+  closes the rest (progeny.json, the selenium set). Tissues that a later
+  member names still take their share (chainRegions).
 */
 function namedBefore(sys) {
   const anc = sys.members.map(() => new Set());

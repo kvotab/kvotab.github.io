@@ -1445,7 +1445,7 @@ the next section):
 - Effective doses 0.2–0.3 % off: caesium at 3 months, 1 year and 15 years,
   Ra-228 and Ba-133 at 5 years, Ca-41 and Ca-45.
 
-## Strontium-82 and bismuth-213 (2026-11-26)
+## Strontium-82 and bismuth-213 (2026-11-25, evening)
 
 Against the annex: organ doses more than 1 % off 32 → 6, more than 0.5 % off
 238 → 145 of 561,420, and for the first time none more than 2 % (the largest
@@ -1506,3 +1506,110 @@ Still open:
 - Effective doses 0.2–0.3 % off: caesium at 3 months, 1 year and 15 years
   (the largest, 0.33 %), Ra-228 and Ba-133 at 5 years, Ca-41 and Ca-45.
 
+## Arsenic after selenium, and rates the tables round off (2026-11-25, late)
+
+Against the annex: organ doses more than 1 % off 6 → 0, more than 0.5 % off
+145 → 65 and more than 0.2 % off 5,203 → 2,361 of 561,420; within 0.1 %
+96.8 → 98.2 %. Effective doses within 0.1 % 98.5 → 99.6 %, within 0.2 %
+99.6 → 99.9 % (six of 10,026 are more than 0.2 % off: lead at 15 years and
+one of thoron's). OIR Data Viewer unchanged (568 of 572 within 0.5 %).
+Printed coefficients that round to the printed value 99.0 % and 98.6 % as
+before (at 1 year 98.2 → 98.4 %, at 15 years 98.7 → 99.0 %).
+
+All of it is in the data, none in the engine. The method was the one of the
+sections above: what the annex asks tissue by tissue and age by age, beside
+what one candidate change gives. Each rule below gives the pattern asked
+with nothing fitted but the choice of rule.
+
+- **Arsenic formed from selenium takes a little up into selenium's four
+  tissues** (progeny.json, the selenium set). Selenium's model has pancreas,
+  spleen, testes and ovaries; arsenic's has not. They are added to arsenic's
+  model out of Other 2: 0.004, 0.004, 0.0008 and 0.00028 d⁻¹ from plasma
+  (0.01, 0.01, 0.002 and 0.0007 % of the 40 d⁻¹ that leave it), back at
+  Other 2's 0.08 d⁻¹. No publication gives the rates. With none, these
+  tissues were 0.3–0.6 % low after Se-70 and Se-72, and the testes of a
+  10-year-old 1.8 % low after Se-70 swallowed, the largest value left in the
+  annex; with a share of arsenic's rest of the body by mass they are 4–7 %
+  high (two sections up). With these, every value of both nuclides, both
+  routes, both sexes and six ages is within 0.03 %. `ancestorTissues` no
+  longer acts here, since arsenic's model names the four tissues itself; its
+  evidence is La-129.
+
+- **Caesium's rates before adulthood are worked out, not taken as printed**
+  (elements.json). Publication 158 para 448: all rates out of tissue
+  compartments are the adult's times 4, 3.5, 2.5, 2.0 and 1.3, and plasma to
+  Other 1 keeps the outflow from plasma the same. Table 26.3 prints the
+  results with three figures, up to 0.4 % off the product (kidneys to blood
+  128 for 127.6). All 185 products round to the printed figures, 26 of them
+  exact halves printed upward; plasma to Other 1 is 19.06, 19.06 and 13.06
+  for the printed 19.1, 19.1 and 13.1. With the printed figures e of Cs-137
+  injected was 1.0032, 1.0023, 0.9999, 1.0009, 1.0022 and 1.0000 of the
+  annex's. The annex asked of the liver −0.28, −0.23, +0.01, −0.06, −0.24 %
+  and gets −0.27, −0.22, −0.01, −0.07, −0.25; of the testes −0.36, −0.30,
+  −0.05, −0.13, −0.22 and gets −0.34, −0.29, −0.04, −0.12, −0.21, which
+  needs Other 1 as well (without it −0.18, −0.14, +0.10). No caesium
+  coefficient is more than 0.2 % off any longer.
+
+- **Radium's and barium's rates from plasma to soft tissues and excretion
+  are the adult's times (1 − B)/(1 − A)**, B the bone's share of the outflow
+  from plasma at the age (0.75, 0.45, 0.40, 0.56, 0.74) and A the adult's
+  0.25: the scheme of Publication 67, which the tables print with three
+  figures. After Ra-226 injected the annex asked of the liver 0.00, +0.12,
+  −0.17, +0.26, −0.20 % at the five ages and gets −0.00, +0.11, −0.17,
+  +0.25, −0.20; kidneys, muscle, skin, colon and lung the same way.
+
+- **Barium's rates to the bone surfaces at 5, 10 and 15 years are the halves
+  that the tables round from**: trabecular 6.225, 9.875 and 14.45 d⁻¹,
+  cortical 21.775, 29.325 and 37.35, which add up to 0.40, 0.56 and 0.74 of
+  70 d⁻¹. Barium's table prints 6.22, 9.88, 14.5 and radium's 6.23, 9.87,
+  14.4: the same numbers rounded each way. After Ba-140 injected at 15 years
+  the annex asked −0.05, +0.01, −0.06, −0.17 and −0.18 % of kidneys, liver,
+  muscle, red marrow and bone surface and gets −0.06, 0.00, −0.05, −0.16 and
+  −0.18; after Ba-133 every tissue was 0.2 % high at 5, 10 and 15 years and
+  is within 0.1 % (of Ba-133's values more than 0.1 % off, 608 → 21, all at
+  1 year). **Lead's are half of them** (3.1125, 4.9375, 7.225 and
+  10.8875, 14.6625, 18.675): after Pb-210 injected the annex asked −0.04 and
+  −0.08 % of the kidneys at 5 and 10 years and gets −0.04 and −0.07, liver
+  and muscle alike.
+
+- **Calcium is absorbed by 0.499 at 1 to 15 years.** Publication 158 states
+  0.5, and so does the head of the annex (which writes 0.99 where the
+  fraction is 1). Its numbers are those of 0.499: with 0.5, e after Ca-41
+  and Ca-45 swallowed was 1.0020 of the annex's at each of the four ages
+  and 1.0000 after an injection. With 0.499 the bone after Ca-45 swallowed
+  moves by the −0.20 % asked at all four; the colon after Ca-47, where less
+  absorbed means more passing, was asked +0.09, +0.09, +0.12, +0.13 % and
+  gets +0.09, +0.09, +0.11, +0.12; what is swallowed from the airways
+  follows (bone after Ca-45 inhaled as Type M asked −0.10 to −0.06 %, gets
+  −0.08 to −0.06). Zinc, technetium and polonium, absorbed by a half too,
+  are at 1.0000: it is calcium's number, not a way of handling a half.
+
+What the annex refused, each tested the same way:
+
+- Radium's bone-surface rates at the halves: with the factor, bone at 15
+  years +0.28 % where +0.08 is asked. From the round shares 0.222, 0.252
+  and 0.278: bone at 5 years another −0.21 % where nothing more is asked.
+  They stay as printed.
+- The bone turnover rates with more figures (per cent per year over 36,500):
+  bone after Ra-226 up to +0.15 % (10 years) where nothing more is asked.
+- The single factor for strontium, calcium and lead. Bone after Sr-90 would
+  move by −0.17 % at 5 years and +0.30 % at 10 where the annex asks −0.00
+  and −0.01; lead's tissues by +0.07 to +0.14 % at 10 years (kidneys −0.07)
+  where it asks −0.06 to +0.05. Their soft-tissue rates stay as printed.
+
+So which tables were computed from their rule and which typed in with three
+figures differs from element to element, and only the coefficients tell.
+
+Still open:
+
+- Lead at 15 years: every tissue 0.2 % high after Pb-202, Pb-205 and Pb-210
+  (e 1.0023, 1.0024, 1.0015), alike in kidneys, liver, muscle, marrow and
+  bone, so it is something that scales the whole systemic burden. Not the
+  single factor (half of it, kidneys the wrong way), not the bone rates.
+- Radium's bone at 15 years 0.1 % low; the ovaries of a 1-year-old after
+  Ra-224 0.5–0.6 % high; muscle and colon after Ra-228 0.3–0.45 % off at 5
+  years and for adults.
+- Thoron as a gas at 5 years, e 0.21 % high.
+- The 65 organ doses more than 0.5 % off: Rn-222 15, Pb-195m, Pb-197m and
+  Ag-115 10 each, Pb-200 5, Bi-214, Ra-224 and Te-131 4 each, Rn-220 2,
+  Ag-101 1.

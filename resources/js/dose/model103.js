@@ -195,9 +195,8 @@ export const OPTIONS103 = {
   ancestorTissues: 'apart', // a member's rest of the body leaves out the tissues that only the members it
                           // descends from name: they hold what is formed there, nothing of what the
                           // member's own model spreads from blood (dose103.js namedBefore, with what the
-                          // annex of Publication 158 and the OIR Data Viewer show: arsenic after 70Se and
-                          // 72Se, barium and caesium after 129La); 'shared' = they take their share of it
-                          // like any tissue the chain names
+                          // OIR Data Viewer shows: barium and caesium after 129La); 'shared' = they take
+                          // their share of it like any tissue the chain names
   sexShares: 'male',      // where an element has a model for each sex (radon), the female's shares of the
                           // rest of the body: 'male' = by the male's masses, as where one model serves
                           // both (220Rn in the annex of Publication 158); 'own' = by her own, which a

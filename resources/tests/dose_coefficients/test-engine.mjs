@@ -430,15 +430,17 @@ if (!SYSTEM || SYSTEM === '103') {
     ['103', { nuclide: 'Pb-197m', route: 'inhalation', form: 'F' }, 7300, 1.4204e-11, 'Kidneys'],
     ['103', { nuclide: 'Pb-197m', route: 'inhalation', form: 'F' }, 7300, 5.2299e-12, 'Spleen'],
     ['103', { nuclide: 'Pb-195m', route: 'injection' }, 7300, 1.7699e-11, 'Kidneys'],
+    // arsenic formed after selenium has selenium's pancreas, spleen, testes and ovaries in its model, out of
+    // Other 2, with an uptake from plasma of 0.004, 0.004, 0.0008 and 0.00028 d-1 (the selenium set; read off the
+    // annex of Publication 158: with none the pancreas after 70Se had 0.997 of this and the spleen after 72Se 0.996,
+    // the testes of a 10-year-old after 70Se swallowed 0.982; with a share of arsenic's Other by mass 1.04-1.07)
+    ['103', { nuclide: 'Se-70', route: 'injection' }, 7300, 4.4429e-11, 'Pancreas'],
+    ['103', { nuclide: 'Se-72', route: 'injection' }, 7300, 8.2062e-9, 'Spleen'],
+    ['103', { nuclide: 'Se-70', route: 'ingestion', form: 'diet' }, 3650, 8.1984e-11, 'Gonads'],
     // a member's rest of the body leaves out the tissues that only the members before it name
-    // (OPTIONS103.ancestorTissues): arsenic formed after selenium has no pancreas, spleen or gonads in its model, and
-    // what it spreads from plasma does not go there (the annex of Publication 158); nor does what barium and
-    // caesium spread after 129La go to lanthanum's liver, kidneys, marrow and gonads (the OIR Data Viewer: salivary
-    // glands 0.77 and testes 1.09 of these with them shared)
-    ['103', { nuclide: 'Se-70', route: 'injection' }, 7300, 4.4283e-11, 'Pancreas'],
-    ['103', { nuclide: 'Se-70', route: 'injection', rules: { ancestorTissues: 'shared' } }, 7300, 4.6425e-11, 'Pancreas'],
-    ['103', { nuclide: 'Se-72', route: 'injection' }, 7300, 8.1717e-9, 'Spleen'],
-    ['103', { nuclide: 'Se-72', route: 'injection', rules: { ancestorTissues: 'shared' } }, 7300, 8.4821e-9, 'Spleen'],
+    // (OPTIONS103.ancestorTissues): what barium and caesium spread after 129La does not go to lanthanum's liver,
+    // kidneys, marrow and gonads (the OIR Data Viewer: salivary glands 0.77 and testes 1.09 of these with them
+    // shared)
     ['103', { nuclide: 'La-129', route: 'injection' }, 7300, 1.5539e-12, 'Salivary glands'],
     ['103', { nuclide: 'La-129', route: 'injection', rules: { ancestorTissues: 'shared' } }, 7300, 1.2032e-12, 'Salivary glands'],
     ['103', { nuclide: 'La-129', route: 'injection' }, 7300, 1.4803e-12, 'Gonads'],
@@ -528,6 +530,19 @@ if (!SYSTEM || SYSTEM === '103') {
     // for adults, as they had of the annex's
     ['103', { nuclide: 'Sr-82', route: 'injection' }, 100, 3.2757e-8, 'Kidneys'],
     ['103', { nuclide: 'Sr-82', route: 'injection' }, 7300, 3.6206e-9, 'Kidneys'],
+    // rates before adulthood worked out from the adult's, not taken with the three printed figures (elements.json;
+    // the annex of Publication 158 asks it tissue by tissue): caesium's rates out of tissues (with the printed
+    // figures e of 137Cs had 1.0030 of this at 3 months, of 134Cs 1.0023 at 1 year), radium's and barium's from
+    // plasma to soft tissues and excretion (the liver after 226Ra 0.9975 of this at 10 years), barium's and lead's
+    // to the bone surfaces at the halves the tables round from (e of 133Ba 1.0020 of this at 5 years)
+    ['103', { nuclide: 'Cs-137', route: 'injection' }, 100, 2.1680e-8],
+    ['103', { nuclide: 'Cs-134', route: 'injection' }, 365, 1.8794e-8],
+    ['103', { nuclide: 'Ra-226', route: 'injection' }, 3650, 7.5729e-7, 'Liver'],
+    ['103', { nuclide: 'Ba-133', route: 'injection' }, 1825, 6.3509e-9],
+    ['103', { nuclide: 'Ba-140', route: 'injection' }, 5475, 2.1122e-8, 'Red marrow'],
+    ['103', { nuclide: 'Pb-210', route: 'injection' }, 3650, 1.0439e-5, 'Kidneys'],
+    // calcium absorbed by 0.499 at 1 to 15 years (with the stated 0.5, 1.0020 of this, as it was of the annex's)
+    ['103', { nuclide: 'Ca-45', route: 'ingestion', form: 'all' }, 1825, 1.3565e-9],
     ['60', { nuclide: 'Po-210', route: 'ingestion' }, 7300, 1.206e-6],
   ];
   for (const [sys, spec, age, want, tissue, sex = 'M'] of pins) {
@@ -555,6 +570,36 @@ if (!SYSTEM || SYSTEM === '103') {
   check('103 data: iodide goes to the urinary bladder at 11.84 d-1 at every age, barium to the adult\'s colon at 20.16 (Publication 137)',
     rate('I', 'Blood iodide', 'UB contents').every((x) => x === 11.84) && rate('Ba', 'Blood', 'RC contents')[5] === 20.16 && rate('Ba', 'Blood', 'RC contents')[0] === 6.72,
     `${rate('I', 'Blood iodide', 'UB contents')}; ${rate('Ba', 'Blood', 'RC contents')}`);
+  // Rates before adulthood that follow from the adult's by a stated rule are held as worked out, with seven figures,
+  // where the ICRP's coefficients show it was done so; every one rounds to the three figures its table prints.
+  const from = (el, a) => d103.elements[el].systemic.default.transfers.filter((x) => x[0] === a);
+  const tissues = d103.elements.Cs.systemic.default.transfers.filter((x) => x[0] !== 'Blood');
+  const g7 = (x) => Number(x.toPrecision(7));
+  check('103 data: caesium\'s rates out of tissues before adulthood are the adult\'s times 4, 3.5, 2.5, 2 and 1.3 (Publication 158 para 448), all 37; plasma to Other 1 keeps the outflow from plasma the same at every age (19.06, 19.06, 13.06, 8.56, 9.71, 9.71)',
+    tissues.length === 37 && tissues.every((t) => [4, 3.5, 2.5, 2, 1.3].every((f, a) => t[2][a] === g7(t[2][5] * f)))
+    && rate('Cs', 'Blood', 'Other 1').join() === '19.06,19.06,13.06,8.56,9.71,9.71'
+    && [0, 1, 2, 3, 4].every((a) => near(from('Cs', 'Blood').reduce((q, t) => q + t[2][a], 0), from('Cs', 'Blood').reduce((q, t) => q + t[2][5], 0), 1e-9)),
+    `${tissues.length} rows; kidneys to blood ${rate('Cs', 'Kidneys', 'Blood')}; plasma to Other 1 ${rate('Cs', 'Blood', 'Other 1')}`);
+  const share = [0.75, 0.45, 0.40, 0.56, 0.74], soft = (el) => from(el, 'Blood').filter((t) => !/bone surf/.test(t[1]));
+  check('103 data: radium\'s and barium\'s rates from plasma to soft tissues and excretion before adulthood are the adult\'s times (1 - B)/(1 - 0.25), B the bone\'s share 0.75, 0.45, 0.40, 0.56, 0.74; strontium, calcium and lead keep the printed figures',
+    soft('Ra').length === 7 && soft('Ba').length === 5 && ['Ra', 'Ba'].every((el) => soft(el).every((t) => share.every((b, a) => t[2][a] === g7(t[2][5] * (1 - b) / 0.75))))
+    && rate('Sr', 'Blood', 'UB contents').join() === '0.577,1.27,1.38,1.02,0.6,1.73' && rate('Ca', 'Blood', 'ST0').join() === '2.9,6.38,6.96,5.1,3.02,8.7' && rate('Pb', 'Blood', 'ST0').join() === '15.8,19.6,20.3,18.2,16,22.16',
+    `radium to ST0 ${rate('Ra', 'Blood', 'ST0')}; barium to ST0 ${rate('Ba', 'Blood', 'ST0')}`);
+  check('103 data: barium\'s rates to the bone surfaces at 5, 10 and 15 years are the halves its table and radium\'s round from (6.225, 9.875, 14.45 and 21.775, 29.325, 37.35: 0.40, 0.56, 0.74 of 70 d-1), lead\'s half of them; radium\'s as printed',
+    rate('Ba', 'Blood', 'Trab bone surf').join() === '10.5,6.3,6.225,9.875,14.45,9.72' && rate('Ba', 'Blood', 'Cort bone surf').join() === '42,25.2,21.775,29.325,37.35,7.78'
+    && rate('Pb', 'Blood', 'Trab bone surf').join() === '5.25,3.15,3.1125,4.9375,7.225,4.86' && rate('Pb', 'Blood', 'Cort bone surf').join() === '21,12.6,10.8875,14.6625,18.675,3.89'
+    && rate('Ra', 'Blood', 'Trab bone surf').join() === '10.5,6.3,6.23,9.87,14.4,9.72' && rate('Ra', 'Blood', 'Cort bone surf').join() === '42,25.2,21.8,29.3,37.4,7.78',
+    `barium ${rate('Ba', 'Blood', 'Trab bone surf')} | ${rate('Ba', 'Blood', 'Cort bone surf')}; lead ${rate('Pb', 'Blood', 'Trab bone surf')} | ${rate('Pb', 'Blood', 'Cort bone surf')}`);
+  // Calcium's absorbed fraction at 1 to 15 years: Publication 158 and the head of its annex state 0.5, the annex's
+  // numbers are those of 0.499 (swallowed 1.0020 of them with 0.5 at each of the four ages, injected 1.0000).
+  await d103.prepare('Ca-41');
+  const caAges = [100, 365, 1825, 3650, 5475, 9125], ca = d103.elements.Ca;
+  const caIn = coefficients103(d103, { nuclide: 'Ca-41', route: 'ingestion', form: 'all', cutoff: 1e-4 }, caAges), caInj = coefficients103(d103, { nuclide: 'Ca-41', route: 'injection', cutoff: 1e-4 }, caAges);
+  const caShare = caAges.map((_, a) => caIn[a].H.M['Bone surface'] / caInj[a].H.M['Bone surface']);
+  check('103 data: calcium is absorbed by 0.499 at 1 to 15 years (stated: 0.5), swallowed, cleared from the airways or secreted: the bone surface after 41Ca swallowed has 0.600, 0.499, 0.499, 0.499, 0.499 and 0.400 of an injection\'s',
+    [ca.ingestion[0].fA, ca.fAinhaled, ca.fAmax].every((f) => f.join() === '0.6,0.499,0.499,0.499,0.499,0.4') && ca.ingestion.length === 1
+    && [0.6, 0.499, 0.499, 0.499, 0.499, 0.4].every((f, a) => near(caShare[a], f, 5e-4)),
+    caShare.map((x) => x.toFixed(4)).join(' '));
 }
 
 /* ---- ICRP 103 chains: the members that count, and the models progeny follow --------------- */
@@ -746,9 +791,10 @@ if (!SYSTEM || SYSTEM === '103') {
     && ['Red marrow', 'Skin', 'Testes', 'Ovaries'].every((c) => c in hg.compartments) && !Object.values(hg.compartments).some((r) => r === 'Brain' || r === 'Spleen' || /bone/.test(r)),
     Object.keys(hg.compartments).join(' '));
   const as = await modelOf('Se-70', 'As-70');
-  check('arsenic formed after selenium: its own model, without compartments for selenium\'s pancreas, spleen or gonads; formed there it leaves at 0.08 d-1',
-    !['Pancreas', 'Spleen', 'Testes', 'Ovaries'].some((c) => c in as.compartments) && ['Pancreas', 'Spleen', 'Testes', 'Ovaries'].every((c) => d103.progeny.sets.selenium.As.unid.byRegion[c] === 0.08),
-    Object.keys(as.compartments).join(' '));
+  check('arsenic formed after selenium: selenium\'s pancreas, spleen, testes and ovaries added to its model out of Other 2, with 0.004, 0.004, 0.0008 and 0.00028 d-1 from plasma and 0.08 d-1 back; 40 d-1 leave plasma as before',
+    [['Pancreas', 0.004], ['Spleen', 0.004], ['Testes', 0.0008], ['Ovaries', 0.00028]].every(([c, r]) => as.compartments[c] === c && near(rate(as, 'Plasma', c).at(-1), r, 1e-12) && near(rate(as, c, 'Plasma').at(-1), 0.08, 1e-12))
+    && near(rate(as, 'Plasma', 'Other 2').at(-1), 1.52 - 0.00908, 1e-12) && near(as.transfers.filter(([x]) => x === 'Plasma').reduce((q, t) => q + t[2].at(-1), 0), 40, 1e-12),
+    `${Object.keys(as.compartments).join(' ')}; plasma to Other 2 ${rate(as, 'Plasma', 'Other 2').at(-1)}`);
   const ba137 = await modelOf('Cs-137', 'Ba-137m');
   check('137mBa formed from caesium: a pool in adipose tissue with 5 % of the flow to soft tissue (9.2 d-1) and 7 % to other soft tissue, 184 d-1 in all',
     ba137.compartments['Adipose ECF'] === 'Adipose' && near(rate(ba137, 'Blood', 'Adipose ECF').at(-1), 9.2, 1e-9) && near(rate(ba137, 'Blood', 'Other ECF').at(-1), 12.88, 1e-9)
