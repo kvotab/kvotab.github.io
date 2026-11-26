@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.15
+
+* From the site: a distribution saved with the state of its random
+  generator is drawn as the Python code that saved it draws it — numpy's
+  random numbers, in its Latin hypercube order, through the same quantile
+  functions — so the histogram shows the simulations' samples, iteration by
+  iteration, as *Samples (as simulated)*. A distribution without a state is
+  drawn at random as before.
+
 ## 0.1.14
 
 * From the site: in the dark theme the Total line is drawn light, as is
