@@ -62,7 +62,7 @@ any machine. Serve the repository and start Chrome first, by default on ports
 with `lsof -nP -iTCP:<port> -sTCP:LISTEN` first, because other sessions use
 ports too:
 
-    python3 -m http.server 8848 --bind 127.0.0.1
+    python3 resources/tests/serve.py 8848
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
       --headless=new --remote-debugging-port=9348 --no-first-run \
       --user-data-dir=/tmp/fctest --disable-gpu about:blank

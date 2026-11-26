@@ -17,7 +17,7 @@ is kept for the next visit.
 Start a server and a browser on ports of your choice (check them first with
 lsof -nP -iTCP:<port> -sTCP:LISTEN; other sessions may use 8765 and 9222):
 
-    python3 -m http.server 8791 --bind 127.0.0.1
+    python3 resources/tests/serve.py 8791
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \\
       --headless=new --remote-debugging-port=9241 --no-first-run \\
       --user-data-dir=/tmp/dctest --disable-gpu about:blank

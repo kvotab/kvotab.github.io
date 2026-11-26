@@ -34,7 +34,7 @@ and real directory entries. Checked:
 Serve the repository root and start headless Chrome, by default on ports 8765
 and 9222 (QC_HTTP_PORT and QC_CDP_PORT choose others):
 
-    python3 -m http.server 8765
+    python3 resources/tests/serve.py 8765
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new \\
         --remote-debugging-port=9222 --user-data-dir=<fresh dir> about:blank
     python3 resources/tests/skb_qa_summary/test-ui.py

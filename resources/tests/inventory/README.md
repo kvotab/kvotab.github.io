@@ -5,7 +5,7 @@ only Node; `test-ui.py` is the page and needs a server and a headless Chrome
 (other ports than 8765 and 9222 with `INV_HTTP_PORT` and `INV_CDP_PORT`).
 
     node resources/tests/inventory/test-model.mjs
-    python3 -m http.server 8765
+    python3 resources/tests/serve.py 8765
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new \
         --remote-debugging-port=9222 --user-data-dir=<fresh dir> about:blank
     python3 resources/tests/inventory/test-ui.py

@@ -7,7 +7,7 @@ what the page makes of them: parameters and their flags, the filters, the
 Files view, the calculation cases and the input-set exports traced back to
 the source rows.
 
-    python3 -m http.server 8765          # from the repository root
+    python3 resources/tests/serve.py 8765  # from the repository root
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
       --headless=new --remote-debugging-port=9222 --no-first-run \
       --user-data-dir=<a fresh directory> about:blank

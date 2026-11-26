@@ -133,7 +133,7 @@ operand stack (there is no PostScript interpreter to draw them with). Start a se
 repository root and Chrome on the ports in `PYLAB_HTTP_PORT` and
 `PYLAB_CDP_PORT` (defaults 8811 and 9311), then run it:
 
-    python3 -m http.server 8811 --bind 127.0.0.1
+    python3 resources/tests/serve.py 8811
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
       --headless=new --remote-debugging-port=9311 --no-first-run \
       --user-data-dir=/tmp/pylab-chrome --disable-gpu \

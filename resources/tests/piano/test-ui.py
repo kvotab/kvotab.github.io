@@ -15,7 +15,7 @@ ports 8851 and 9351 (PN_HTTP_PORT and PN_CDP_PORT for others). Check the
 ports first with lsof -nP -iTCP:<port> -sTCP:LISTEN, other sessions use
 ports too:
 
-    python3 -m http.server 8851 --bind 127.0.0.1
+    python3 resources/tests/serve.py 8851
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \\
       --headless=new --remote-debugging-port=9351 --no-first-run \\
       --user-data-dir=/tmp/pntest --disable-gpu \\

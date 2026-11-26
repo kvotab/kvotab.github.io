@@ -13,7 +13,7 @@ how the bug this test was written for went unnoticed.
 
 Start the server and the browser first (as in ../rb/README.md):
 
-    python3 -m http.server 8765 --bind 127.0.0.1
+    python3 resources/tests/serve.py 8765
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \\
       --headless=new --remote-debugging-port=9222 --no-first-run \\
       --user-data-dir=/tmp/factest --disable-gpu about:blank

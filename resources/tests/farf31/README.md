@@ -11,7 +11,7 @@ and start Chrome first (check the ports with `lsof -nP -iTCP:<port> -sTCP:LISTEN
 other sessions use them too, and a server that fails to start looks like one
 that works):
 
-    python3 -m http.server 8794 --bind 127.0.0.1
+    python3 resources/tests/serve.py 8794
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
       --headless=new --remote-debugging-port=9294 --no-first-run \
       --user-data-dir=/tmp/f31test --disable-gpu about:blank

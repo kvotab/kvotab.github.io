@@ -52,7 +52,7 @@ Check the ports first; other sessions use 8765 and 9222 and others:
 
 ```sh
 lsof -nP -iTCP:8851 -sTCP:LISTEN; lsof -nP -iTCP:9351 -sTCP:LISTEN
-python3 -m http.server 8851 --bind 127.0.0.1 &          # from the repository root
+python3 resources/tests/serve.py 8851 &                 # from the repository root
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new \
     --remote-debugging-port=9351 --no-first-run --user-data-dir=/tmp/dstest --disable-gpu about:blank &
 DS_HTTP_PORT=8851 DS_CDP_PORT=9351 python3 resources/tests/distributions/test-ui.py   # 133 checks, about two minutes

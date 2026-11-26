@@ -50,7 +50,7 @@ are 8849 and 9349 unless `GT_HTTP_PORT` and `GT_CDP_PORT` say otherwise.
 Check them with `lsof -nP -iTCP:<port> -sTCP:LISTEN` first, because other
 sessions use ports too:
 
-    python3 -m http.server 8849 --bind 127.0.0.1
+    python3 resources/tests/serve.py 8849
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
       --headless=new --remote-debugging-port=9349 --no-first-run \
       --user-data-dir=/tmp/gttest --disable-gpu \

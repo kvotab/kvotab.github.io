@@ -74,7 +74,7 @@ installs a release.
 ## The page in a browser
 
 Start the server and the browser as in `../rb/README.md`
-(`python3 -m http.server 8765 --bind 127.0.0.1` in the repository root, and
+(`python3 resources/tests/serve.py 8765` in the repository root, and
 Chrome with `--remote-debugging-port=9222`), then
 
     python3 resources/tests/ensdf/test-ui.py

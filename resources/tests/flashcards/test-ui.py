@@ -9,7 +9,7 @@ Start a server on the repository root and headless Chrome, by default on
 ports 8848 and 9348 (FC_HTTP_PORT and FC_CDP_PORT for others; check them first
 with lsof -nP -iTCP:<port> -sTCP:LISTEN, other sessions use ports too):
 
-    python3 -m http.server 8848 --bind 127.0.0.1
+    python3 resources/tests/serve.py 8848
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \\
       --headless=new --remote-debugging-port=9348 --no-first-run \\
       --user-data-dir=/tmp/fctest --disable-gpu about:blank

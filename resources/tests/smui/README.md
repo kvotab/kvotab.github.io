@@ -93,7 +93,7 @@ needs the `websockets` package). Start a server on the repository root and
 Chrome, as `../rb/README.md` shows, on the ports in `SMUI_HTTP_PORT` and
 `SMUI_CDP_PORT` (defaults 8791 and 9291):
 
-    python3 -m http.server 8791 --bind 127.0.0.1
+    python3 resources/tests/serve.py 8791
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
       --headless=new --remote-debugging-port=9291 --no-first-run \
       --user-data-dir=/tmp/smui-chrome --disable-gpu about:blank

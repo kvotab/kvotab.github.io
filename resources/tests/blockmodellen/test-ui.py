@@ -14,7 +14,7 @@ ports 8863 and 9363 (BM_HTTP_PORT and BM_CDP_PORT for others). Check the
 ports first with lsof -nP -iTCP:<port> -sTCP:LISTEN, other sessions use
 ports too:
 
-    python3 -m http.server 8863 --bind 127.0.0.1
+    python3 resources/tests/serve.py 8863
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \\
       --headless=new --remote-debugging-port=9363 --no-first-run \\
       --user-data-dir=/tmp/bmtest --disable-gpu --mute-audio about:blank

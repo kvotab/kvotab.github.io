@@ -6,7 +6,7 @@ still does what it did. Serve the repository and start Chrome first, on ports
 (check them with `lsof -nP -iTCP:<port> -sTCP:LISTEN`: other sessions use
 ports too, and a server that fails to start looks like one that works):
 
-    python3 -m http.server 8813 --bind 127.0.0.1
+    python3 resources/tests/serve.py 8813
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
       --headless=new --remote-debugging-port=9313 --no-first-run \
       --user-data-dir=/tmp/logntest --disable-gpu about:blank

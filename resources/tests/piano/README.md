@@ -8,7 +8,7 @@ Four suites. The first three run in Node and need nothing else:
 
 The fourth drives the page in headless Chrome:
 
-    python3 -m http.server 8851 --bind 127.0.0.1
+    python3 resources/tests/serve.py 8851
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
       --headless=new --remote-debugging-port=9351 --no-first-run \
       --user-data-dir=/tmp/pntest --disable-gpu \

@@ -25,7 +25,7 @@ unless ST_HTTP_PORT and ST_CDP_PORT say otherwise; check them with
 `lsof -nP -iTCP:<port> -sTCP:LISTEN` first, because other sessions use ports
 too:
 
-    python3 -m http.server 8851 --bind 127.0.0.1
+    python3 resources/tests/serve.py 8851
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \\
       --headless=new --remote-debugging-port=9351 --no-first-run \\
       --user-data-dir=/tmp/sttest --disable-gpu about:blank

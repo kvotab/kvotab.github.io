@@ -6,7 +6,11 @@ refactor can be shown not to have moved it.
 
 ## Running
 
-    python3 -m http.server 8765 --bind 127.0.0.1
+`resources/tests/serve.py` is `python3 -m http.server` with a longer listen queue:
+with the standard one's queue of five, a page's burst of module requests loses
+some and a test fails at random. It serves the repository on 127.0.0.1.
+
+    python3 resources/tests/serve.py 8765
     rm -rf /tmp/kvottest        # a fresh profile — see Determinism below
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
       --headless=new --remote-debugging-port=9222 --no-first-run \
@@ -112,7 +116,7 @@ Clicks the theme toggle and the office-map button on every page and checks
 that the theme attribute, the page background, the button icon and the map's
 visibility actually change.
 
-    python3 -m http.server 8765          # from the repository root
+    python3 resources/tests/serve.py 8765  # from the repository root
     "$CHROME" --headless=new --remote-debugging-port=9222 --user-data-dir=/tmp/p
     python3 resources/tests/site/test-chrome-buttons.py
 
@@ -133,7 +137,7 @@ right answer for that text, and any difference is a defect in the PDF
 reconstruction.
 
     python3 resources/tests/pdf/build-fixture-pair.py resources/tests/pdf
-    python3 -m http.server 8765          # from the repository root
+    python3 resources/tests/serve.py 8765  # from the repository root
     "$CHROME" --headless=new --remote-debugging-port=9222 --user-data-dir=/tmp/p
     python3 resources/tests/site/test-chrome-pdf.py
 
@@ -237,7 +241,7 @@ worker actually receives the parsing rather than pdf.js quietly falling back.
 
 logn.html holding several distributions at once.
 
-    python3 -m http.server 8765 --bind 127.0.0.1
+    python3 resources/tests/serve.py 8765
     "$CHROME" --headless=new --remote-debugging-port=9222 --user-data-dir=/tmp/p
     python3 resources/tests/site/test-chrome-distributions.py
 
@@ -304,7 +308,7 @@ fields grey out — once the band is off.
 
 Which selections put rdc.html's element list away on a phone.
 
-    python3 -m http.server 8765 --bind 127.0.0.1
+    python3 resources/tests/serve.py 8765
     "$CHROME" --headless=new --remote-debugging-port=9222 --user-data-dir=/tmp/p
     python3 resources/tests/site/test-chrome-rdc-mobile.py
 
@@ -352,7 +356,7 @@ beside the graph and nothing should ever move it.
 
 Who decides whether rdc.html's chart window is up.
 
-    python3 -m http.server 8765 --bind 127.0.0.1
+    python3 resources/tests/serve.py 8765
     "$CHROME" --headless=new --remote-debugging-port=9222 --user-data-dir=/tmp/p
     python3 resources/tests/site/test-chrome-rdc-chart.py
 
@@ -582,7 +586,7 @@ raised anywhere.
 
 Whether the SL boards stop calling the network when nobody is looking.
 
-    python3 -m http.server 8765 --bind 127.0.0.1
+    python3 resources/tests/serve.py 8765
     "$CHROME" --headless=new --remote-debugging-port=9222 --user-data-dir=/tmp/p
     python3 resources/tests/site/test-chrome-sl-idle.py
 
@@ -1049,7 +1053,7 @@ passed and the live clock still jittered. New CSS, old JS.
 
 Whether anything on the SL boards shifts sideways as its numbers tick.
 
-    python3 -m http.server 8765 --bind 127.0.0.1
+    python3 resources/tests/serve.py 8765
     "$CHROME" --headless=new --remote-debugging-port=9222 --user-data-dir=/tmp/p
     python3 resources/tests/site/test-chrome-sl-tabular.py    # expect 36/36
 
@@ -1084,7 +1088,7 @@ still would pass everything else.
 Whether each departure on the SL boards says when the train will be at the far
 end: Solna on uppsala.html, Uppsala C on solna.html.
 
-    python3 -m http.server 8765 --bind 127.0.0.1
+    python3 resources/tests/serve.py 8765
     "$CHROME" --headless=new --remote-debugging-port=9222 --user-data-dir=/tmp/p
     python3 resources/tests/site/test-chrome-sl-arrivals.py    # expect 30/30
 
@@ -1138,7 +1142,7 @@ nothing off the screen).
 
 Which theme a page starts in, given the system setting and what is stored.
 
-    python3 -m http.server 8765 --bind 127.0.0.1
+    python3 resources/tests/serve.py 8765
     "$CHROME" --headless=new --remote-debugging-port=9222 --user-data-dir=/tmp/p
     python3 resources/tests/site/test-chrome-theme-default.py
 
@@ -1172,7 +1176,7 @@ not the other looks like it works until the page finishes loading.
 
 Both maps on the site follow the light/dark switch.
 
-    python3 -m http.server 8765 --bind 127.0.0.1
+    python3 resources/tests/serve.py 8765
     "$CHROME" --headless=new --remote-debugging-port=9222 --user-data-dir=/tmp/p
     python3 resources/tests/site/test-chrome-map-theme.py    # expect 12/12
 

@@ -8,7 +8,7 @@ it currently is, so a refactor can be shown not to have moved it.
 
 Serve the site and start Chrome with remote debugging:
 
-    python3 -m http.server 8765 --bind 127.0.0.1
+    python3 resources/tests/serve.py 8765
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
       --headless=new --remote-debugging-port=9222 --no-first-run \
       --user-data-dir=/tmp/rbtest --disable-gpu about:blank

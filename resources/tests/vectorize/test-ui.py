@@ -27,7 +27,7 @@ Serve the repository and start Chrome first, muted. The ports are 8861 and
 `lsof -nP -iTCP:<port> -sTCP:LISTEN` first, because other sessions use ports
 too:
 
-    python3 -m http.server 8861 --bind 127.0.0.1
+    python3 resources/tests/serve.py 8861
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \\
       --headless=new --remote-debugging-port=9361 --no-first-run \\
       --user-data-dir=/tmp/vztest --mute-audio about:blank

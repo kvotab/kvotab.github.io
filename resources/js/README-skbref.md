@@ -59,7 +59,7 @@ module with no template literal in it, so it alone is not indented.
 
 ## Checking a change
 
-    python3 -m http.server 8765                     # from the repository root
+    python3 resources/tests/serve.py 8765           # from the repository root
     "$CHROME" --headless=new --remote-debugging-port=9222 --user-data-dir=/tmp/p
     python3 resources/tests/site/test-chrome-pdf.py
 

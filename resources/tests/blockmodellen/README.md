@@ -14,7 +14,7 @@ is asked to draw are the model's, and no answer stands in the text to be copied.
 
 The third drives the page in headless Chrome, with real clicks and key presses:
 
-    python3 -m http.server 8863 --bind 127.0.0.1
+    python3 resources/tests/serve.py 8863
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
       --headless=new --remote-debugging-port=9363 --no-first-run \
       --user-data-dir=/tmp/bmtest --disable-gpu --mute-audio about:blank
