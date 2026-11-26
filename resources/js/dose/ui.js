@@ -1851,7 +1851,7 @@ function renderChain() {
   const dropped = first.dropped || [], minor = first.minor || [];
   $('dcChainNote').textContent = [
     dropped.length ? `Left out by the cut-off: ${dropped.join(', ')}.` : '',
-    minor.length ? `Not followed, as in the ICRP’s calculations (what comes by them, their own energy and that of all after them, is under a thousandth of the chain’s over 50 years): ${minor.join(', ')}.` : '',
+    minor.length ? `Not followed, as in the ICRP’s calculations (what comes by them, their own energy and that of all after them, is under a thousandth of the chain’s over 50 years and over its first year): ${minor.join(', ')}.` : '',
   ].filter(Boolean).join(' ') || 'The whole chain is followed.';
   // How decay data made from ENSDF were read for these members, where it took a rule of the page's.
   const decayNotes = members.filter((m) => m.decayNotes?.length);

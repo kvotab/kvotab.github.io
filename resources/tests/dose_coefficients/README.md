@@ -1881,3 +1881,32 @@ and 199Pb 0.11 to 0.14 % high, the other way; 201Pb with its thallium
 absorbed fractions for all of them. Bladder wall and prostate are low alike,
 so what is missing lies behind them, in the contents of the rectosigmoid.
 Nothing a rule could be read from; left as it is.
+
+## 228Pa: a chain is judged over its first year too (2026-11-26, last)
+
+`OPTIONS103.minorEarly` (365.25 days; chain.js `waysByEnergy`, which the
+chain's `early` option passes on): a way is followed also where what comes
+by it is a thousandth of what the chain emits over its first year, by
+either measure. 216At after 228Pa, on a side branch (2 % of 228Pa makes
+224Ac, 9 % of that 220Fr), brings 0.0009 of the chain's energy over 50
+years and 0.003 over the first year, when little of the 228Th made beside
+it has decayed. The OIR Data Viewer has it: e 0.9981 -> 1.0000 of the
+viewer's, organ doses from up to 0.51 % low (rms 0.37 %) to within 0.09 %
+(rms 0.046 %).
+
+Nothing else moves: no other nuclide of the viewer, nothing in the annex
+(it has no protactinium), no printed coefficient. 122 of 1,252 chains still
+lose a member; 228Pa's are 220Ra and 216Rn. The Decay chain tab's sentence
+on the members not followed says "over 50 years and over its first year"
+(ui.js, stamp 20261126a).
+
+Which first stretch: judged over a first stretch of anything from half an
+hour to 50 years, six of the 1,252 chains change (224Ac, 223Fr, 223Rn,
+253Cf, 228Pa, 230Pa), and bisected, 228Pa's alone changes from 14.3 days to
+6.0 years. Under 14.3 days 230Pa gains 226Ac,
+which the viewer has not (rms 0.012 -> 0.075 % with a day); under 1.6 days
+224Ac gains 220Ra and 216Rn (0.036 -> 0.117 % with an hour). A year was
+taken, inside that. It rests on one nuclide: it is the simplest rule that
+fits, not one a publication states. 233Np (229Pa on a branch of 0.001 %)
+still wants something between this rule and every way followed (its bone
+surface -0.44 % with the rule, +0.19 % with every way).

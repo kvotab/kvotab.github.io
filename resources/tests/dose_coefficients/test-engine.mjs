@@ -444,6 +444,10 @@ if (!SYSTEM || SYSTEM === '103') {
     ['103', { nuclide: 'Pb-195m', route: 'injection' }, 7300, 1.7656e-11, 'Kidneys'],
     ['103', { nuclide: 'Pb-195m', route: 'inhalation', form: 'F' }, 100, 3.3292e-11, 'Kidneys'],
     ['103', { nuclide: 'Pb-195m', route: 'inhalation', form: 'F', rules: { minorMembers: 'keep' } }, 100, 3.3523e-11, 'Kidneys'],
+    // and 216At after 228Pa is a member by the chain's first year (OPTIONS103.minorEarly): the male's bladder wall is
+    // then within 0.1 % of the OIR Data Viewer's, by 50 years alone 0.45 % lower
+    ['103', { nuclide: 'Pa-228', route: 'injection' }, 7300, 1.0616e-8, 'Bladder'],
+    ['103', { nuclide: 'Pa-228', route: 'injection', rules: { minorEarly: 0 } }, 7300, 1.0568e-8, 'Bladder'],
     // arsenic formed after selenium has selenium's pancreas, spleen, testes and ovaries in its model, out of
     // Other 2, with an uptake from plasma of 0.004, 0.004, 0.0008 and 0.00028 d-1 (the selenium set; read off the
     // annex of Publication 158: with none the pancreas after 70Se had 0.997 of this and the spleen after 72Se 0.996,
@@ -797,7 +801,7 @@ if (!SYSTEM || SYSTEM === '103') {
     // The chain followed way by way: a way is followed if what comes by it is a thousandth of the chain's energy.
     const chainOf = (n, cutoff = 1e-4) => buildChain(d103.index, n, chainOptions103({ nuclide: n, cutoff }));
     const namesOf = (n, cutoff) => chainOf(n, cutoff).members.map((m) => m.name).join();
-    for (const n of ['Pb-195m', 'Ra-223', 'Ag-104m', 'U-234', 'U-235', 'Pa-228']) await d103.prepare(n);
+    for (const n of ['Pb-195m', 'Ra-223', 'Ag-104m', 'U-234', 'U-235', 'Pa-228', 'Pa-230', 'Ac-224']) await d103.prepare(n);
     const pb195 = chainOf('Pb-195m'), all195 = chainOf('Pb-195m', 0);
     check('a member no followed way reaches is no member of the chain: 195mHg after 195mPb, 211Po after 223Ra, 104Ag after 104mAg, 230Th after 234U, and 218At, 218Rn and 210Tl after 226Ra; with the cut-off at none they stay',
       namesOf('Pb-195m') === 'Pb-195m,Tl-195,Hg-195,Au-195' && pb195.minor.join() === 'Hg-195m' && pb195.dropped.length === 0
@@ -805,12 +809,20 @@ if (!SYSTEM || SYSTEM === '103') {
       && chainOf('Ra-223').minor.join() === 'Po-211' && chainOf('Ag-104m').minor.join() === 'Ag-104' && namesOf('U-234') === 'U-234'
       && chainOf('Ra-226').minor.join() === 'At-218,Rn-218,Tl-210' && chainOf('Ra-226', 0).minor.length === 0,
       `${namesOf('Pb-195m')} | not followed ${pb195.minor} | 223Ra ${chainOf('Ra-223').minor} | 104mAg ${chainOf('Ag-104m').minor} | 234U ${namesOf('U-234')} | 226Ra ${chainOf('Ra-226').minor}`);
-    check('a chain ends where too little is left, though members before it emit less: 235U down to 223Ra, without the 219Rn, 215Po, 211Pb and 211Bi after it; a lesser way stays cut and its member in (209Tl after 213Bi), ways that bring more are followed (131I after 131mTe, 95mNb after 95Zr); 228Pa keeps 220Fr and loses 216At',
+    check('a chain ends where too little is left, though members before it emit less: 235U down to 223Ra, without the 219Rn, 215Po, 211Pb and 211Bi after it; a lesser way stays cut and its member in (209Tl after 213Bi), ways that bring more are followed (131I after 131mTe, 95mNb after 95Zr); 228Pa keeps 220Fr',
       namesOf('U-235') === 'U-235,Th-231,Pa-231,Ac-227,Th-227,Ra-223' && ['Rn-219', 'Po-215', 'Pb-211', 'Bi-211'].every((n) => chainOf('U-235').minor.includes(n))
       && namesOf('Bi-213') === 'Bi-213,Po-213,Tl-209,Pb-209' && JSON.stringify(chainOf('Bi-213').cut) === '[["Tl-209","Pb-209"]]'
       && chainOf('Te-131m').members.some((m) => m.name === 'I-131') && namesOf('Zr-95') === 'Zr-95,Nb-95m,Nb-95' && chainOf('Zr-95').cut.length === 0
-      && chainOf('Pa-228').members.some((m) => m.name === 'Fr-220') && chainOf('Pa-228').minor.includes('At-216'),
+      && chainOf('Pa-228').members.some((m) => m.name === 'Fr-220'),
       `235U ${namesOf('U-235')} | 213Bi ${namesOf('Bi-213')} cut ${JSON.stringify(chainOf('Bi-213').cut)} | 228Pa not followed ${chainOf('Pa-228').minor}`);
+    // A way also counts by what it brings over the chain's first year: from 14 days to 6 years only 228Pa's chain changes.
+    const earlyOf = (n, days) => buildChain(d103.index, n, chainOptions103({ nuclide: n, cutoff: 1e-4 }, { ...OPTIONS103, minorEarly: days }));
+    check('a way is followed also where it brings a thousandth of the chain\'s energy over its first year: 216At after 228Pa (0.0009 over 50 years, 0.003 over the first year), and 228Pa\'s alone of the chains changes; over a day 230Pa would gain 226Ac and over an hour 224Ac its 220Ra and 216Rn',
+      OPTIONS103.minorEarly === 365.25 && chainOf('Pa-228').members.some((m) => m.name === 'At-216') && chainOf('Pa-228').minor.join() === 'Ra-220,Rn-216'
+      && earlyOf('Pa-228', 0).minor.includes('At-216') && earlyOf('Pa-228', 14.5).minor.join() === 'Ra-220,Rn-216' && earlyOf('Pa-228', 6.1 * 365.25).minor.includes('At-216')
+      && chainOf('Pa-230').minor.includes('Ac-226') && !earlyOf('Pa-230', 1).minor.includes('Ac-226') && earlyOf('Pa-230', 14.5).minor.includes('Ac-226')
+      && chainOf('Ac-224').minor.join() === 'Ra-220,Rn-216' && earlyOf('Ac-224', 0.04).minor.length === 0,
+      `228Pa ${chainOf('Pa-228').minor} (none: ${earlyOf('Pa-228', 0).minor}) | 230Pa ${chainOf('Pa-230').minor.includes('Ac-226')} | 224Ac ${chainOf('Ac-224').minor} (an hour: ${earlyOf('Ac-224', 0.04).minor})`);
     await d103.prepare('Te-131m'); await d103.prepare('Zr-95'); await d103.prepare('Ce-144');
     check('the lesser way to a chain member is cut where it brings less than a thousandth of the energy: 209Pb by way of 209Tl after 213Bi, 210Pb by way of 210Tl and 214Bi by way of 218At after 226Ra; 131I by way of 131Te, 95Nb by way of 95mNb and 144Pr by way of 144mPr are followed',
       cutOf('Bi-213') === '[["Tl-209","Pb-209"]]' && cutOf('Ra-226') === '[["At-218","Bi-214"],["Rn-218","Po-214"],["Tl-210","Pb-210"]]' && cutOf('Te-131m') === '[]' && cutOf('Zr-95') === '[]' && cutOf('Ce-144') === '[]',

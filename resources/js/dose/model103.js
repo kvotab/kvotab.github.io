@@ -252,9 +252,19 @@ export const OPTIONS103 = {
                           // the annex 0.099 -> 0.031 %, 0.118 -> 0.053, 0.034 -> 0.013, 0.014 -> 0.008).
                           // And the OIR Data Viewer: 235U, which ends at 223Ra, 1.0008 -> 1.0000 in e and
                           // every organ dose to its four figures, as are 243Am, 234U, 238U, 141Pm and six
-                          // more; of 34 nuclides that move, 28 towards it. Against it stands 228Pa, whose
-                          // 216At (0.0009 with what it leaves) the viewer has: rms 0.17 -> 0.37 %.
-                          // 122 of 1,252 chains lose a member
+                          // more; of 34 nuclides that move, 28 towards it. 216At after 228Pa is followed
+                          // by its first year (minorEarly). 122 of 1,252 chains lose a member
+  minorEarly: 365.25,     // days: a way is followed also where what comes by it is a thousandth of what the
+                          // chain emits over this first stretch after the intake (chain.js waysByEnergy);
+                          // 0 = over 50 years alone. 216At after 228Pa, on a side branch (2 % of 228Pa makes
+                          // 224Ac, 9 % of that 220Fr), brings 0.0009 of the energy over 50 years and 0.003
+                          // over the first year, when little of the 228Th made beside it has decayed. The
+                          // OIR Data Viewer has it: without it the organ doses after 228Pa were up to 0.5 %
+                          // below the viewer's (rms 0.37 %) and e 0.9981 of its, with it within 0.1 % (rms
+                          // 0.046 %) and e 1.0000. A first stretch from 14 days to 6 years gives the same
+                          // chains of all 1,252, 228Pa's alone changing; a shorter one brings in members the
+                          // viewer has not (226Ac after 230Pa with a day: rms 0.012 -> 0.075 %; 220Ra and
+                          // 216Rn after 224Ac with an hour: 0.036 -> 0.117 %)
   sidePaths: 'cut',       // a member made along two ways: 'cut' = the lesser way is not followed where it
                           // brings less than a thousandth of the chain's energy over 50 years, with the
                           // alpha energy weighted by 20 and without (chain.js lesserWays); 'follow' = every
@@ -414,7 +424,7 @@ export function chainOptions103(spec, rules = OPTIONS103) {
   const cutoff = spec.cutoff ?? 1e-4;
   return {
     cutoff, last: spec.last, horizonDays: 36525, sidePaths: rules.sidePaths === 'cut' ? 1e-3 : 0,
-    minor: rules.minorMembers === 'drop' && cutoff !== 0 && !spec.last ? 'drop' : null,
+    minor: rules.minorMembers === 'drop' && cutoff !== 0 && !spec.last ? 'drop' : null, early: rules.minorEarly || 0,
   };
 }
 
