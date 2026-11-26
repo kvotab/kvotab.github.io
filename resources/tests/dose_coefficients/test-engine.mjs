@@ -656,10 +656,10 @@ if (!SYSTEM || SYSTEM === '103') {
     && [0, 1, 2, 3, 4].every((a) => near(from('Cs', 'Blood').reduce((q, t) => q + t[2][a], 0), from('Cs', 'Blood').reduce((q, t) => q + t[2][5], 0), 1e-9)),
     `${tissues.length} rows; kidneys to blood ${rate('Cs', 'Kidneys', 'Blood')}; plasma to Other 1 ${rate('Cs', 'Blood', 'Other 1')}`);
   const share = [0.75, 0.45, 0.40, 0.56, 0.74], soft = (el) => from(el, 'Blood').filter((t) => !/bone surf/.test(t[1]));
-  check('103 data: radium\'s and barium\'s rates from plasma to soft tissues and excretion before adulthood are the adult\'s times (1 - B)/(1 - 0.25), B the bone\'s share 0.75, 0.45, 0.40, 0.56, 0.74; strontium, calcium and lead keep the printed figures',
-    soft('Ra').length === 7 && soft('Ba').length === 5 && ['Ra', 'Ba'].every((el) => soft(el).every((t) => share.every((b, a) => t[2][a] === g7(t[2][5] * (1 - b) / 0.75))))
-    && rate('Sr', 'Blood', 'UB contents').join() === '0.577,1.27,1.38,1.02,0.6,1.73' && rate('Ca', 'Blood', 'ST0').join() === '2.9,6.38,6.96,5.1,3.02,8.7' && rate('Pb', 'Blood', 'ST0').join() === '15.8,19.6,20.3,18.2,16,22.16',
-    `radium to ST0 ${rate('Ra', 'Blood', 'ST0')}; barium to ST0 ${rate('Ba', 'Blood', 'ST0')}`);
+  check('103 data: radium\'s, barium\'s and calcium\'s rates from plasma to soft tissues and excretion before adulthood are the adult\'s times (1 - B)/(1 - 0.25), B the bone\'s share 0.75, 0.45, 0.40, 0.56, 0.74; strontium keeps the printed figures (lead: see below)',
+    soft('Ra').length === 7 && soft('Ba').length === 5 && soft('Ca').length === 5 && ['Ra', 'Ba', 'Ca'].every((el) => soft(el).every((t) => share.every((b, a) => t[2][a] === g7(t[2][5] * (1 - b) / 0.75))))
+    && rate('Sr', 'Blood', 'UB contents').join() === '0.577,1.27,1.38,1.02,0.6,1.73' && rate('Sr', 'ST0', 'Blood').join() === '0.833,1.83,2,1.47,0.867,2.5',
+    `radium to ST0 ${rate('Ra', 'Blood', 'ST0')}; barium to ST0 ${rate('Ba', 'Blood', 'ST0')}; calcium to ST0 ${rate('Ca', 'Blood', 'ST0')}`);
   check('103 data: barium\'s rates to the bone surfaces at 5, 10 and 15 years are the halves its table and radium\'s round from (6.225, 9.875, 14.45 and 21.775, 29.325, 37.35: 0.40, 0.56, 0.74 of 70 d-1), lead\'s half of them; radium\'s as printed',
     rate('Ba', 'Blood', 'Trab bone surf').join() === '10.5,6.3,6.225,9.875,14.45,9.72' && rate('Ba', 'Blood', 'Cort bone surf').join() === '42,25.2,21.775,29.325,37.35,7.78'
     && rate('Pb', 'Blood', 'Trab bone surf').join() === '5.25,3.15,3.1125,4.9375,7.225,4.86' && rate('Pb', 'Blood', 'Cort bone surf').join() === '21,12.6,10.8875,14.6625,18.675,3.89'
@@ -747,6 +747,33 @@ if (!SYSTEM || SYSTEM === '103') {
       check('103 data: carbon\'s rates from its tissues and bone surfaces to blood before adulthood are the adult\'s x 4, 2.5, 2.5, 2 and 1.2, the organic part\'s too (from the long-term tissue 0.02475 and 0.01188 for the printed 0.0248 and 0.0119)',
         ct.length === 12 && ct.every((x) => [4, 2.5, 2.5, 2, 1.2, 1].every((f, k) => near(x[2][k], x[2][5] * f, 1e-9))) && lt?.[1] === 0.02475 && lt?.[4] === 0.01188,
         `${ct.length} ${JSON.stringify(lt)}`);
+      // Calcium's rates from blood to its soft tissues and excretion, and from ST0 back to blood, are the adult's x (1-B)/(1-A),
+      // A = 0.25 (1/3, 11/15, 4/5, 44/75, 26/75): with Table 9.2's 1.01 out of ST0 at 15 years (for 1.00533) every soft
+      // tissue after 45Ca at 15 years was 0.1 % below the annex.
+      const AE = [1 / 3, 11 / 15, 4 / 5, 44 / 75, 26 / 75, 1];
+      const caT = d103.elements.Ca.systemic.default.transfers.filter((x) => (x[0] === 'Blood' && !/bone surf/.test(x[1])) || (x[0] === 'ST0' && x[1] === 'Blood'));
+      const caST0 = caT.find((x) => x[0] === 'ST0')[2];
+      check('103 data: calcium\'s rates from blood to the soft tissues and excretion and from ST0 back to blood are the adult\'s x (1-B)/(1-A) (out of ST0 1.005333 at 15 years for the printed 1.01)',
+        caT.length === 6 && caT.every((x) => AE.every((f, k) => near(x[2][k], x[2][5] * f, 1e-6))) && near(caST0[4], 1.005333, 1e-6), JSON.stringify(caST0));
+      // Phosphorus by para 269: its bone surfaces take calcium's deposition x 0.8 at each age (calcium's rates x 32/15 out of
+      // phosphorus's 40 d-1), everything else from plasma the adult's x 0.5, 0.8, 0.85, 0.69, 0.51; the adult's as printed.
+      const pT = d103.elements.P.systemic.default.transfers.filter((x) => x[0] === 'Plasma');
+      const caBone = (to) => d103.elements.Ca.systemic.default.transfers.find((x) => x[0] === 'Blood' && x[1] === to)[2];
+      const pCort = pT.find((x) => x[1] === 'Cort bone surf')[2];
+      check('103 data: phosphorus\'s children\'s rates from plasma: to the bone surfaces calcium\'s x 32/15 (17.06667 to cortical surface at 15 years for the printed 17.1), elsewhere the adult\'s x 0.5, 0.8, 0.85, 0.69, 0.51',
+        pT.length === 11 && pT.every((x) => (/bone surf/.test(x[1])
+          ? [0, 1, 2, 3, 4].every((k) => near(x[2][k], caBone(x[1])[k] * 32 / 15, 1e-6))
+          : [0.5, 0.8, 0.85, 0.69, 0.51, 1].every((f, k) => near(x[2][k], x[2][5] * f, 1e-6)))) && near(pCort[4], 17.06667, 1e-6) && pCort[5] === 3.56,
+        JSON.stringify(pCort));
+      // Lead's rates from blood to the red cells and to ST0 are the adult's x (1-B)/(1-A), A = 0.125, B = 0.375, 0.225, 0.20,
+      // 0.28, 0.37; its other rates stay as Table 29.2 prints them, as the annex has them (with the kidneys' worked out,
+      // 212Pb's kidneys at 10 and 15 years came out -0.11 and +0.14 %).
+      const PBF = [0.375, 0.225, 0.2, 0.28, 0.37, 0.125].map((b) => (1 - b) / 0.875);
+      const pb = (to) => d103.elements.Pb.systemic.default.transfers.find((x) => x[0] === 'Blood' && x[1] === to)[2];
+      check('103 data: lead\'s rates from blood to the red cells and to ST0 are the adult\'s x (1-B)/(1-A) (23.04 and 18.23451 at 10 years for the printed 23.0 and 18.2); its kidneys keep the printed 2.02 and 1.76',
+        ['Blood 1', 'ST0'].every((to) => PBF.every((f, k) => near(pb(to)[k], pb(to)[5] * f, 1e-6))) && near(pb('Blood 1')[3], 23.04, 1e-9) && near(pb('ST0')[3], 18.23451, 1e-6)
+        && pb('Kidneys 1')[3] === 2.02 && pb('Kidneys 1')[4] === 1.76 && pb('ST2')[3] === 0.115,
+        `${JSON.stringify(pb('Blood 1'))} ${JSON.stringify(pb('ST0'))} ${JSON.stringify(pb('Kidneys 1'))}`);
     }
     check('103 data: plutonium has the rates of Publication 141 Table 18.6 -- the adult\'s to trabecular surface 0.12474, cortical surface 0.08778 and testes 0.0002695 (children as the draft has them), and at every age 0.0001266 out of ST2, 28.95 from Blood 2 to ST0 and 0.01155 to the right colon',
       r('Blood 1', 'Trab bone surf').join() === '0.26,0.26,0.208,0.208,0.208,0.12474' && r('Blood 1', 'Cort bone surf').at(-1) === 0.08778 && r('Blood 1', 'Testes').join() === '0.0000154,0.0000231,0.0000262,0.0000308,0.000246,0.0002695'
@@ -967,7 +994,8 @@ if (!SYSTEM || SYSTEM === '103') {
     && jr(pb212, 'Blood', 'Skin') === '[0.1,0.12,0.13,0.1152,0.1,0.14006]' && jr(pb212, 'Blood', 'Testes') === '[0.0025,0.0031,0.0032,0.0029,0.0025,0.0035015]'
     && jr(pb212, 'Blood', 'Ovaries') === '[0.001,0.0012,0.0013,0.001152,0.001,0.0014006]'
     && rate(pb212, 'Blood', 'Cort marrow').every((x, a) => near(x, rate(pb212, 'Blood', 'Trab marrow')[a] / 3, 1e-5))
-    && [69.9675, 69.9677, 70.0344, 69.9232, 70.0786, 69.9945].every((want, a) => near(pb212.transfers.filter(([x]) => x === 'Blood').reduce((q, t) => q + t[2][a], 0), want, 1e-6)),
+    && [0, 1, 2, 3, 4, 5].every((a) => near(pb212.transfers.filter(([x]) => x === 'Blood').reduce((q, t) => q + t[2][a], 0),
+      d103.elements.Pb.systemic.default.transfers.filter(([x]) => x === 'Blood').reduce((q, t) => q + t[2][a], 0), 1e-9)),
     `skin ${jr(pb212, 'Blood', 'Skin')}; out of blood ${[0, 1, 2, 3, 4, 5].map((a) => pb212.transfers.filter(([x]) => x === 'Blood').reduce((q, t) => q + t[2][a], 0).toFixed(4)).join(' ')}`);
   const i131 = await modelOf('Te-131', 'I-131');
   check('iodine formed after tellurium: the inorganic iodide of other tissue in one compartment (200 d-1 back) and the organic iodine in one, from Blood organic at 15 d-1, back at 9.0 and to blood iodide at 0.09 for the adult, all three by the age factor of iodine\'s own model (26.3 over 15 at 3 months)',

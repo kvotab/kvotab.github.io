@@ -2167,3 +2167,55 @@ else moves, in the printed tables or the OIR Data Viewer either.
 Still open: 228Ra and 224Ra, radon, 85Y, 85mY and 87Y swallowed, 81Sr at
 3 months, 87Zr's and 90Mo's bladder wall at 3 months, 45Ca's soft tissues
 at 15 years (0.11-0.15 % low).
+
+## Calcium, phosphorus and lead: more of the children's rates worked out (2026-11-26, night)
+
+Against the annex: 16 nuclides move, all nearer; organ doses more than
+0.05 % off 8,585 → 6,204, more than 0.1 % off 2,287 → 1,941; within 0.1 %
+99.6 → 99.7 %. The printed tables and the OIR Data Viewer do not move.
+
+- **Calcium's rates from blood to its soft tissues and excretion, and from
+  ST0 back to blood, are the adult's x (1-B)/(1-A)** (elements.json), A =
+  0.25 and B = 0.75, 0.45, 0.40, 0.56, 0.74, as radium's and barium's.
+  Table 9.2 rounds ST0's outflow (0.967, 2.13, 1.7, 1.01 for 0.9667,
+  2.1267, 1.7013, 1.0053) and blood to ST0 at 10 and 15 years (5.1, 3.02
+  for 5.104, 3.016). 45Ca at 15 years had every soft tissue 0.09-0.15 %
+  below the annex; now within 0.01 %, 41Ca and 47Ca within 0.04 % at every
+  age, and none of calcium's organ doses more than 0.1 % off (166 were).
+  The blood's outflows worked out alone moved the three away (the section
+  before last); ST0's outflow with them is what the annex has. Strontium's
+  and barium's ST0 outflow worked out the same way move 89Sr, 133mBa and
+  135mBa away: they keep the printed figures.
+- **Phosphorus's children's rates are worked out by para 269**: to the
+  bone surfaces calcium's deposition x 0.8 (calcium's rate / 15 d⁻¹ x 0.8 x
+  phosphorus's 40 d⁻¹, i.e. calcium's rates x 32/15: 17.07 to the cortical
+  surface at 15 years for the printed 17.1), to every other place the
+  adult's x 0.5, 0.8, 0.85, 0.69, 0.51 (B = 0.8 x calcium's, A = 0.2: 7.024
+  to ST0 and ST1 at 10 years for 7.02). The adult's stay as printed
+  (Publication 134's 4.44 and 3.56; calcium's x 32/15 there, 4.437 and
+  3.563, put the adult's bone surface 0.04 % low). 32P and 33P 0.033 and
+  0.039 → 0.014 and 0.015 % rms; phosphorus's organ doses more than 0.05 %
+  off 611 → 2 (bone surface and red marrow at 5 and 10 years were 0.08-0.09
+  % off, 32P's extrathoracic airways at 15 years 0.12 %).
+- **Lead's rates from blood to the red cells and to ST0 are worked out**,
+  with lead's A = 0.125 and B = 0.375, 0.225, 0.20, 0.28, 0.37 (the bone
+  surfaces' share of the 70 d⁻¹, as the halves of the tenth step give it):
+  23.04 and 20.16 to the red cells at 10 and 15 years for the printed 23.0
+  and 20.2, 18.235 and 15.955 to ST0 for 18.2 and 16.0. 212Pb's soft
+  tissues were 0.08 % low at 10 years and 0.10 % high at 15, its bone
+  surface the other way; eleven lead nuclides come nearer and none goes
+  away (212Pb 0.045 → 0.014 % rms, 209Pb, 205Pb, 211Pb, 214Pb), and none of
+  lead's organ doses at 10 and 15 years is more than 0.1 % off (120 were).
+  Its other rates keep the printed figures because the annex has them so,
+  rate by rate: the kidneys' worked out (2.016 and 1.764 for 2.02 and 1.76)
+  put 212Pb's kidneys 0.11 % low at 10 years and 0.14 % high at 15 and move
+  202Pb, 205Pb and 210Pb away; ST2's (0.1152 and 0.1008 for 0.115 and
+  0.101) put 205Pb's muscle 0.07 % high at 10 years and 0.08 % low at 15;
+  the excreta's move 205Pb away; the liver's and ST0's outflow make no
+  difference. Why these two and not the others is not known: Table 29.2
+  rounds them all alike, and the tables before it (Publication 67) were not
+  at hand.
+
+Still open: 228Ra and 224Ra, radon, 85Y, 85mY and 87Y swallowed, 81Sr at
+3 months, 87Zr's and 90Mo's bladder wall at 3 months, 133Ba at 1 year
+(every organ 0.05-0.14 % low; 226Ra and 90Sr exact there).
