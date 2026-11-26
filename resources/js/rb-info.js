@@ -38,7 +38,8 @@ function collectPdfSpecData(attrs, node, path) {
   let filePdfData = null;
   try {
     let pdfRaw = attrs.pdf;
-    if (typeof pdfRaw === 'string') pdfRaw = JSON.parse(pdfRaw);
+    // the integers of a saved random state kept exact (PDFSampler.parsePdf), for the samples of the Python code
+    if (typeof pdfRaw === 'string') pdfRaw = PDFSampler.parsePdf(pdfRaw);
 
     const isLookupTable = Array.isArray(pdfRaw);
     const indexAttr = attrs.index;

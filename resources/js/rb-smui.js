@@ -291,7 +291,7 @@ function rbPdfSpecs(node) {
   let pdf = getAttr(node, 'pdf');
   if (pdf == null) return null;
   if (typeof pdf === 'string') {
-    try { pdf = JSON.parse(pdf); } catch (_) { return { list: [], lookup: false, unread: true }; }
+    try { pdf = PDFSampler.parsePdf(pdf); } catch (_) { return { list: [], lookup: false, unread: true }; }
   }
   if (Array.isArray(pdf)) return { list: pdf.map(s => (s && typeof s === 'object' && s.type ? s : null)), lookup: true };
   if (pdf && typeof pdf === 'object' && pdf.type) return { list: [pdf], lookup: false };

@@ -712,7 +712,8 @@ function collectPdfEntries(node, attrs, label, source = null) {
   if (!attrs.pdf) return null;
   try {
     let pdfRaw = attrs.pdf;
-    if (typeof pdfRaw === 'string') pdfRaw = JSON.parse(pdfRaw);
+    // the integers of a saved random state kept exact (PDFSampler.parsePdf), for the samples of the Python code
+    if (typeof pdfRaw === 'string') pdfRaw = PDFSampler.parsePdf(pdfRaw);
 
 
 
@@ -1995,8 +1996,10 @@ function createPdfHistogram(data) {
   // fall in no bin. A scatter keeps every place, with a gap for each.
   const finite = (samples) => Array.prototype.filter.call(samples, Number.isFinite);
   // A sample is drawn as 'Samples'; a vector by its own name, its values
-  // counted as MATLAB counts them, from 1.
-  const valuesName = data.vector ? ((data.path || '').split('/').pop() || 'Values') : 'Samples';
+  // counted as MATLAB counts them, from 1. A distribution with a saved random
+  // state gives the samples of the simulations, iteration by iteration.
+  const asSimulated = PDFSampler.isExact(data.spec) || (data.entries || []).some(e => PDFSampler.isExact(e.spec));
+  const valuesName = data.vector ? ((data.path || '').split('/').pop() || 'Values') : (asSimulated ? 'Samples (as simulated)' : 'Samples');
   const placeName = data.vector ? 'Element' : 'Iteration';
 
   // Several vectors of one length: one of them can be the scatter's x axis,
