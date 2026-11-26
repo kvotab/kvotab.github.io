@@ -37,6 +37,8 @@
                  two figures the published calculation holds them with)
                {op: 'rename', name, to, region}
                {op: 'remove', name}           a compartment and its transfers
+               {op: 'remove', from, to}       one transfer (plutonium as a
+                 progeny: what leaves the tissues returns by Blood 1 alone)
                {op: 'set', from, to, rate}    a constant transfer coefficient
                {op: 'entry', name}
     entry    where X absorbed to blood, or arriving from a site its model does
@@ -162,8 +164,14 @@ export function buildProgenyModel(spec, el, elements, modelOf) {
       for (const t of model.transfers) { if (t[0] === op.name) t[0] = op.to; if (t[1] === op.name) t[1] = op.to; }
       if (model.entry === op.name) model.entry = op.to;
     } else if (op.op === 'remove') {
-      delete model.compartments[op.name];
-      model.transfers = model.transfers.filter(([a, b]) => a !== op.name && b !== op.name);
+      if (op.from != null) {
+        // one transfer
+        if (!find(op.from, op.to)) throw new Error(`remove: ${el} has no transfer from ${op.from} to ${op.to}`);
+        model.transfers = model.transfers.filter(([a, b]) => !(a === op.from && b === op.to));
+      } else {
+        delete model.compartments[op.name];
+        model.transfers = model.transfers.filter(([a, b]) => a !== op.name && b !== op.name);
+      }
     } else if (op.op === 'set') {
       const t = find(op.from, op.to);
       const rates = Array.isArray(op.rate) ? op.rate : [op.rate];

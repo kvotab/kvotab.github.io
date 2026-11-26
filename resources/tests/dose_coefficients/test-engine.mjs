@@ -355,7 +355,7 @@ if (!SYSTEM || SYSTEM === '103') {
     ['103', { nuclide: 'Yb-167', route: 'injection' }, 7300, 2.5184e-12, 'Liver'],
     ['103', { nuclide: 'Tb-148', route: 'injection' }, 7300, 8.9667e-11],
     ['103', { nuclide: 'Gd-148', route: 'injection' }, 7300, 8.0939e-5, 'Liver'],
-    ['103', { nuclide: 'Np-238', route: 'injection' }, 7300, 1.2198e-9, 'Spleen'],
+    ['103', { nuclide: 'Np-238', route: 'injection' }, 7300, 1.2249e-9, 'Spleen'],
     ['103', { nuclide: 'Zn-72', route: 'injection' }, 365, 1.1364e-8, 'Bone surface'],
     ['103', { nuclide: 'Th-229', route: 'injection' }, 7300, 4.2619e-5, 'Muscle'],
     ['103', { nuclide: 'Pu-241', route: 'injection' }, 7300, 1.4874e-5, 'Liver'],
@@ -493,8 +493,18 @@ if (!SYSTEM || SYSTEM === '103') {
     // 242mAm finds the parent's soft-tissue pools foreign (the skin had 1.043 of this)
     ['103', { nuclide: 'U-235m', route: 'injection' }, 7300, 2.7685e-16, 'Skin', 'F'],
     ['103', { nuclide: 'U-235m', route: 'injection', rules: { sameElement: 'parent' } }, 7300, 2.6136e-16, 'Skin', 'F'],
-    ['103', { nuclide: 'Am-242m', route: 'injection' }, 7300, 1.4557e-6, 'Skin'],
-    ['103', { nuclide: 'Am-242m', route: 'injection', rules: { sameElement: 'parent' } }, 7300, 1.5182e-6, 'Skin'],
+    ['103', { nuclide: 'Am-242m', route: 'injection' }, 7300, 1.4694e-6, 'Skin'],
+    ['103', { nuclide: 'Am-242m', route: 'injection', rules: { sameElement: 'parent' } }, 7300, 1.5318e-6, 'Skin'],
+    // plutonium by the five-figure rates of Publication 141 Table 18.6 (with the draft's three figures red marrow
+    // was 0.22 % above the OIR Data Viewer's 2.666E-4 and muscle 0.20 % below its 2.598E-5); as a progeny, what
+    // leaves the tissues returns by Blood 1 alone (muscle after 238Np was 1.3 % above the viewer's 1.105E-9); and
+    // the skin and spleen of americium and californium as progeny at the viewer's two-figure rates (the skin after
+    // 241Pu was 1.3 % below its 1.250E-8, the spleen after 249Bk 0.7 % above its 1.145E-8)
+    ['103', { nuclide: 'Pu-239', route: 'injection' }, 7300, 2.6664e-4, 'Red marrow'],
+    ['103', { nuclide: 'Pu-239', route: 'injection' }, 7300, 2.5982e-5, 'Muscle'],
+    ['103', { nuclide: 'Np-238', route: 'injection' }, 7300, 1.1053e-9, 'Muscle'],
+    ['103', { nuclide: 'Pu-241', route: 'injection' }, 7300, 1.2496e-8, 'Skin'],
+    ['103', { nuclide: 'Bk-249', route: 'injection' }, 7300, 1.1451e-8, 'Spleen'],
     // plutonium formed after uranium follows Publication 137 para 921 (the liver after 240U had 0.934 of this with
     // plutonium's own model)
     ['103', { nuclide: 'U-240', route: 'injection' }, 7300, 3.1962e-10, 'Liver'],
@@ -681,9 +691,28 @@ if (!SYSTEM || SYSTEM === '103') {
   check('thulium formed from 167Yb follows thulium\'s own model: blood to Liver 1 at 1.16 d-1 (lanthanum\'s is 11.6)',
     near(rate(tm, 'Blood', 'Liver 1')?.at(-1), 1.16, 1e-6), JSON.stringify(rate(tm, 'Blood', 'Liver 1')));
   const pu = await modelOf('Np-238', 'Pu-238');
-  check('plutonium as a progeny: the added spleen and skin leave as ST1 does, to Blood 2 at 0.00139 d-1',
-    near(rate(pu, 'Spleen', 'Blood 2')?.at(-1), 0.00139, 1e-6) && near(rate(pu, 'Skin', 'Blood 2')?.at(-1), 0.00139, 1e-6) && near(rate(pu, 'ST1', 'Blood 2')?.at(-1), 0.00139, 1e-6),
+  check('plutonium as a progeny: the added spleen and skin leave as ST1 does, to Blood 2 at 0.001386 d-1',
+    near(rate(pu, 'Spleen', 'Blood 2')?.at(-1), 0.001386, 1e-6) && near(rate(pu, 'Skin', 'Blood 2')?.at(-1), 0.001386, 1e-6) && near(rate(pu, 'ST1', 'Blood 2')?.at(-1), 0.001386, 1e-6),
     `${JSON.stringify(rate(pu, 'Spleen', 'Blood 2'))} ${JSON.stringify(rate(pu, 'Spleen', 'Blood 1'))}`);
+  check('plutonium as a progeny: what leaves the tissues returns by Blood 1 alone (Blood 2 to Blood 1 96.5 d-1, to the bladder 3.5, none to ST0, which Blood 1 feeds at 0.33), skin 0.0025 d-1 and spleen a third of it, out of ST1',
+    rate(pu, 'Blood 2', 'ST0') === null && near(rate(pu, 'Blood 2', 'Blood 1')?.at(-1), 96.5, 1e-9) && near(rate(pu, 'Blood 2', 'UB cont')?.at(-1), 3.5, 1e-9) && near(rate(pu, 'Blood 1', 'ST0')?.at(-1), 0.33, 1e-9)
+    && near(rate(pu, 'Blood 1', 'Skin')?.at(-1), 0.0025, 1e-9) && near(rate(pu, 'Blood 1', 'Spleen')?.at(-1), 0.000833, 1e-9) && near(rate(pu, 'Blood 1', 'ST1')?.at(-1), 0.018511 - 0.0025 - 0.000833, 1e-9) && !pu.compartments['Blood 0'],
+    `${JSON.stringify(rate(pu, 'Blood 2', 'ST0'))} ${rate(pu, 'Blood 2', 'Blood 1')?.at(-1)} ${rate(pu, 'Blood 1', 'Skin')?.at(-1)} ${rate(pu, 'Blood 1', 'Spleen')?.at(-1)} ${rate(pu, 'Blood 1', 'ST1')?.at(-1)}`);
+  {
+    const own = d103.elements.Pu.systemic.default, r = (a, b) => rate(own, a, b);
+    check('103 data: plutonium has the rates of Publication 141 Table 18.6 -- the adult\'s to trabecular surface 0.12474, cortical surface 0.08778 and testes 0.0002695 (children as the draft has them), and at every age 0.0001266 out of ST2, 28.95 from Blood 2 to ST0 and 0.01155 to the right colon',
+      r('Blood 1', 'Trab bone surf').join() === '0.26,0.26,0.208,0.208,0.208,0.12474' && r('Blood 1', 'Cort bone surf').at(-1) === 0.08778 && r('Blood 1', 'Testes').join() === '0.0000154,0.0000231,0.0000262,0.0000308,0.000246,0.0002695'
+      && r('ST2', 'Blood 2').every((x) => x === 0.0001266) && r('Blood 2', 'ST0').every((x) => x === 28.95) && r('Blood 2', 'Blood 1').every((x) => x === 67.55) && r('Blood 1', 'RC cont').every((x) => x === 0.01155)
+      && r('Blood 1', 'ST1').every((x) => x === 0.018511) && r('Blood 1', 'Liver 1').join() === '0.116,0.116,0.231,0.231,0.231,0.462',
+      `${r('Blood 1', 'Trab bone surf')} | ${r('Blood 1', 'Testes')} | ${r('ST2', 'Blood 2')}`);
+    const am = await modelOf('Pu-241', 'Am-241'), cm = await modelOf('Am-244', 'Cm-244'), cf = await modelOf('Bk-249', 'Cf-249'), bk = await modelOf('Cf-247', 'Bk-247');
+    const two = (m) => [rate(m, 'Blood', 'Skin')?.at(-1), rate(m, 'Blood', 'Spleen')?.at(-1), rate(m, 'Blood', 'ST1')?.at(-1)];
+    check('the skin and spleen of an actinide as a progeny: americium and curium at 0.13 and 0.043 d-1, californium at 0.07 and 0.023, out of ST1; berkelium at 0.06 and 0.02 of what its ST1 and ST2 take (0.004656 and 0.001552)',
+      [am, cm].every((m) => near(two(m)[0], 0.13, 1e-9) && near(two(m)[1], 0.043, 1e-9) && near(two(m)[2], 1.67 - 0.173, 1e-9))
+      && near(two(cf)[0], 0.07, 1e-9) && near(two(cf)[1], 0.023, 1e-9) && near(two(cf)[2], 0.926 - 0.093, 1e-9)
+      && near(two(bk)[0], 0.06 * 0.0776, 1e-9) && near(two(bk)[1], 0.02 * 0.0776, 1e-9),
+      `Am ${two(am)} | Cm ${two(cm)} | Cf ${two(cf)} | Bk ${two(bk)}`);
+  }
   {
     // Radon formed in the body is in the generic model's one blood compartment; what it decays to there is in its
     // own blood (polonium: Plasma 2). Radon taken in has its own two blood compartments, and the rule is not theirs.

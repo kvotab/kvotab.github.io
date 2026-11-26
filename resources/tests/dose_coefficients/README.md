@@ -1910,3 +1910,52 @@ taken, inside that. It rests on one nuclide: it is the simplest rule that
 fits, not one a publication states. 233Np (229Pa on a branch of 0.001 %)
 still wants something between this rule and every way followed (its bone
 surface -0.44 % with the rule, +0.19 % with every way).
+
+## Plutonium in the workers' viewer: three details (2026-11-26, evening)
+
+OIR Data Viewer: nuclides at its four figures in e and every organ dose
+422 → 457 of 572, none lost; 46 move, all nearer. Nuclides whose organ doses
+are more than 0.2 % (rms) off 22 → 12: four strontium isotopes (the public's
+rubidium), five of antimony, 197mPb, 182Ir and 228Ra. The annex of
+Publication 158 has no plutonium and does not move. Printed coefficients that round to the
+printed value 99.2 → 99.3 % (two more, none fewer).
+
+- **Plutonium's rates are the five figures of Publication 141 Table 18.6**
+  (elements.json; the Part 2 draft's Table 22.3 has three). The adult's, and
+  every age where the draft has one rate for all ages. 239Pu was 0.20 % low
+  in every soft tissue, 0.22 % high in red marrow, 0.20 % in the testes and
+  0.16 % on bone surfaces, and exact in the ovaries: the draft's 0.125 to
+  trabecular surface is 0.12474, its 0.00027 to the testes 0.0002695, its
+  0.000127 out of ST2 0.0001266, and its 0.0000847 to the ovaries is the
+  same number. 238Pu, 239Pu, 240Pu, 241Pu and 242Pu now agree to four figures
+  in every organ. The other actinides' table (18.9) has three figures, as
+  the page has, and 241Am was exact already.
+- **Plutonium as a progeny: what leaves the tissues returns by Blood 1
+  alone** (progeny.json, the actinide set; progeny103.js: a `remove` of one
+  transfer). Para 567 takes out "the transfers from blood to ST0" and adds
+  0.33 d⁻¹ from Blood 1 to ST0, 30 % of what leaves Blood 1. The page had
+  taken out Blood 0's and kept Blood 2's 28.95 d⁻¹, so that ST0 took 49 % of
+  recycled plutonium, and the tissues without a compartment of their own
+  were 1.0 to 1.7 % above the viewer after 238Np, 238Am and 236Np and 0.3
+  to 0.8 % after 242Cm, 238Cm and 240Cm. With Blood 2 to Blood 1 at 96.5
+  and none to ST0 (28.95 is 30 % of 96.5: the same share, once) they are
+  within 0.02 %. Blood 2 to ST0 taken out without the 28.95 going to
+  Blood 1 puts e 4 % low; no path from Blood 1 to ST0 leaves 0.6 % (rms).
+- **The skin and spleen of americium, curium, californium and plutonium as
+  progeny take up at round rates.** Para 566 gives the skin its mass
+  fraction of what ST1 and ST2 take (0.06) and the spleen a third of that.
+  Those are 0.12816 and 0.04272 d⁻¹ for americium and curium, 0.06954 and
+  0.02318 for californium, 0.0024967 and 0.00083222 for plutonium. The
+  viewer has 0.13 and 0.043, 0.070 and 0.023, 0.0025 and a third of it:
+  after 241Pu (the dose is its 241Am's) skin and spleen were 1.30 and 0.64 %
+  low, after 249Bk (its 249Cf's) the skin 0.54 % low and the spleen 0.74 %
+  high -- the signs of the rounding, each way. Three figures leave them as
+  they were. Berkelium keeps the shares (0.004656, 0.001552): with 0.0047
+  and 0.0016 the spleen after 247Cf is 0.7 % high. Nothing shows for
+  einsteinium, fermium, neptunium, protactinium or actinium, which keep the
+  shares. So the numbers are as found, element by element, and no rule says
+  how many figures an element has.
+
+Left in the viewer: antimony (125Sb's effective dose 0.6 % above it,
+growing with the half-life; the annex agrees with the page, so the workers'
+model differs), 197mPb (spleen), 182Ir (thyroid), 228Ra (0.3 %), 233Np.
