@@ -700,6 +700,23 @@ if (!SYSTEM || SYSTEM === '103') {
     `${JSON.stringify(rate(pu, 'Blood 2', 'ST0'))} ${rate(pu, 'Blood 2', 'Blood 1')?.at(-1)} ${rate(pu, 'Blood 1', 'Skin')?.at(-1)} ${rate(pu, 'Blood 1', 'Spleen')?.at(-1)} ${rate(pu, 'Blood 1', 'ST1')?.at(-1)}`);
   {
     const own = d103.elements.Pu.systemic.default, r = (a, b) => rate(own, a, b);
+    {
+      // Silver's blood to its two soft-tissue pools at 12.84 d-1, 21.4 % of the 60 d-1 that leaves Blood 1, where the
+      // tables print 12.8: with 12.8 the soft tissues after 111Ag were 0.2 % below the annex at every age.
+      await d103.prepare('Ag-111');
+      const ag = d103.elements.Ag.systemic.default.transfers.filter((x) => x[0] === 'Blood 1' && /^ST[01]$/.test(x[1]));
+      const doses = () => { const r = coefficients103(d103, { nuclide: 'Ag-111', route: 'injection', cutoff: 1e-4 }, [7300])[0]; return [r.H.M.Muscle, r.H.M.Liver]; };
+      const now = doses(), keep = ag.map((x) => x[2]); ag.forEach((x) => { x[2] = x[2].map(() => 12.8); }); const printed = doses(); ag.forEach((x, i) => { x[2] = keep[i]; });
+      check('103 data: silver goes from blood to ST0 and ST1 at 12.84 d-1 (21.4 % of 60), not the printed 12.8 -- 111Ag\'s muscle 1.0022 of what 12.8 gives, its liver 0.9995',
+        ag.length === 2 && ag.every((x) => x[2].every((v) => v === 12.84)) && near(now[0] / printed[0], 1.0022, 1e-4) && near(now[1] / printed[1], 0.9995, 1e-4),
+        `${ag.map((x) => x[2][0])} | ${(now[0] / printed[0]).toFixed(5)} ${(now[1] / printed[1]).toFixed(5)}`);
+    }
+    {
+      const y = (to) => d103.elements.Y.systemic.default.transfers.find((x) => x[0] === 'Blood 1' && x[1] === to)[2];
+      const fits = (to) => { const v = y(to), a = v[5]; return [2 / 3, 5 / 6, 5 / 6, 5 / 6, 5 / 6, 1].every((f, k) => near(v[k], a * f, 1e-6)); };
+      check('103 data: yttrium\'s rates out of blood before adulthood are the adult\'s x 2/3 at 3 months and x 5/6 from 1 to 15 years (to the liver 1.106667 and 1.383333 for the printed 1.11 and 1.38)',
+        ['Blood 2', 'Liver 0', 'Kidneys', 'SI contents', 'UB contents', 'ST0', 'ST1'].every(fits) && near(y('Liver 0')[0], 1.106667, 1e-6), JSON.stringify(y('Liver 0')));
+    }
     check('103 data: plutonium has the rates of Publication 141 Table 18.6 -- the adult\'s to trabecular surface 0.12474, cortical surface 0.08778 and testes 0.0002695 (children as the draft has them), and at every age 0.0001266 out of ST2, 28.95 from Blood 2 to ST0 and 0.01155 to the right colon',
       r('Blood 1', 'Trab bone surf').join() === '0.26,0.26,0.208,0.208,0.208,0.12474' && r('Blood 1', 'Cort bone surf').at(-1) === 0.08778 && r('Blood 1', 'Testes').join() === '0.0000154,0.0000231,0.0000262,0.0000308,0.000246,0.0002695'
       && r('ST2', 'Blood 2').every((x) => x === 0.0001266) && r('Blood 2', 'ST0').every((x) => x === 28.95) && r('Blood 2', 'Blood 1').every((x) => x === 67.55) && r('Blood 1', 'RC cont').every((x) => x === 0.01155)
@@ -856,6 +873,12 @@ if (!SYSTEM || SYSTEM === '103') {
     check('the lesser way to a chain member is cut where it brings less than a thousandth of the energy: 209Pb by way of 209Tl after 213Bi, 210Pb by way of 210Tl and 214Bi by way of 218At after 226Ra; 131I by way of 131Te, 95Nb by way of 95mNb and 144Pr by way of 144mPr are followed',
       cutOf('Bi-213') === '[["Tl-209","Pb-209"]]' && cutOf('Ra-226') === '[["At-218","Bi-214"],["Rn-218","Po-214"],["Tl-210","Pb-210"]]' && cutOf('Te-131m') === '[]' && cutOf('Zr-95') === '[]' && cutOf('Ce-144') === '[]',
       `${cutOf('Bi-213')} ${cutOf('Ra-226')} ${cutOf('Te-131m')} ${cutOf('Zr-95')} ${cutOf('Ce-144')}`);
+    // A compartment of the progeny's own element is its own, whatever a set says of other elements' compartments of
+    // that name: 91Y formed from 91mY in yttrium's ST1 stays there; from 91Sr in strontium's ST1 it goes to blood.
+    const ySt = await bornAt('Sr-91', 'Y-91m/ST1'), ySr = await bornAt('Sr-91', 'Sr-91/ST1');
+    check('91Y formed from 91mY in yttrium\'s ST1 is in its own ST1; formed in strontium\'s ST1 it goes to blood at 0.231 d-1 (Publication 134 para 483)',
+      String(ySt.to) === 'Y-91/ST1' && ySr.to.includes('Y-91/ST1 (Sr-91)') && JSON.stringify(ySr.out('Y-91/ST1 (Sr-91)')) === '[["Y-91/Blood 1",[0.231]]]',
+      `${ySt.to} | ${ySr.to} | ${JSON.stringify(ySr.out('Y-91/ST1 (Sr-91)'))}`);
     const rh = await bornAt('Ag-101', 'Pd-101/ST0'), rhAg = await bornAt('Ag-101', 'Pd-101/ST0 (Ag-101)');
     check('101Ag: rhodium formed in palladium\'s ST0 is in its own ST0 (one model structure, the same names); formed from the palladium that sits in silver\'s ST0, in a compartment of its own there',
       String(rh.to) === 'Rh-101m/ST0' && String(rhAg.to) === 'Rh-101m/ST0 (Ag-101) (Pd-101)' && d103.progeny.sets.silver.Rh.sameOther === 'progeny' && d103.progeny.sets.silver.Pd.sameOther === undefined,

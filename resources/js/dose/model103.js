@@ -732,7 +732,11 @@ export function assemble103(data, spec) {
     const m = members[j], S = st[j], spec = m.spec, src = comps[c];
     const place = src.place || { el: members[src.member].el, name: src.name };
     const keyed = spec.identify?.[`${place.el}:${place.name}`];
-    const id = keyed !== undefined ? keyed : spec.identify?.[place.name];
+    // An entry without an element applies to the compartments of other elements' models: a compartment of the
+    // progeny's own element is its own. 91Y formed from 91mY in yttrium's ST1 stays there, though the strontium set
+    // sends yttrium formed in strontium's ST0-ST2 to blood (Publication 134 para 483); sent on as well, the soft
+    // tissues after 91Sr were 0.1-0.3 % below the annex of Publication 158 and the OIR Data Viewer at every age.
+    const id = keyed !== undefined ? keyed : place.el === m.el ? undefined : spec.identify?.[place.name];
     if (id) {
       const k = S.sys.get(id);
       if (k === undefined) throw new Error(`${m.name}: identified compartment ${id} is not in its model`);

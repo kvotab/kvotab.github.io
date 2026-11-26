@@ -2013,3 +2013,46 @@ by the private help-checks tool). No engine or data change.
   nothing is asked are those where radium's uptake into ST0 is low (0.33,
   0.59, 0.35 of the adult's at 3 months, 10 and 15 years; 0.73, 0.80 and 1
   where it is asked): the next place to look.
+
+## Silver's soft tissue, yttrium's children, an isotope's own compartments (2026-11-26, late)
+
+Against the annex: 35 nuclides move, all nearer; organ doses within 0.1 %
+98.8 → 99.3 %, more than 0.2 % off 1,221 → 613 (more than 0.5 % off 14 as
+before). OIR Data Viewer: 91Sr to its four figures (457 → 458 of 572).
+Printed coefficients that round to the printed value 99.3 → 99.2 %: one
+value crosses, 110mAg inhaled as Type F at 5 years, 7.549E-9 → 7.550E-9
+for the printed 7.5E-9, while the annex's 110mAg comes six times nearer.
+
+- **Silver goes from blood to ST0 and ST1 at 12.84 d⁻¹** (elements.json),
+  21.4 % of the 60 d⁻¹ that leaves Blood 1, with Liver 1 50 %, kidneys and
+  each bone surface 2 % and Blood 2 1.2 %: a hundred per cent together (the
+  0.13 to the bladder besides). Publications 151 and 158 print 12.8. 111Ag,
+  which has no progeny, was 0.2 % low in every soft tissue at every age and
+  0.05 % high in liver and kidneys; a single-rate fit gave either ST1's
+  inflow +0.3 % or its outflow −0.4 %. The inflow moves all 14 silver
+  isotopes nearer, the outflow 6 (113Ag stays at 0.06 %). Scanned: 12.835,
+  12.84, 12.845 for both pools give rms 0.0142, 0.0132, 0.0149 % over every
+  silver organ dose; none is now more than 0.1 % off (1,541 were).
+- **Yttrium's rates out of blood before adulthood are all the adult's x 2/3
+  at 3 months and x 5/6 from 1 to 15 years** (elements.json), as ST0 and
+  ST1 already were. Table 16.3 prints 1.11 and 1.38 to Liver 0 for 1.1067
+  and 1.3833, the kidneys and SI contents alike, the bladder 2.08 for 2.075.
+  91Y's liver and kidneys were 0.25 % above the annex at 3 months and 0.25 %
+  below from 1 to 15 years, exact for adults; now within 0.02 %. 91Y 0.063
+  → 0.009 % rms, 90Y 0.054 → 0.007, 88Y, 93Y and the rest, and 90Sr through
+  its 90Y 0.024 → 0.010.
+- **A compartment of a progeny's own element is its own** (model103.js,
+  placeSpec): an identify entry without an element ("ST1": null) applies to
+  other elements' compartments only. The strontium set sends yttrium formed
+  in strontium's ST0-ST2 to blood (Publication 134 para 483), and the
+  unkeyed entries sent 91Y formed from 91mY in yttrium's own ST1 (leaving
+  at 0.0019 d⁻¹) to blood too. 91Sr's soft tissues were 0.1-0.3 % below the
+  annex at every age and its liver, kidneys and bone above; 91Sr 0.097 →
+  0.010 % rms, and in the viewer 0.158 → 0.000. Nothing else in either
+  reference moves. (It first looked like "strontium's ST1 is yttrium's
+  ST1": taking the null out did the same, and only a comparison of the two
+  assembled systems showed which compartment had changed.)
+
+Still open: 228Ra (the section before) and 224Ra (soft tissues 0.1-0.3 %
+low at every age), radon, 85Y and 85mY (brain 0.2-0.3 % low at 1 to 10
+years by ingestion), 93Zr's kidneys at 1 and 5 years, 81Sr at 3 months.
