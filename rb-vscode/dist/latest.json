@@ -1,11 +1,11 @@
 {
   "name": "Data Browser",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "file": "hdf5-browser.vsix",
-  "bytes": 5307629,
-  "sha256": "dfa378694e1b4eef467994a69f53fc682fb08e1d25f497ea6bbceec7e3cc3331",
-  "released": "2026-11-24T11:24:45.650Z",
-  "build": "1fe7e925 2026-11-24 11:24",
+  "bytes": 5313661,
+  "sha256": "88c88cc2957bb475496e9b48ffedddb4a1cb419f20ad84f4228998e884b1293a",
+  "released": "2026-11-26T09:50:42.077Z",
+  "build": "12cd0f9f 2026-11-26 09:50",
   "vscode": "^1.100.0",
-  "signature": "Xzb0jv7jGbkjQabstLxTl6FkHj/Xy6RVL6B8L7p9HpD8fjboXjWgH+2o9kVkswrrWkPyLP9CYvLUkvtXjhnaBg=="
+  "signature": "tn/bqT2K0NaYMoj+kjq3lpzx94KCQk8/e2tM6tS/Gju/2xW2sh/3Skmdw0gga+jbE9IoYvG+JOhYsUlPYJmBAQ=="
 }
