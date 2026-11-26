@@ -1826,3 +1826,58 @@ Still open:
 - Thoron as a gas: kidneys 0.5 % high at 15 years and for adults, e 0.21 %
   high at 5 years.
 - Pa-228 in the viewer, against the way-by-way rule (the section before).
+
+## A year of 365 days (2026-11-26, later)
+
+Found while looking at Pa-228 in the viewer, organ by organ: 231Pa was a
+uniform 0.04 % below the viewer in every soft tissue and 227Ac a uniform
+0.03 % above, and a table of every nuclide with a half-life in years showed
+the same everywhere, by how long the nuclide lives and stays: +0.06 % for
+173Lu, 147Pm, 252Cf, +0.05 % for 55Fe, 244Cm, +0.03 % for 133Ba, 243Cm,
++0.02 % for 60Co, 90Sr, nothing for 241Am (432 y) or 3H. That is 365/365.25:
+the calculation behind the coefficients counts a half-life given in years
+with 365 days to the year, as it counts the 50 years (18,250 days, which the
+page had already). `OPTIONS103.yearDays` (365; model103.js `assemble103`
+scales the decay constant of the members whose half-life the decay data give
+in years; T, shown in the Decay chain tab, stays the data's).
+
+- OIR Data Viewer: nuclides at its four figures in e and every organ 387 →
+  422 of 572, none lost. Of 78 that move 62 come nearer. The 13 farther all
+  have another, larger difference in single tissues (rms 0.08 to 1.2 %);
+  seven of them have e at 1.0000 with it (238Np, 238Am, 236Pu, 238Cm, 242Am,
+  242mAm, 242Cm).
+- A progeny counts too: 148Tb (148Gd, 75 y), 60mCo, 134mCs, 152nEu and
+  154mEu were 0.02–0.03 % low (the atoms are given, the activity is theirs
+  times the decay constant) and are exact.
+- Annex: 16 nuclides move, 15 nearer (55Fe rms 0.053 → 0.013, 60Co 0.022 →
+  0.006, 125Sb, 134Cs); 214Bi 0.020 → 0.023, its testes, ovaries and skin
+  0.05 % higher through 210Pb where bone surface comes nearer. Organ doses
+  within 0.1 % 98.78 → 98.81 %, more than 0.2 % off 1,230 → 1,221, more
+  than 0.5 % off 14 as before.
+- Printed coefficients that round to the printed value 99.1 → 99.2 % (adults
+  99.6 → 99.9 %), Part 3's 98.9 → 99.0 % (adults 99.5 → 100 %).
+
+Pa-228, which started it, is as it was. What is known now: the three ways
+of following a chain were run for the 90 viewer nuclides they tell apart,
+with the year right. The way-by-way rule is the best, or within 0.005 % of
+it, for all but 228Pa, 233Np and 231Pa (0.04 % low in e with it). 228Pa
+comes out right (rms 0.37 → 0.045 %) if a way is also followed where it
+brings a thousandth of what the chain has emitted by some earlier time:
+216At and what it leaves are 4 % of the energy of the first ten days and
+0.3 % of the first year's, before 228Th's 1.9 years have told. The other
+nuclides bracket that time: under 1.5 days 224Ac gets 220Ra and 216Rn, which
+the viewer has not (rms 0.036 → 0.117 %); from 9 hours to 12 days 230Pa gets
+226Ac, which it has not (0.013 → 0.075 %); from 12 days to 5 years 228Pa is
+the only chain of 1,252 that changes. Not put in: one nuclide, a time with a
+window that wide, and 233Np (229Pa on a branch of 0.001 %) wanting something
+between the rule and every way.
+
+Pb-200 inhaled as Type S at 3 months, looked at once more: it is that case
+alone, of the annex's 1,671. The other 17 lead isotopes as Type S at
+3 months are within 0.15 % in every organ (the uterus after 196Pb, 197mPb
+and 199Pb 0.11 to 0.14 % high, the other way; 201Pb with its thallium
+0.04 %), 200Pb as Type M and F, swallowed and injected at 3 months within
+0.04 %, and Type S from 1 year on within 0.03 %. The annex states the same
+absorbed fractions for all of them. Bladder wall and prostate are low alike,
+so what is missing lies behind them, in the contents of the rectosigmoid.
+Nothing a rule could be read from; left as it is.

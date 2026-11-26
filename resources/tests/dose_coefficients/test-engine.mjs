@@ -427,7 +427,7 @@ if (!SYSTEM || SYSTEM === '103') {
     // the 210Bi sent to blood); and bone turnover is adult from the adult age of the element taken in
     // (OPTIONS103.chainAdult), bismuth's 20 years
     ['103', { nuclide: 'Bi-214', route: 'ingestion', form: 'all' }, 7300, 2.9552e-12, 'Gonads'],
-    ['103', { nuclide: 'Pb-214', route: 'ingestion', form: 'all' }, 3650, 6.7160e-11, 'Gonads'],
+    ['103', { nuclide: 'Pb-214', route: 'ingestion', form: 'all' }, 3650, 6.7321e-11, 'Gonads'],
     ['103', { nuclide: 'Bi-214', route: 'ingestion', form: 'all' }, 5475, 1.9256e-11, 'Bone surface'],
     ['103', { nuclide: 'Bi-214', route: 'ingestion', form: 'all', rules: { chainAdult: 'own' } }, 5475, 1.7948e-11, 'Bone surface'],
     // mercury formed after lead follows mercury's own model, with red marrow, skin and gonads added (197mPb inhaled
@@ -608,6 +608,14 @@ if (!SYSTEM || SYSTEM === '103') {
     near(pbTract[0], 1.0021, 2e-4) && near(pbTract[1], 1.0004, 2e-4) && pbTract[2] === 1 && pbTract[3] === 1
     && pbAges().join() === '7300,9125' && pbAges({ tractAdult: 'element' }).join() === '9125,9125' && OPTIONS103.tractAdult === 'twenty',
     `${pbTract.map((x) => x.toFixed(4)).join(' ')}; tract and systemic adult ages ${pbAges().join(' ')}`);
+  // A half-life given in years has 365 days to the year (OPTIONS103.yearDays), as the 50 years of the dose have.
+  const yr = [await ratio('Fe-55', 7300, { yearDays: 365.25 }), await ratio('Co-60', 7300, { yearDays: 365.25 }), await ratio('Tb-148', 7300, { yearDays: 365.25 }), await ratio('I-131', 7300, { yearDays: 365.25 })];
+  await d103.prepare('Co-60');
+  const coOf = (rules) => assemble103(d103, { nuclide: 'Co-60', route: 'injection', cutoff: 1e-4, intakeAge: 7300, rules }).members[0];
+  check('103: a half-life given in years decays by 365 days to the year -- by the decay data\'s 365.25, e of 55Fe is 1.0005 of this and of 60Co 1.0002, of 148Tb, whose 148Gd lives 75 years, 0.9996; 131I, in days, is untouched, and T stays the data\'s',
+    near(yr[0], 1.0005, 5e-5) && near(yr[1], 1.0002, 5e-5) && near(yr[2], 0.9996, 5e-5) && yr[3] === 1 && OPTIONS103.yearDays === 365
+    && near(coOf().lambda, Math.LN2 / (5.2713 * 365), 1e-7) && near(coOf({ yearDays: 365.25 }).lambda, Math.LN2 / (5.2713 * 365.25), 1e-7) && near(coOf().T, 5.2713 * 365.25, 1e-7),
+    `${yr.map((x) => x.toFixed(5)).join(' ')}; 60Co lambda ${coOf().lambda.toExponential(6)} and ${coOf({ yearDays: 365.25 }).lambda.toExponential(6)}, T ${coOf().T}`);
   const rate = (el, a, b) => d103.elements[el].systemic.default.transfers.find((x) => x[0] === a && x[1] === b)[2];
   check('103 data: iodide goes to the urinary bladder at 11.84 d-1 at every age, barium to the adult\'s colon at 20.16 (Publication 137)',
     rate('I', 'Blood iodide', 'UB contents').every((x) => x === 11.84) && rate('Ba', 'Blood', 'RC contents')[5] === 20.16 && rate('Ba', 'Blood', 'RC contents')[0] === 6.72,

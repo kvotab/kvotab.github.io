@@ -879,6 +879,17 @@
             the chain (a few hundred compartments for the actinide series). Specific
             absorbed fractions are interpolated in energy as each publication says (linearly for the ICRP 60 photon
             SAFs, as DCAL; PCHIP for the ICRP 103 SAFs), beta particles enter through their spectra.</p>
+          <p>A year has 365 days in the ICRP 103 system, as in the calculation behind the ICRP’s coefficients: the dose
+            is added up over 18,250 days for an adult and to the age of 25,550 days for a child, and a half-life given in
+            years is that many times 365 days. The decay data count a half-life in days by 365.25 to the year, and the
+            Decay chain tab shows it so. By that count a nuclide that lives years and stays in the body decays 0.07 %
+            more slowly, and every organ dose is above the OIR Data Viewer’s by the same amount: 0.06 % for
+            <sup>147</sup>Pm and <sup>252</sup>Cf, 0.05 % for <sup>55</sup>Fe and <sup>244</sup>Cm, 0.03 % for
+            <sup>133</sup>Ba, 0.02 % for <sup>60</sup>Co and <sup>90</sup>Sr, which leave the body sooner; and below it
+            where a progeny that lives years grows in (<sup>241</sup>Am from <sup>241</sup>Pu). With 365 days those
+            seven and 28 more are at the viewer’s four figures in the effective dose and in every organ, and in the
+            annex of Publication 158 the organ doses after <sup>55</sup>Fe, <sup>60</sup>Co, <sup>125</sup>Sb and
+            <sup>134</sup>Cs are 0.01 % off in the mean, by the other count 0.02 to 0.05 %.</p>
           <p>The integrals keep the system small: for <sup>226</sup>Ra by ingestion, 571 equations with 1,747
             coefficients. The ages at intake are separate integrations and run in parallel, each in a worker of its own,
             as many at a time as the device has cores to spare; so do the inhalations behind radon at home. Before a run,

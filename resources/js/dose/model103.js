@@ -313,6 +313,18 @@ export const OPTIONS103 = {
                           // rule was found that tells these cases from the others (the annex's files
                           // name one program for all): they are listed as they were found. false = the
                           // step of all everywhere
+  yearDays: 365,          // days to the year of a half-life given in years, as in the calculations behind
+                          // the published coefficients, whose 50 years are 18,250 days too. The decay data
+                          // have a half-life in days by 365.25 to the year: by that a nuclide that lives
+                          // years and stays in the body decayed 0.07 % more slowly than theirs, and every
+                          // organ dose was above the OIR Data Viewer's by the same amount, 0.06 % for 173Lu
+                          // (1.37 y), 147Pm and 252Cf, 0.05 % for 55Fe and 244Cm (18.1 y), 0.03 % for 133Ba
+                          // and 243Cm, 0.02 % for 60Co and 90Sr, which leave the body sooner, and below it
+                          // where the long-lived one grows in (241Am from 241Pu, 227Ac from 231Pa). With
+                          // 365 days 35 nuclides are at the viewer's four figures in every organ that were
+                          // not, 55Fe, 60Co, 90Sr, 134Cs, 133Ba, 152Eu, 154Eu, 210Pb, 244Cm and 252Cf among
+                          // them, and in the annex of Publication 158 55Fe, 60Co, 125Sb and 134Cs come
+                          // nearer. 365.25 = the decay data's own days
 };
 const GAS_EXHALE = GAS_PROGENY.exhale;
 export const elementOf = (nuclide) => nuclide.split('-')[0];
@@ -414,6 +426,8 @@ export function assemble103(data, spec) {
   if (!E0) throw new Error(`no ICRP 103 model for ${parentEl}`);
   const rules = { ...OPTIONS103, ...(spec.rules || {}) };
   const chain = buildChain(index, spec.nuclide, chainOptions103(spec, rules));
+  // A half-life given in years decays by the year of the published calculations (yearDays); T stays the data's.
+  if (rules.yearDays && rules.yearDays !== 365.25) for (const m of chain.members) if (/y$/.test(String(index[m.name].t))) m.lambda *= 365.25 / rules.yearDays;
   const route = spec.route;
   const adultAge = E0.adultAge || 7300;
   const hatmAges = [100, 365, 1825, 3650, 5475, rules.tractAdult === 'twenty' ? 7300 : adultAge];
