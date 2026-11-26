@@ -221,11 +221,14 @@ export function coefficients103(data, spec, ages = AGES_103, opt = {}) {
     return oCache.get(key);
   };
   const step = spec.rules?.ageStep ?? OPTIONS103.ageStep;
-  // The step of an intake: one day where the published calculation of the element taken in has it at that age
-  // (OPTIONS103.shortSteps), else the step of all. A step asked for by rule is taken as it is.
+  // The steps of an intake: of one day where the published calculation of the element taken in has them
+  // (OPTIONS103.shortSteps), until the age the table gives ('age'; 'end': to the end), and the step of all after
+  // that, or the step of all throughout. A step asked for by rule is taken as it is.
   const short = spec.rules?.ageStep == null ? (spec.rules?.shortSteps ?? OPTIONS103.shortSteps) : null;
   const shortBefore = (short && short.before[spec.nuclide.split('-')[0]]) || 0;
-  const stepAt = (age0) => (step > 0 && age0 < shortBefore ? short.step : step);
+  const stepsAt = (age0) => (step > 0 && age0 < shortBefore
+    ? { step, firstStep: short.step, firstUntil: short.until === 'end' ? Infinity : shortBefore - age0 }
+    : { step });
   const ageSpline = spec.rules?.ageSpline ?? OPTIONS103.ageSpline;
   const marrowShare = spec.rules?.marrowShare ?? OPTIONS103.marrowShare;
   // Shares of the rest of the body need the steps: a share and an S each at
@@ -331,7 +334,7 @@ export function coefficients103(data, spec, ages = AGES_103, opt = {}) {
         while (b.kind === 'mirror' && sys.comps[b.of]) b = sys.comps[b.of];
         return { ...g, kind: c.kind, base: b.kind, name: c.name, place: c.place || null };
       };
-      const res = integrate(sys, { phantomAges: PHANTOM_AGES_103, columns, split, nTargets: which.length * nT, groups, interp: 'icrp103', step: stepAt(age0), functionals, byCompartment: !!opt.outputs },
+      const res = integrate(sys, { phantomAges: PHANTOM_AGES_103, columns, split, nTargets: which.length * nT, groups, interp: 'icrp103', ...stepsAt(age0), functionals, byCompartment: !!opt.outputs },
         { intakeAge, period, outputs: opt.outputs, rtol: opt.rtol });
       which.forEach((x, k) => saf.index.targets.forEach((t, i) => { Ht[x][t] = res.H[k * nT + i]; }));
       runs.push({ sys, res, groupKeys, which, doseGroups: opt.outputs ? res.doseGroups.map(kindOf) : null });

@@ -65,8 +65,12 @@
   are held too: strontium-90 at 3 months is 1.3 % low with continuous rates
   and S, 0.8 % with S in steps alone, 0.05 % with both (barium-133 1.6, 0.9,
   0.1; radium-226 1.4, 0.8, 0.06; caesium-137 1.35 low, 0.2 high, 0.03).
-  For three elements the same reading gives a step of one day, at the ages
-  model103.js lists (OPTIONS103.shortSteps): the step is the caller's.
+  For three elements the same reading gives steps of one day until an age
+  model103.js lists (OPTIONS103.shortSteps) and the steps of all after it:
+  the caller gives both (dose.firstStep until dose.firstUntil days after the
+  intake, then dose.step). With one-day steps all the way, every tissue of
+  41Ca at 3 months was 0.1 % below the annex; switched at 1 year of age, the
+  long-lived calcium, polonium and zinc agree with it too.
 
   With a step, each dose group carries one integral, its transformations,
   and a dose grows over a step by the step's own S times the transformations
@@ -178,9 +182,18 @@ export function integrate(sys, dose, opt) {
      (cross: shares of the lower phantom with the SEE of the upper one, and
      the reverse). */
   const product = !icrp103 && !!dose.cross;
-  // The length of a step (ICRP 103 only; see the head), or 0: rates and SEE continuous in age.
-  const L = icrp103 && dose.step > 0 ? dose.step : 0;
-  const stepped = L > 0;
+  // The length of a step (ICRP 103 only; see the head), or 0: rates and SEE continuous in age. Shorter steps may
+  // come first: dose.firstStep days long until dose.firstUntil days after the intake (rounded up to whole short
+  // steps), dose.step after that.
+  const L2 = icrp103 && dose.step > 0 ? dose.step : 0;
+  const stepped = L2 > 0;
+  const L = stepped && dose.firstStep > 0 && dose.firstUntil > 0 ? dose.firstStep : L2;
+  const K1 = L !== L2 && Number.isFinite(dose.firstUntil) ? Math.ceil(dose.firstUntil / L - 1e-9) : Infinity;
+  const T1 = K1 === Infinity ? Infinity : K1 * L;
+  const stepStart = (k) => (k <= K1 ? k * L : T1 + (k - K1) * L2); // the time step k starts at
+  const stepIdx = (t) => (t < T1 ? Math.floor(t / L + 1e-9) : K1 + Math.floor((t - T1) / L2 + 1e-9)); // the step t is in
+  const stepCeil = (t) => (t <= T1 ? Math.ceil(t / L - 1e-9) : K1 + Math.ceil((t - T1) / L2 - 1e-9)); // the first step from t on
+  const lagAt = (t) => (t >= T1 ? L2 : L) / 2; // half the step in force at t
   const M = stepped ? 1 : icrp103 || product ? 4 : 2; // basis functions per group
 
   /* --- the rates, as a function of age ------------------------------------ */
@@ -345,7 +358,7 @@ export function integrate(sys, dose, opt) {
   const Sg = stepped ? new Float64Array(G * nT) : null;
   const fwS = stepped && K ? new Float64Array(G * K) : null;
   let kLast = 0; // from this step on SEE is the last phantom's
-  const stepOf = (t) => Math.min(kLast, Math.floor(t / L + 1e-9));
+  const stepOf = (t) => Math.min(kLast, stepIdx(t));
   // A group in parts (dose.split: its activity shared among several source
   // regions by mass) has each part's SEE at the age times the part's share
   // of the mass there, the masses the phantoms' at their ages and straight
@@ -377,7 +390,7 @@ export function integrate(sys, dose, opt) {
   const useStep = (k) => {
     if (k === stepNow) return;
     stepNow = k;
-    seeAt(a0 + k * L);
+    seeAt(a0 + stepStart(k));
     for (let g = 0; g < G; g++) {
       for (let j = 0; j < K; j++) {
         const f = F[j];
@@ -458,7 +471,7 @@ export function integrate(sys, dose, opt) {
     cachedT = t;
     vals.fill(0);
     const age = a0 + t;
-    const rateAge = !stepped ? age : heldAge === heldAge ? heldAge : Math.max(a0, age - L / 2);
+    const rateAge = !stepped ? age : heldAge === heldAge ? heldAge : Math.max(a0, age - lagAt(t));
     for (let c = 0; c < n; c++) vals[c] = -lambda[sys.comps[c].member]; // diagonal slots come first
     for (let k = 0; k < tr.length; k++) {
       const r = rateAt(tr[k], rateAge);
@@ -498,13 +511,13 @@ export function integrate(sys, dose, opt) {
     // then their straight lines of age half a step late (kinks half a step
     // after the tables' ages).
     if (tr.some((x) => x.ages && x.ages[x.ages.length - 1] > a0)) {
-      const held = Math.max(STEPS_HELD, Math.ceil((FIRST_YEAR - a0) / L));
-      tHeld = held * L;
-      for (let k = 1; k <= held; k++) if (k * L < tEnd) kinks.add(k * L);
-      for (const x of tr) if (x.ages) for (const a of x.ages) { const t = a - a0 + L / 2; if (t > tHeld && t < tEnd) kinks.add(t); }
+      const held = Math.max(STEPS_HELD, stepCeil(FIRST_YEAR - a0));
+      tHeld = stepStart(held);
+      for (let k = 1; k <= held; k++) if (stepStart(k) < tEnd) kinks.add(stepStart(k));
+      for (const x of tr) if (x.ages) for (const a of x.ages) { const t = a - a0 + lagAt(a - a0); if (t > tHeld && t < tEnd) kinks.add(t); }
     }
     // SEE changes from step to step until one starts at the last phantom's age.
-    if (last > 0 && a0 < pa[last]) kLast = Math.ceil((pa[last] - a0) / L - 1e-9);
+    if (last > 0 && a0 < pa[last]) kLast = stepCeil(pa[last] - a0);
   } else {
     for (const x of tr) if (x.ages) x.ages.forEach(addKink);
     pa.forEach(addKink);
@@ -544,17 +557,17 @@ export function integrate(sys, dose, opt) {
   for (let s = 0; s + 1 < breaks.length; s++) {
     const t0 = breaks[s], t1 = breaks[s + 1];
     if (stepped) {
-      heldAge = t0 < tHeld ? a0 + Math.round(t0 / L) * L : NaN;
+      heldAge = t0 < tHeld ? a0 + stepStart(stepIdx(t0)) : NaN;
       if (K && s === 0) ratesAt(0, y, series[0].rates);
       cachedT = NaN;
       // The times of the stretch: the outputs asked for and, while SEE still
       // changes, the start of each step; its end is a point of the series as
       // every stretch's is.
       const times = [t0], shown = [false];
-      let io = 0, k = Math.floor(t0 / L + 1e-9) + 1;
+      let io = 0, k = stepIdx(t0) + 1;
       while (io < outputs.length && outputs[io] <= t0) io++;
       for (;;) {
-        const tb = k <= kLast ? k * L : Infinity, to = io < outputs.length ? outputs[io] : Infinity;
+        const tb = k <= kLast ? stepStart(k) : Infinity, to = io < outputs.length ? outputs[io] : Infinity;
         const t = Math.min(tb, to);
         if (!(t < t1)) break;
         if (t > times[times.length - 1]) { times.push(t); shown.push(to === t); } else if (to === t) shown[shown.length - 1] = shown.length > 1;

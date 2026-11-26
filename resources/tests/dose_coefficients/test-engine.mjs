@@ -512,13 +512,14 @@ if (!SYSTEM || SYSTEM === '103') {
     // inhaled as Type S has 0.986 of this by the trapezoidal rule
     ['103', { nuclide: 'H-3', route: 'inhalation', form: 'S' }, 100, 2.6333e-12, 'Extrathoracic region'],
     ['103', { nuclide: 'H-3', route: 'inhalation', form: 'S', rules: { betaSpectrum: 'trapezoid' } }, 100, 2.5955e-12, 'Extrathoracic region'],
-    // steps of one day where the published calculation has them (OPTIONS103.shortSteps): calcium and polonium for
-    // 3-month-olds, zinc to 5 years; in the steps of all, e is 1.010, 1.011 and (zinc at 1 year) 1.002 of these
-    ['103', { nuclide: 'Ca-45', route: 'injection' }, 100, 1.1916e-8],
+    // steps of one day where the published calculation has them (OPTIONS103.shortSteps): calcium and polonium until
+    // the child is 1 year old, zinc until 5, the steps of all after; in the steps of all throughout, e is 1.009,
+    // 1.011 and (zinc at 1 year) 1.002 of these
+    ['103', { nuclide: 'Ca-45', route: 'injection' }, 100, 1.1921e-8],
     ['103', { nuclide: 'Ca-45', route: 'injection', rules: { shortSteps: false } }, 100, 1.2033e-8],
-    ['103', { nuclide: 'Po-210', route: 'injection' }, 100, 2.2660e-5],
+    ['103', { nuclide: 'Po-210', route: 'injection' }, 100, 2.2661e-5],
     ['103', { nuclide: 'Po-210', route: 'injection', rules: { shortSteps: false } }, 100, 2.2906e-5],
-    ['103', { nuclide: 'Zn-65', route: 'injection' }, 365, 2.9530e-8],
+    ['103', { nuclide: 'Zn-65', route: 'injection' }, 365, 2.9531e-8],
     // iodide to the urinary bladder at 11.84 d-1 and barium's adult colon rate 20.16, as Publication 137 has them
     ['103', { nuclide: 'I-131', route: 'injection' }, 7300, 3.6853e-7, 'Thyroid'],
     ['103', { nuclide: 'Ba-133', route: 'injection' }, 7300, 4.2019e-9],
@@ -613,8 +614,18 @@ if (!SYSTEM || SYSTEM === '103') {
   check('103: zinc at 1 year in the steps of all has e 1.0020 of the one-day steps\'', near(zn, 1.0020, 2e-4), zn.toFixed(4));
   const same = [await ratio('Zn-65', 1825, { shortSteps: false }), await ratio('Ca-45', 365, { shortSteps: false }), await ratio('Sr-90', 100, { shortSteps: false })];
   check('103: the one-day steps end where the table says -- zinc at 5 years, calcium at 1 year and strontium at 3 months are untouched', same.every((x) => x === 1), same.join(', '));
-  check('103: OPTIONS103.shortSteps lists calcium and polonium before 1 year and zinc before 5, in steps of one day',
-    JSON.stringify(OPTIONS103.shortSteps) === JSON.stringify({ step: 1, before: { Ca: 365, Po: 365, Zn: 1825 } }), JSON.stringify(OPTIONS103.shortSteps));
+  check('103: OPTIONS103.shortSteps lists calcium and polonium before 1 year and zinc before 5, in steps of one day until that age',
+    JSON.stringify(OPTIONS103.shortSteps) === JSON.stringify({ step: 1, before: { Ca: 365, Po: 365, Zn: 1825 }, until: 'age' }), JSON.stringify(OPTIONS103.shortSteps));
+  // The one-day steps end at the age the table gives, the steps of all follow: with one-day steps to the end every
+  // tissue of 41Ca at 3 months was 0.1 % below the annex of Publication 158.
+  {
+    const end = { shortSteps: { ...OPTIONS103.shortSteps, until: 'end' } };
+    await d103.prepare('Ca-41');
+    const at = (rules) => coefficients103(d103, { nuclide: 'Ca-41', route: 'injection', cutoff: 1e-4, rules }, [100])[0];
+    const now = at(), old = at(end), e = old.E / now.E, mu = old.H.M.Muscle / now.H.M.Muscle;
+    check('103: the one-day steps last until 1 year of age for calcium, then the steps of all: 41Ca at 3 months with one-day steps to the end has e 0.9990 and muscle 0.9989 of this',
+      near(e, 0.9990, 1e-4) && near(mu, 0.9989, 1e-4), `${e.toFixed(5)} ${mu.toFixed(5)}`);
+  }
   const pbTract = [await ratio('Pb-205', 5475, { tractAdult: 'element' }), await ratio('Pb-205', 3650, { tractAdult: 'element' }), await ratio('Pb-205', 9125, { tractAdult: 'element' }), await ratio('Cs-137', 5475, { tractAdult: 'element' })];
   await d103.prepare('Pb-205');
   const pbAges = (rules) => { const s = assemble103(d103, { nuclide: 'Pb-205', route: 'injection', cutoff: 1e-4, intakeAge: 5475, rules }); return [s.intake.ages.at(-1), s.spec.adultAge]; };

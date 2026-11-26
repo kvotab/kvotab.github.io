@@ -307,9 +307,15 @@ export const OPTIONS103 = {
                           // intake on, each at its start, as in the calculation behind the published
                           // coefficients (solve.js has what was read off them); 0 = both continuous
                           // in age, as Publication 158 describes them (para 13, eqs. 2.15-2.16)
-  shortSteps: { step: 1, before: { Ca: 365, Po: 365, Zn: 1825 } },
+  shortSteps: { step: 1, before: { Ca: 365, Po: 365, Zn: 1825 }, until: 'age' },
                           // days: where the published calculation moved in shorter steps than ageStep --
-                          // by the element taken in, the age at intake before which it did. Read off the
+                          // by the element taken in, the age until which it did, and then in the steps of
+                          // all (until 'age'; 'end' = the short steps to the end of the calculation: so
+                          // every tissue of 41Ca at 3 months was 0.1 % below the annex, 45Ca's 0.05 %, and
+                          // 208Po and 209Po inhaled as Type S 0.12 % in ET and the remainder; with the
+                          // switch at 1 year of age all within 0.02 %; switched a year after the intake
+                          // instead, 65Zn at 3 months and 1 year comes out up to 0.05 % high, by the age
+                          // within 0.03 %). Read off the
                           // annex of Publication 158 as ageStep was (solve.js), each case by the step that
                           // makes e the annex's, by injection: calcium for 3-month-olds 1.0, 1.4 and
                           // 1.5 d (47Ca, 45Ca, 41Ca) and for 1-year-olds 8.3 to 8.9 d; polonium 1.0 to

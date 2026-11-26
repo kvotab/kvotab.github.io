@@ -2135,3 +2135,35 @@ of the 0.072 asked).
 Still open: 228Ra and 224Ra, radon, 85Y and 85mY (brain 0.2-0.3 % low at
 1 to 10 years by ingestion), 81Sr at 3 months, 87Zr's and 90Mo's bladder
 wall at 3 months, 45Ca's soft tissues at 15 years (0.11-0.15 % low).
+
+## The one-day steps end at 1 year of age (2026-11-26, night)
+
+Against the annex: 5 nuclides move, all nearer (41Ca 0.054 → 0.025 % rms,
+208Po and 209Po 0.015 → 0.005, 45Ca, 210Po); organ doses more than 0.1 %
+off 2,557 → 2,287, effective doses more than 0.1 % off 18 → 16. Nothing
+else moves, in the printed tables or the OIR Data Viewer either.
+
+- **The steps of one day for calcium and polonium last until the child is
+  1 year old, for zinc until 5, and the steps of all follow**
+  (`OPTIONS103.shortSteps` `until: 'age'`; solve.js takes `dose.firstStep`
+  until `dose.firstUntil` days after the intake, then `dose.step`). The
+  section "Steps of one day for calcium, polonium and zinc" found the one
+  step that fits each case at 3 months: 1.0 d for 47Ca, 1.4 for 45Ca, 1.5
+  for 41Ca, the longer the half-life the more of the later steps showing.
+  With one-day steps to the end every tissue of 41Ca at 3 months was
+  0.09-0.13 % below the annex, 45Ca's 0.05 %, and 208Po and 209Po inhaled
+  as Type S 0.12-0.13 % in the extrathoracic airways and the remainder;
+  switched at 1 year of age, all are within 0.02 %. Switched a year after
+  the intake instead, 65Zn at 3 months and 1 year comes out up to 0.05 %
+  high; switched by the age, within 0.03 %.
+- 85Y, 85mY and 87Y swallowed (looked at, left open): the brain, salivary
+  glands, thyroid and extrathoracic airways 0.1-0.3 % low at 3 months to
+  15 years, none for adults; the yttriums whose progeny is not strontium
+  are exact. The head organs' dose is mostly the strontium formed in the
+  gut and absorbed (51-89 % by age); the ask is 0.1-0.4 % more of it, and
+  neither strontium's absorbed fraction nor the transit times change by
+  age the way it does.
+
+Still open: 228Ra and 224Ra, radon, 85Y, 85mY and 87Y swallowed, 81Sr at
+3 months, 87Zr's and 90Mo's bladder wall at 3 months, 45Ca's soft tissues
+at 15 years (0.11-0.15 % low).
