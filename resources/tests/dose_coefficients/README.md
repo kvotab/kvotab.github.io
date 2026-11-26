@@ -1959,3 +1959,57 @@ printed value 99.2 → 99.3 % (two more, none fewer).
 Left in the viewer: antimony (125Sb's effective dose 0.6 % above it,
 growing with the half-life; the annex agrees with the page, so the workers'
 model differs), 197mPb (spleen), 182Ir (thyroid), 228Ra (0.3 %), 233Np.
+
+## The viewer's last four: antimony, 197mPb, 182Ir, 228Ra (2026-11-26, night)
+
+Three of them are differences between the models for workers and for the
+public, which the page follows; the annex agrees with the page in all three
+to 0.02 % at every age. Help says so (its comparison with the viewer, made
+by the private help-checks tool). No engine or data change.
+
+- **Antimony.** Publication 137 Table 3.3 has every rate the page has, but
+  its note on Table 3.2 absorbs antimony secreted into the gut again at the
+  workers' reference fA, 0.05. The page takes the highest fA for the public,
+  the 0.1 of antimony in food (OPTIONS103.secretionFA 'max'), as the annex
+  shows. With 0.05, 19 of the 20 antimony isotopes agree with the viewer to
+  four figures and 131Sb within 0.03 % (125Sb was 0.62 % above it in every
+  tissue, the colon less for the short-lived ones). Polonium (0.5 for the
+  public, 0.1 for workers) has no secretion that it matters to; mercury's
+  0.1 for workers makes 197mPb worse.
+- **197mPb and 195mPb.** Mercury formed from lead has a model of its own
+  for workers (Publication 137 para 479: plasma cleared at 16.636 d⁻¹, its
+  "h⁻¹" a misprint, 35 % to the kidneys, 20 % to the liver, 3 % to red
+  marrow, 0.6 % to the spleen ...). The page has the public's inorganic
+  mercury with the tissues read off the annex. With para 479's model the
+  viewer's 197mPb comes within 0.2 % (rms 0.60 → 0.16 %), but for the
+  kidneys (+0.77 %, perhaps thallium's model); 195mPb 0.16 → 0.05 %.
+- **182Ir.** Thyroid 2.2 % and salivary glands 1.1 % below the viewer, the
+  gut walls up to 0.8 % above: rhenium (182mRe) reaching blood and osmium
+  in the gut. Not found: the workers' rule for rhenium (para 395:
+  technetium as a member of ruthenium chains) is what the page does already,
+  technetium, ruthenium and osmium are exact in the viewer by themselves,
+  and none of these moves it: osmium's or rhenium's fA for secreted
+  activity, progeny formed in the gut at the parent's fA, rhenium formed in
+  osmium's soft tissue in technetium's pools of the same name (2.6 % off).
+  A single rate that fits half of it: technetium's uptake into the thyroid
+  5.6 % higher, which no publication gives.
+- **228Ra: a gap of the page.** The annex asks the same as the viewer: the
+  tissues in "Other" (muscle, brain, bladder and gut walls, thyroid) 0.39 %
+  lower for adults, 0.13 % at 1 year and 0.27 % at 5, none at 3 months, 10
+  and 15 years; skin, spleen, kidneys, liver, marrow and bone exact. Only
+  with radium in blood at once (injection, ingestion, Type F; Type M not),
+  and only after 228Ra: 228Ac, 228Th, 232Th and 224Ra taken in agree with
+  the viewer within 0.12 %. So it is what actinium and thorium formed from
+  radium in the body do in the first days. Of the soft-tissue dose three
+  quarters is 224Ra's chain, and thorium returning from radium's bone
+  volumes at the turnover rate carries most of it. Excluded (each moves it
+  otherwise or not at all): the progeny's adult age, steps of age held all
+  the way, every rate of radium's, actinium's and thorium's models alone
+  (the best leaves half), the turnover rates by age, actinium or thorium
+  formed in the parent's pools in their own, thorium in a foreign pool to
+  blood at once (the right tissues, but not the zeros), thorium and
+  actinium in their own bone volumes, actinium's 1.386, the carves of skin
+  and spleen, the rules for each member's rest of the body. The ages where
+  nothing is asked are those where radium's uptake into ST0 is low (0.33,
+  0.59, 0.35 of the adult's at 3 months, 10 and 15 years; 0.73, 0.80 and 1
+  where it is asked): the next place to look.
