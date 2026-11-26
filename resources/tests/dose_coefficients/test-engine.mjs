@@ -716,6 +716,26 @@ if (!SYSTEM || SYSTEM === '103') {
       const fits = (to) => { const v = y(to), a = v[5]; return [2 / 3, 5 / 6, 5 / 6, 5 / 6, 5 / 6, 1].every((f, k) => near(v[k], a * f, 1e-6)); };
       check('103 data: yttrium\'s rates out of blood before adulthood are the adult\'s x 2/3 at 3 months and x 5/6 from 1 to 15 years (to the liver 1.106667 and 1.383333 for the printed 1.11 and 1.38)',
         ['Blood 2', 'Liver 0', 'Kidneys', 'SI contents', 'UB contents', 'ST0', 'ST1'].every(fits) && near(y('Liver 0')[0], 1.106667, 1e-6), JSON.stringify(y('Liver 0')));
+      // Zirconium and niobium by the same rule (Publication 158 paras 366-367, 373-374): to the bone surfaces the adult's x 1.5
+      // and x 1.25, to every other place the adult's x (1-B)/(1-A), A = 0.15 and 0.03 of the outflow from Blood 1. With the
+      // printed figures the kidneys after 93Zr were 0.26 % below the annex at 1 year.
+      const zrnb = ['Zr', 'Nb'].map((el) => {
+        const T = d103.elements[el].systemic.default.transfers.filter((x) => x[0] === 'Blood 1'), bone = (x) => /bone surf/.test(x[1]);
+        const A = T.filter(bone).reduce((s, x) => s + x[2][5], 0) / T.reduce((s, x) => s + x[2][5], 0);
+        return { A, ok: T.length === 9 && [1.5, 1.25, 1.25, 1.25, 1.25, 1].every((g, k) => T.every((x) => near(x[2][k], x[2][5] * (bone(x) ? g : (1 - g * A) / (1 - A)), 1e-6))) };
+      });
+      const zk = d103.elements.Zr.systemic.default.transfers.find((x) => x[0] === 'Blood 1' && x[1] === 'Kidneys')[2];
+      check('103 data: zirconium\'s and niobium\'s rates out of blood before adulthood are the adult\'s x 1.5 and x 1.25 to the bone surfaces and x (1-B)/(1-A) elsewhere, A = 0.15 and 0.03 (zirconium\'s kidneys 0.01139706 and 0.01194853 for the printed 0.0114 and 0.0119)',
+        zrnb.every((z) => z.ok) && near(zrnb[0].A, 0.15, 1e-9) && near(zrnb[1].A, 0.03, 1e-9) && near(zk[0], 0.01139706, 1e-7) && near(zk[1], 0.01194853, 1e-7),
+        `${zrnb.map((z) => `${z.A} ${z.ok}`).join(' | ')} | ${JSON.stringify(zk)}`);
+      // Carbon's rates from its tissues and bone surfaces to blood: the adult's x 4, 2.5, 2.5, 2 and 1.2 at every place
+      // (Publication 158 para 254), the organic part's too; with Table 6.3's 0.0248 and 0.0119 from the long-term tissue
+      // every tissue after organic 14C was 0.1 % below the annex at 1, 5 and 15 years.
+      const ct = d103.elements.C.systemic.generic.transfers.filter((x) => !/^Blood|bone vol/.test(x[0]) && /^Blood/.test(x[1]));
+      const lt = ct.find((x) => x[0] === 'Long-term tissue' && x[1] === 'Blood 1')?.[2];
+      check('103 data: carbon\'s rates from its tissues and bone surfaces to blood before adulthood are the adult\'s x 4, 2.5, 2.5, 2 and 1.2, the organic part\'s too (from the long-term tissue 0.02475 and 0.01188 for the printed 0.0248 and 0.0119)',
+        ct.length === 12 && ct.every((x) => [4, 2.5, 2.5, 2, 1.2, 1].every((f, k) => near(x[2][k], x[2][5] * f, 1e-9))) && lt?.[1] === 0.02475 && lt?.[4] === 0.01188,
+        `${ct.length} ${JSON.stringify(lt)}`);
     }
     check('103 data: plutonium has the rates of Publication 141 Table 18.6 -- the adult\'s to trabecular surface 0.12474, cortical surface 0.08778 and testes 0.0002695 (children as the draft has them), and at every age 0.0001266 out of ST2, 28.95 from Blood 2 to ST0 and 0.01155 to the right colon',
       r('Blood 1', 'Trab bone surf').join() === '0.26,0.26,0.208,0.208,0.208,0.12474' && r('Blood 1', 'Cort bone surf').at(-1) === 0.08778 && r('Blood 1', 'Testes').join() === '0.0000154,0.0000231,0.0000262,0.0000308,0.000246,0.0002695'
@@ -897,8 +917,10 @@ if (!SYSTEM || SYSTEM === '103') {
     pb.progeny && (() => { const sp = d103.progeny.sets.radon.Pb.identify, lead = d103.progeny.sets.lead.Pb.identify; return sp['Rn:Liver'] === 'Liver 1' && lead.RBC === 'Blood 1'; })()
     && comp('Po-214', 'RBC') >= 0 && compLike('Po-214', 'Blood 1 (') < 0,
     `${comp('Po-214', 'RBC')} ${compLike('Po-214', 'Blood 1 (')}`);
-  const adult25 = ['Ac', 'Pa', 'Bk', 'Cf', 'Es', 'Fm', 'La', 'Ce', 'Pr', 'Nd', 'Pm', 'Sm', 'Eu', 'Gd', 'Tb', 'Dy', 'Ho', 'Er', 'Tm', 'Yb', 'Lu', 'Al'];
-  check('adult rates from 25 years for actinium, protactinium, berkelium to fermium, the lanthanides and aluminium',
+  // Phosphorus too: its bone takes calcium's share x 0.8 (Publication 158 para 269); with 20 years 33P's bone surface at
+  // 15 years was 0.13 % below the annex and its liver and kidneys as much above.
+  const adult25 = ['Ac', 'Pa', 'Bk', 'Cf', 'Es', 'Fm', 'La', 'Ce', 'Pr', 'Nd', 'Pm', 'Sm', 'Eu', 'Gd', 'Tb', 'Dy', 'Ho', 'Er', 'Tm', 'Yb', 'Lu', 'Al', 'P'];
+  check('adult rates from 25 years for actinium, protactinium, berkelium to fermium, the lanthanides, aluminium and phosphorus',
     adult25.every((el) => d103.elements[el].adultAge === 9125 && Object.values(d103.elements[el].systemic).every((m) => m.ages.at(-1) === 9125)),
     adult25.filter((el) => d103.elements[el].adultAge !== 9125).join(' '));
   // A progeny's model has its adult rates from the adult age of the element taken in.

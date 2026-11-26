@@ -2056,3 +2056,82 @@ for the printed 7.5E-9, while the annex's 110mAg comes six times nearer.
 Still open: 228Ra (the section before) and 224Ra (soft tissues 0.1-0.3 %
 low at every age), radon, 85Y and 85mY (brain 0.2-0.3 % low at 1 to 10
 years by ingestion), 93Zr's kidneys at 1 and 5 years, 81Sr at 3 months.
+
+## Carbon's organic tissues, zirconium's and niobium's children, phosphorus adult from 25 (2026-11-26, night)
+
+Against the annex: 18 nuclides move, all nearer; organ doses within 0.1 %
+99.4 → 99.6 % (more than 0.1 % off 3,704 → 2,557, more than 0.2 % off
+613 → 597), effective doses more than 0.1 % off 29 → 18. The printed
+tables and the OIR Data Viewer (adults) do not move.
+
+- **Carbon's rates from the tissues of organic carbon to blood are the
+  adult's x 4, 2.5, 2.5, 2 and 1.2 before adulthood** (elements.json), the
+  factors of Publication 158 para 254 that the rest of the generic model's
+  rates to blood (the CO2 submodel's tissues, the bone surfaces) already
+  had. Table 6.3 prints 0.0248 and 0.0119 from the long-term tissue at 1
+  and 15 years for 0.02475 and 0.01188, and from the short-term tissue 0.37,
+  0.185, 0.111 for 0.3696, 0.1848, 0.11088 (to Blood) and 0.277, 0.173,
+  0.139, 0.0832 for 0.2772, 0.17325, 0.1386, 0.08316 (to Blood 1). Its rate
+  to the right colon is not one to blood and stays 0.0693 at every age, as
+  printed; methane's stay the same at every age (para 259). Every tissue
+  after 14C taken in as organic carbon was 0.11-0.13 % below the annex at
+  1, 5 and 15 years and 0.03 % at 10; 14C 0.059 → 0.010 % rms, carbon's
+  organ doses more than 0.1 % off 754 → 20 (none of 14C's).
+- **Zirconium's and niobium's rates out of blood before adulthood follow
+  the rule of Publication 158 paras 366-367 and 373-374** (elements.json):
+  to the bone surfaces the adult's x 1.5 at 3 months and x 1.25 from 1 to
+  15 years, to every other place the adult's x (1-B)/(1-A), with A the
+  adult's share of the outflow from Blood 1 that goes to bone (zirconium
+  0.75 of 5 d⁻¹, 0.15; niobium 0.24 of 8 d⁻¹, 0.03) and B the share at the
+  age: x 0.911765 and 0.955882 for zirconium, x 0.984536 and 0.992268 for
+  niobium. Tables 17.2 and 18.2 print three figures (zirconium's kidneys
+  0.0114 and 0.0119 for 0.011397 and 0.011949, its bone surfaces 0.563 and
+  0.469 for 0.5625 and 0.46875). Yttrium's 2/3 and 5/6 of the section
+  before are the same rule with A = 0.4. 93Zr's kidneys were 0.26 % below
+  the annex at 1 year; now within 0.03 % in every organ (0.063 → 0.006 %
+  rms). The zirconium and niobium nuclides' organ doses more than 0.1 % off
+  273 → 4: those four are the bladder wall at 3 months after 87Zr and 90Mo
+  inhaled as Type F, 0.2-0.27 % low, which the rates do not touch.
+- **Phosphorus has its adult values from 25 years** (elements.json:
+  adultAge and the systemic model's last age 9125 d), as calcium, whose
+  skeletal model it shares: its deposition on the bone surfaces is
+  calcium's x 0.8 at each age, translocation and removal calcium's
+  (Publication 158 para 269). 33P taken in at 15 years had its bone surface
+  and red marrow 0.10-0.13 % below the annex and liver and kidneys 0.13 %
+  above, every route; now within 0.03 % (33P 0.060 → 0.039 % rms;
+  phosphorus's organ doses more than 0.1 % off 158 → 14, none more than
+  0.2 %). 32P's bone and liver come as near, but its soft tissues at 15
+  years go from 0.02 % high to 0.05-0.06 % low and the extrathoracic
+  airways from 0.06 to 0.12 % high (0.031 → 0.033 % rms); 33P's soft
+  tissues at 15 years are left 0.03-0.07 % low. Each
+  of the other elements of the annex whose adult is from 20 years was
+  tried at 25 against it: none moves nearer (cobalt, caesium, iron, iodine,
+  iridium, technetium and others hundreds of organ doses away), and silver,
+  sulphur, selenium and polonium do not move at all.
+- Calcium and the other alkaline earths were looked at for the same rule:
+  their tables already have (1-B)/(1-A) with A = 0.25 to three or more
+  figures (1/3, 11/15, 4/5, 44/75, 26/75), and the few rounded ones (calcium
+  to ST0 5.1 and 3.02 at 10 and 15 years for 5.104 and 3.016) are kept: all
+  of calcium's rates worked out move 41Ca, 45Ca and 47Ca away from the annex
+  (organ doses more than 0.1 % off 416 → 460). 41Ca's 0.13 % at 3 months,
+  the same in every organ, is what the steps leave ("Steps of one day for
+  calcium, polonium and zinc": 41Ca's fits 1.5 days, not one).
+
+224Ra, looked at and left open: every tissue of "Other" 0.10-0.15 % low
+(muscle, brain and bladder wall up to 0.3 % at 3 months), kidneys and
+spleen 0.1 % high, at every age and in the OIR Data Viewer alike; 212Pb and
+212Bi taken in themselves are exact, 226Ra too, 228Th shows 60 % of it.
+So it is in how radon-220's short-lived progeny are placed when formed in
+radium's soft tissues (56 s: 97 % of it decays where it is formed, where
+222Rn mostly leaves). Not it: polonium there in polonium's Other, so lead
+in its ST1 (+27 % in soft tissue); lead in lead's pools of the same name
+(+14 %) or in its ST0 (soft tissues right, testes −0.9 %, spleen −0.25 %,
+228Th and 228Ra 5-12 % off); the shadows counted in each progeny's own
+Other (+3.7 %, testes −25 %); lead's age-specific ST0 rate for its
+unidentified pools (kidneys +0.9 % at 3 months); any single rate of radon,
+lead, bismuth or thallium as radium's progeny (the best leave 0.056 % rms
+of the 0.072 asked).
+
+Still open: 228Ra and 224Ra, radon, 85Y and 85mY (brain 0.2-0.3 % low at
+1 to 10 years by ingestion), 81Sr at 3 months, 87Zr's and 90Mo's bladder
+wall at 3 months, 45Ca's soft tissues at 15 years (0.11-0.15 % low).
