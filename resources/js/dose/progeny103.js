@@ -31,7 +31,10 @@
                  outflow from blood is kept; at other ages the added inflows
                  keep their ratio to the inflow they are taken from, or, with
                  shareOf, follow the share that the compartment of that name
-                 has of the flow out of `from` in element el's model (key)
+                 has of the flow out of `from` in element el's model (key).
+                 `rate` may be a list, a rate for each age of the model, taken
+                 as given (lead as progeny: its five added tissues with the
+                 two figures the published calculation holds them with)
                {op: 'rename', name, to, region}
                {op: 'remove', name}           a compartment and its transfers
                {op: 'set', from, to, rate}    a constant transfer coefficient
@@ -210,7 +213,11 @@ export function buildProgenyModel(spec, el, elements, modelOf) {
       const added = new Array(n).fill(0);
       for (const it of op.add) {
         let rin;
-        if (it.rate != null) rin = src.map((s) => it.rate * (srcA > 0 ? s / srcA : 1));
+        if (Array.isArray(it.rate)) {
+          // a rate for each age of the model, as given; the adult's where the model has one age
+          if (it.rate.length !== n && n !== 1) throw new Error(`carve: ${it.name} has ${it.rate.length} rates, the model ${n} ages`);
+          rin = n === 1 ? [it.rate[it.rate.length - 1]] : it.rate.slice();
+        } else if (it.rate != null) rin = src.map((s) => it.rate * (srcA > 0 ? s / srcA : 1));
         else if (it.like) rin = inflow(it.like).map((x) => x * (it.factor ?? 1));
         else if (it.share != null) rin = sumOf(it.per || from).map((x) => x * it.share);
         else if (it.ofOutflow != null) rin = total(it.excluding || []).map((x) => x * it.ofOutflow);

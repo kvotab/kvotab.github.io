@@ -144,8 +144,10 @@ function namedBefore(sys) {
 }
 
 function otherParts(saf, named, chainNamed, colsFor, sharesOf = 'M', apart = null, marrowShare = 'red-yellow') {
-  // The individual whose masses give the shares: the reference male, or, where the model is the female's own (radon), her.
-  const male = PHANTOMS_103[sharesOf].map((id) => saf.phantoms[id]), female = PHANTOMS_103[sharesOf === 'M' ? 'F' : 'M'].map((id) => saf.phantoms[id]);
+  // The individual whose masses give the shares: the reference male, or, where the model is the female's own (radon), her
+  // -- at the phantoms' ages where it is (sharesOf: a sex, or one for each phantom age).
+  const of = (p) => (Array.isArray(sharesOf) ? sharesOf[p] : sharesOf);
+  const male = PHANTOMS_103.M.map((_, p) => saf.phantoms[PHANTOMS_103[of(p)][p]]), female = PHANTOMS_103.M.map((_, p) => saf.phantoms[PHANTOMS_103[of(p) === 'M' ? 'F' : 'M'][p]]);
   const src = male[0].sources;
   const mine = (ph, s) => ph.other[s] && !named.has(src[s]) && !(apart && apart.has(src[s]));
   let X = [];
@@ -235,6 +237,18 @@ export function coefficients103(data, spec, ages = AGES_103, opt = {}) {
   // female's shares: the male's as everywhere, or her own for the nuclides the
   // set lists ("*sexShares": 222Rn, as the annex of Publication 158 has it).
   const sexShares = spec.rules?.sexShares ?? head?.['*sexShares']?.[spec.nuclide] ?? OPTIONS103.sexShares;
+  // Her own masses where the model is her own: at the ages where the element's two models differ (radon: from
+  // 15 years; one model serves both sexes before). 'own-all' = her own at every age.
+  const E0 = data.elements[spec.nuclide.split('-')[0]];
+  const hers = (() => {
+    const m = E0?.systemic?.male, f = E0?.systemic?.female;
+    if (sexShares === 'own-all' || !m || !f) return PHANTOMS_103.F.map(() => 'F');
+    return PHANTOMS_103.F.map((_, a) => (m.transfers.length !== f.transfers.length || m.transfers.some((t) => {
+      const u = f.transfers.find((x) => x[0] === t[0] && x[1] === t[1]);
+      const x = t[2][Math.min(a, t[2].length - 1)], y = u ? u[2][Math.min(a, u[2].length - 1)] : NaN;
+      return !(Math.abs(x - y) <= 1e-9 * Math.abs(x));
+    }) ? 'F' : 'M'));
+  })();
   return ages.map((age0) => {
     const adultAge = data.elements[spec.nuclide.split('-')[0]]?.adultAge || 7300;
     const intakeAge = age0 === 7300 ? adultAge : age0;
@@ -294,7 +308,7 @@ export function coefficients103(data, spec, ages = AGES_103, opt = {}) {
         if (splitCache.has(key)) return splitCache.get(key);
         const named = new Set(sys.members[c.otherOf ?? c.member].named);
         const parts = otherParts(saf, named, chainNamed, (region, set) => colsFor(sys.members[c.member].name, region, set),
-          sex === 'F' && sexShares === 'own' ? 'F' : 'M', before ? before[c.otherOf ?? c.member] : null, marrowShare);
+          sex === 'F' && (sexShares === 'own' || sexShares === 'own-all') ? hers : 'M', before ? before[c.otherOf ?? c.member] : null, marrowShare);
         splitCache.set(key, parts);
         return parts;
       }) : undefined;

@@ -199,8 +199,13 @@ export const OPTIONS103 = {
                           // their share of it like any tissue the chain names
   sexShares: 'male',      // where an element has a model for each sex (radon), the female's shares of the
                           // rest of the body: 'male' = by the male's masses, as where one model serves
-                          // both (220Rn in the annex of Publication 158); 'own' = by her own, which a
-                          // set of progeny.json can ask for by nuclide ("*sexShares": 222Rn in the annex)
+                          // both (220Rn in the annex of Publication 158); 'own' = by her own at the ages
+                          // where her model is her own, which a set of progeny.json can ask for by nuclide
+                          // ("*sexShares": 222Rn in the annex). Radon's two models are one up to 10 years
+                          // and differ from 15: by her own masses at 5 and 10 years too, where she has less
+                          // brain and more adipose than the male and radon names adipose, her skin, spleen
+                          // and ovaries after 222Rn as a gas were 0.5-0.9 % above the annex's; with the
+                          // male's there they are within 0.26 %. 'own-all' = by her own at every age
   contentsTransit: 'parent', // progeny formed in the contents of the alimentary tract move on at the rate the
                           // model of the nuclide taken in has there, where it has one of its own (radon:
                           // stomach to small intestine, 15.2 d-1 in the female from 15 years where the

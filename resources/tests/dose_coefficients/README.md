@@ -1736,3 +1736,93 @@ Still open:
 - The 44 organ doses more than 0.5 % off: Rn-222 16, Ag-115 10, Pb-200 5,
   Ra-224 and Te-131 4 each, Bi-214 and Rn-220 2 each, Ag-101 1.
 - Thoron as a gas at 5 years, e 0.21 % high; radium's bone at 15 years.
+
+## Five of the leftovers, each a detail of a progeny's model (2026-11-26)
+
+Against the annex: organ doses more than 0.5 % off 44 → 14 and more than
+0.2 % off 1,532 → 1,230 of 561,420; within 0.1 % 98.6 → 98.8 %. Effective
+doses as they were (99.7 % within 0.1 %, one more than 0.2 % off). Printed
+coefficients that round to the printed value 99.1 % as before (at 1 year
+98.5 → 98.7 %, at 15 years 99.1 → 99.3 %), Part 3's 98.8 → 98.9 %. OIR Data
+Viewer: Te-131, Te-131m, Te-133 and Te-133m now to its four figures, nothing
+else moves.
+
+Each of the five was found the same way as before, by what the annex asks
+tissue by tissue and age by age; and each turned on one observation.
+
+- **Lead as a progeny: the rates to its five added tissues are held with two
+  figures** (progeny.json, the lead set; progeny103.js `carve` takes a rate
+  for each age). The ovaries of a 1-year-old were 0.5–0.6 % high after
+  Ra-224, Bi-214 and Pb-214, the skin up to 0.5 %. Taking each added tissue's
+  uptake away in turn showed that lead's gives 15–18 % of the ovaries' dose
+  and 5–18 % of the skin's, and that the annex asks the same of that part in
+  both tissues and both chains: −3 % at 1 year, +0.8 % at 5, −1 % at 15. The
+  testes carry the same path (24–44 % of their dose) and ask otherwise:
+  nothing at 1 year, +0.6 % at 10. So it is tissue by tissue, and ovaries and
+  skin go together because their adult rates share a mantissa (0.0014 and
+  0.14 d⁻¹): times the factor of 1 year, 0.124 rounds to 0.12 (−3.2 %),
+  while the testes' 0.0031 stays. With two figures: after Bi-214 swallowed
+  the ovaries asked −0.19, −0.54, +0.13, −0.04, −0.17 % and get −0.18,
+  −0.50, +0.13, +0.08, −0.21; red marrow −0.00, −0.05, −0.11, +0.11, −0.01
+  and −0.02, −0.06, −0.11, +0.09, −0.06; the testes −0.05, −0.14, −0.14,
+  +0.23, −0.22 and −0.01, −0.07, −0.15, +0.30, −0.25. **One exception, kept
+  and not understood:** skin and ovaries at 10 years, where two figures
+  (0.12, +4.2 %) put them 0.6–0.7 % high and the unrounded 0.1152 fits.
+  Rounded there as well, Bi-214 moves away from the annex.
+
+- **Iodine as tellurium's progeny: the organic iodine of other tissue in one
+  compartment, its rates by age** (the tellurium set). Te-131 swallowed had
+  the brain 0.7 % high at 3 months and 1 year and 0.1 % for adults, muscle,
+  skin and testes with it. I-131 taken in itself is exact, so only the
+  progeny's variant of the model could differ, and the fall with age is that
+  of the organic iodine a young thyroid releases. Publication 137 para 135
+  has one compartment for it (15 d⁻¹ in, 9.0 back, 0.09 to blood iodide).
+  Two days before, that had been tried with the adult's rates at every age,
+  found 0.6 % low at 3 months, and iodine's own two compartments kept. With
+  the three rates times the age factor of iodine's own model (26.3 … 15 over
+  15) every tissue at every age is as asked, to 0.02 %: Te-131 brain −0.66,
+  −0.74, −0.44, −0.27, −0.26, −0.14 % asked and −0.66, −0.72, −0.44, −0.28,
+  −0.26, −0.14 got; Te-133, which went the other way, liver −0.42, −0.32,
+  −0.20, −0.11, −0.11, −0.06 and −0.42, −0.32, −0.20, −0.11, −0.10, −0.06.
+
+- **Indium as silver's progeny: muscle and pancreas come out of its fast
+  pool** (the silver set; the cadmium and tin sets alike). Publication 151
+  para 466 adds them, fed from transferrin at 0.2 and 0.001 d⁻¹ and back at
+  2.37; the set had them on top, 1.783 d⁻¹ out of transferrin for the
+  model's 1.582. Ag-115 had red marrow and bone surface 0.9 % low at
+  3 months swallowed and brain, gonads and skin 0.1–0.45 % high. A faster
+  release of indium from other soft tissue (2.59 for 2.37 d⁻¹) fitted five
+  tissues to 0.01 % with an odd number, marrow short and kidneys over: the
+  sign of another mechanism with the same face. Taken out of ST0, which
+  returns at the same 2.37, nothing passes through plasma and the kidneys
+  stay: red marrow +0.93, +0.20, +0.14, +0.10, +0.06, +0.06 % asked and
+  +0.93, +0.20, +0.14, +0.09, +0.06, +0.06 got, every other tissue alike,
+  swallowed and inhaled. From ST0 and ST1 in proportion a third too much.
+
+- **Rhodium formed in palladium's ST0–ST2 is in its own** (the silver set:
+  `sameOther: 'progeny'`). The two models have one structure with the same
+  names (Publication 151 para B.5). Sent to blood as from a compartment its
+  model lacks, the adult's testes after Ag-101 inhaled were 0.9 % low; in
+  its own pools +0.94 % is asked and +0.93 got. Not palladium in silver's
+  pools (three times too much), and not cadmium and indium, whose pools are
+  other things.
+
+- **The female's own masses where her model is her own** (dose103.js;
+  `sexShares: 'own'`, with `'own-all'` for every age). Radon's two models
+  are the same at 3 months to 10 years and differ from 15. With her masses
+  for the shares at 5 and 10 years too, where she has 130–180 g less brain
+  and as much more adipose tissue and radon names adipose, her skin, spleen
+  and ovaries after Rn-222 were 0.5–0.9 % high; with the male's there, as
+  for every other element, within 0.26 %.
+
+Still open:
+
+- Pb-200 inhaled as Type S at 3 months: bladder wall, prostate, uterus and
+  ovaries 0.6–0.7 % low, colon 0.25 %, exact at 1 year. More thallium
+  absorbed from the gut moves them the wrong way; the missing dose is low
+  in the gut or in the bladder.
+- Rn-222: seven single values of 0.5–0.65 % (testes and pancreas at 10
+  years as a gas; brain, oral mucosa, stomach wall, thymus swallowed).
+- Thoron as a gas: kidneys 0.5 % high at 15 years and for adults, e 0.21 %
+  high at 5 years.
+- Pa-228 in the viewer, against the way-by-way rule (the section before).

@@ -396,7 +396,12 @@ if (!SYSTEM || SYSTEM === '103') {
     ['103', { nuclide: 'Rn-222', route: 'ingestion', form: 'gas' }, 5475, 4.0945e-10, 'Small intestine', 'F'],
     ['103', { nuclide: 'Rn-222', route: 'ingestion', form: 'gas', rules: { contentsTransit: 'own' } }, 5475, 4.5420e-10, 'Small intestine', 'F'],
     // the female's shares where she has a model of her own (OPTIONS103.sexShares; "*sexShares" of the radon set):
-    // by her own masses after 222Rn, by the male's after 220Rn, as the annex has each
+    // by her own masses after 222Rn, by the male's after 220Rn, as the annex has each -- her own at the ages where
+    // her model is her own: radon's two models are one up to 10 years, and at 5 years her skin has the male's
+    // share (by her own masses there, 1.011 of this, as it was of the annex's)
+    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas' }, 1825, 1.3367e-10, 'Skin', 'F'],
+    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas', rules: { sexShares: 'own-all' } }, 1825, 1.3520e-10, 'Skin', 'F'],
+    ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas', rules: { sexShares: 'own-all' } }, 7300, 1.3373e-10, 'Gonads', 'F'],
     ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas' }, 7300, 1.3368e-10, 'Gonads', 'F'],
     ['103', { nuclide: 'Rn-222', route: 'inhalation', form: 'gas', rules: { sexShares: 'male' } }, 7300, 1.0611e-10, 'Gonads', 'F'],
     ['103', { nuclide: 'Rn-220', route: 'inhalation', form: 'gas' }, 7300, 1.9268e-11, 'Gonads', 'F'],
@@ -550,6 +555,21 @@ if (!SYSTEM || SYSTEM === '103') {
     ['103', { nuclide: 'Ba-133', route: 'injection' }, 1825, 6.3509e-9],
     ['103', { nuclide: 'Ba-140', route: 'injection' }, 5475, 2.1122e-8, 'Red marrow'],
     ['103', { nuclide: 'Pb-210', route: 'injection' }, 3650, 1.0439e-5, 'Kidneys'],
+    // lead as progeny: the rates to its five added tissues before adulthood with two figures (the lead set; read off
+    // the annex of Publication 158: scaled without rounding, a 1-year-old's ovaries had 1.005 of this after 214Bi
+    // swallowed and after 224Ra)
+    ['103', { nuclide: 'Bi-214', route: 'ingestion', form: 'all' }, 365, 6.8900e-11, 'Gonads', 'F'],
+    ['103', { nuclide: 'Ra-224', route: 'injection' }, 365, 2.4514e-7, 'Gonads', 'F'],
+    // iodine as tellurium's progeny: the organic iodine of other tissue in one compartment, its rates by age (the
+    // tellurium set): with the characteristic model's two, the brain after 131Te swallowed had 1.007 of this at
+    // 3 months and the liver after 133Te 1.004
+    ['103', { nuclide: 'Te-131', route: 'ingestion', form: 'all' }, 100, 2.6822e-12, 'Brain'],
+    ['103', { nuclide: 'Te-133', route: 'ingestion', form: 'all' }, 100, 2.3665e-11, 'Liver'],
+    // indium as silver's progeny: muscle and pancreas taken out of ST0 (added on top, the red marrow of a
+    // 3-month-old after 115Ag swallowed had 0.991 of this); rhodium formed in palladium's ST pools in its own (sent
+    // to blood, the adult's testes after 101Ag inhaled as Type F had 0.991 of this)
+    ['103', { nuclide: 'Ag-115', route: 'ingestion', form: 'all' }, 100, 1.2399e-11, 'Red marrow'],
+    ['103', { nuclide: 'Ag-101', route: 'inhalation', form: 'F' }, 7300, 3.7859e-14, 'Gonads'],
     // the alimentary tract has its adult values, the absorbed fractions among them, from 20 years, also for lead,
     // whose systemic model has them from 25 (OPTIONS103.tractAdult): lead that the liver secretes is absorbed again
     // by 0.3 at 15 years and by 0.2 in adults, and with that change spread to 25 years every tissue after 202Pb,
@@ -787,6 +807,10 @@ if (!SYSTEM || SYSTEM === '103') {
     check('the lesser way to a chain member is cut where it brings less than a thousandth of the energy: 209Pb by way of 209Tl after 213Bi, 210Pb by way of 210Tl and 214Bi by way of 218At after 226Ra; 131I by way of 131Te, 95Nb by way of 95mNb and 144Pr by way of 144mPr are followed',
       cutOf('Bi-213') === '[["Tl-209","Pb-209"]]' && cutOf('Ra-226') === '[["At-218","Bi-214"],["Rn-218","Po-214"],["Tl-210","Pb-210"]]' && cutOf('Te-131m') === '[]' && cutOf('Zr-95') === '[]' && cutOf('Ce-144') === '[]',
       `${cutOf('Bi-213')} ${cutOf('Ra-226')} ${cutOf('Te-131m')} ${cutOf('Zr-95')} ${cutOf('Ce-144')}`);
+    const rh = await bornAt('Ag-101', 'Pd-101/ST0'), rhAg = await bornAt('Ag-101', 'Pd-101/ST0 (Ag-101)');
+    check('101Ag: rhodium formed in palladium\'s ST0 is in its own ST0 (one model structure, the same names); formed from the palladium that sits in silver\'s ST0, in a compartment of its own there',
+      String(rh.to) === 'Rh-101m/ST0' && String(rhAg.to) === 'Rh-101m/ST0 (Ag-101) (Pd-101)' && d103.progeny.sets.silver.Rh.sameOther === 'progeny' && d103.progeny.sets.silver.Pd.sameOther === undefined,
+      `${rh.to} | ${rhAg.to}`);
     const ag = await bornAt('Ag-115', 'Cd-115/Liver 1 (Ag-115)');
     check('115Ag: indium formed from the cadmium in silver\'s Liver 1 is in a compartment of its own there and leaves for plasma at 2.37 d-1, not in indium\'s Liver 1',
       String(ag.to) === 'In-115m/Liver 1 (Ag-115) (Cd-115)' && JSON.stringify(ag.out('In-115m/Liver 1 (Ag-115) (Cd-115)')) === '[["In-115m/Plasma",[2.37]]]', `${ag.to} ${JSON.stringify(ag.out('In-115m/Liver 1 (Ag-115) (Cd-115)'))}`);
@@ -832,6 +856,28 @@ if (!SYSTEM || SYSTEM === '103') {
     && near(rate(hg, 'Plasma 1', 'Spleen').at(-1), 0.0144, 1e-9) && near(rate(hg, 'Plasma 1', 'Trab bone surf').at(-1), 0.024, 1e-9) && near(rate(hg, 'Plasma 1', 'Cort bone surf').at(-1), 0.024, 1e-9)
     && ['Spleen', 'Trab bone surf', 'Cort bone surf'].every((c) => near(rate(hg, c, 'Plasma 1').at(-1), 0.03466, 1e-9)),
     Object.keys(hg.compartments).join(' '));
+  const pb212 = await modelOf('Ra-224', 'Pb-212'), jr = (m, a, b) => JSON.stringify(rate(m, a, b));
+  check('lead as progeny: the rates to its added marrow, spleen, skin, testes and ovaries with two figures at each age before adulthood (skin and ovaries at 10 years as scaled), the outflow from blood as lead\'s own at each age; in radium\'s chains cortical marrow a third of trabecular',
+    jr(pb212, 'Blood', 'Trab marrow') === '[0.3,0.37,0.38,0.35,0.3,0.42018]' && jr(pb212, 'Blood', 'Spleen') === '[0.015,0.019,0.019,0.017,0.015,0.021009]'
+    && jr(pb212, 'Blood', 'Skin') === '[0.1,0.12,0.13,0.1152,0.1,0.14006]' && jr(pb212, 'Blood', 'Testes') === '[0.0025,0.0031,0.0032,0.0029,0.0025,0.0035015]'
+    && jr(pb212, 'Blood', 'Ovaries') === '[0.001,0.0012,0.0013,0.001152,0.001,0.0014006]'
+    && rate(pb212, 'Blood', 'Cort marrow').every((x, a) => near(x, rate(pb212, 'Blood', 'Trab marrow')[a] / 3, 1e-5))
+    && [69.9675, 69.9677, 70.0344, 69.9232, 70.0786, 69.9945].every((want, a) => near(pb212.transfers.filter(([x]) => x === 'Blood').reduce((q, t) => q + t[2][a], 0), want, 1e-6)),
+    `skin ${jr(pb212, 'Blood', 'Skin')}; out of blood ${[0, 1, 2, 3, 4, 5].map((a) => pb212.transfers.filter(([x]) => x === 'Blood').reduce((q, t) => q + t[2][a], 0).toFixed(4)).join(' ')}`);
+  const i131 = await modelOf('Te-131', 'I-131');
+  check('iodine formed after tellurium: the inorganic iodide of other tissue in one compartment (200 d-1 back) and the organic iodine in one, from Blood organic at 15 d-1, back at 9.0 and to blood iodide at 0.09 for the adult, all three by the age factor of iodine\'s own model (26.3 over 15 at 3 months)',
+    !('Other 2' in i131.compartments) && !('Other 4' in i131.compartments) && rate(i131, 'Other 1', 'Blood iodide').every((x) => x === 200)
+    && jr(i131, 'Blood organic', 'Other 3') === '[26.3,23.3,21,19.1,17.5,15]' && jr(i131, 'Other 3', 'Blood organic') === '[15.78,13.98,12.6,11.46,10.5,9]'
+    && jr(i131, 'Other 3', 'Blood iodide') === '[0.1578,0.1398,0.126,0.1146,0.105,0.09]'
+    && rate(i131, 'Other 3', 'Blood organic').every((x, a) => near(x / 9, rate(i131, 'Blood organic', 'Other 3')[a] / 15, 1e-9)),
+    `${jr(i131, 'Other 3', 'Blood organic')} ${jr(i131, 'Other 3', 'Blood iodide')}`);
+  const in115 = await modelOf('Ag-115', 'In-115m'), leaving = (m, from) => m.transfers.filter(([x]) => x === from).reduce((q, t) => q + t[2].at(-1), 0);
+  const setTo = (set) => d103.progeny.sets[set].In.ops.find((o) => o.op === 'set' && o.from === 'TF' && o.to === 'Other 1')?.rate;
+  check('indium formed after silver: muscle and pancreas (0.2 and 0.001 d-1 from transferrin) taken out of ST0, so that 1.582 d-1 leave transferrin as in indium\'s own model; the same in the cadmium and tin sets',
+    near(rate(in115, 'Transferrin', 'ST0').at(-1), 0.226, 1e-9) && near(rate(in115, 'Transferrin', 'ST1').at(-1), 0.586, 1e-9) && near(rate(in115, 'Transferrin', 'Skeletal muscle').at(-1), 0.2, 1e-9)
+    && near(rate(in115, 'Transferrin', 'Pancreas').at(-1), 0.001, 1e-9) && near(leaving(in115, 'Transferrin'), 1.582, 1e-9) && near(leaving(d103.elements.In.systemic.default, 'TF'), 1.582, 1e-9)
+    && setTo('cadmium') === 0.226 && setTo('tin') === 0.226,
+    `out of transferrin ${leaving(in115, 'Transferrin')}; to ST0 ${rate(in115, 'Transferrin', 'ST0')}; cadmium ${setTo('cadmium')}, tin ${setTo('tin')}`);
   const as = await modelOf('Se-70', 'As-70');
   check('arsenic formed after selenium: selenium\'s pancreas, spleen, testes and ovaries added to its model out of Other 2, with 0.004, 0.004, 0.0008 and 0.00028 d-1 from plasma and 0.08 d-1 back; 40 d-1 leave plasma as before',
     [['Pancreas', 0.004], ['Spleen', 0.004], ['Testes', 0.0008], ['Ovaries', 0.00028]].every(([c, r]) => as.compartments[c] === c && near(rate(as, 'Plasma', c).at(-1), r, 1e-12) && near(rate(as, c, 'Plasma').at(-1), 0.08, 1e-12))
