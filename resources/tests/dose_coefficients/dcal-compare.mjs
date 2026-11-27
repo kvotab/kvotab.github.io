@@ -10,7 +10,8 @@
   (or - to skip it). Each cell is this page / DCAL, then DCAL / ICRP 72. The
   engine takes the SEE as DCAL does here (dcal: its interpolation of the photon
   SAFs and its joules per MeV); the page itself follows ICRP 72 in both
-  (see60.js, README).
+  (see60.js, README). 48V and 95Nb take the volume-seeker model here, DCAL's
+  choice by their half-lives; the page has them on bone surfaces (model60.js).
 */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -44,7 +45,7 @@ function readHrt(file) {
     H: {
       E: d.E, Testes: g('Testes'), Ovaries: g('Ovaries'), 'Red marrow': g('R_Marrow'), 'Bone surface': g('Bone_Sur'),
       Liver: g('Liver'), Kidneys: g('Kidneys'), Spleen: g('Spleen'), Lung: d.Lung_66 ?? NaN, ET: d.ET_Reg ?? NaN,
-      Colon: 0.57 * g('ULI_Wall') + 0.43 * g('LLI_Wall'), Stomach: g('St_Wall'), Bladder: g('UB_Wall'),
+      Colon: 0.568 * g('ULI_Wall') + 0.432 * g('LLI_Wall'), Stomach: g('St_Wall'), Bladder: g('UB_Wall'),
       Muscle: g('Muscle'), Breast: g('Breasts'), Thyroid: g('Thyroid'), Brain: g('Brain'), Skin: g('Skin'),
     },
   };
@@ -67,7 +68,8 @@ const io = {
 };
 const d60 = await loadSystem('60', io);
 await d60.prepare(nuc);
-const res = coefficients60(d60, recipe60(d60.cases, route, { nuclide: nuc, type: type ?? undefined }), AGES_60, { dcal: true });
+const DCAL_BIO = { 'V-48': 'V_VOL', 'Nb-95': 'NB_VOL' };
+const res = coefficients60(d60, recipe60(d60.cases, route, { nuclide: nuc, type: type ?? undefined, bio: DCAL_BIO[nuc] }), AGES_60, { dcal: true });
 const refFile = path.join(HERE, 'local/icrp72.json');
 const ref = fs.existsSync(refFile) ? JSON.parse(fs.readFileSync(refFile, 'utf8')) : null;
 const N72 = { E: 'E', Testes: 'Testes', Ovaries: 'Ovaries', 'Red marrow': 'Red Marrow', 'Bone surface': 'Bone Surface', Liver: 'Liver', Kidneys: 'Kidneys', Spleen: 'Spleen', Lung: 'Lungs', ET: 'ET', Colon: 'Colon', Stomach: 'Stomach', Bladder: 'Urinary Bladder', Muscle: 'Muscle', Breast: 'Breast', Thyroid: 'Thyroid', Brain: 'Brain', Skin: 'Skin' };

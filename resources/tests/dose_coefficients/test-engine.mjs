@@ -38,7 +38,7 @@ const SYSTEM = args.includes('--system') ? args[args.indexOf('--system') + 1] : 
 const ONLY = args.includes('--only') ? new RegExp(args[args.indexOf('--only') + 1]) : null;
 
 const { loadSystem } = await import(path.join(JS, 'data.js'));
-const { coefficients60, AGES_60, TISSUES_60 } = await import(path.join(JS, 'dose60.js'));
+const { coefficients60, AGES_60, TISSUES_60, W_60, REMAINDER_60, remainder60 } = await import(path.join(JS, 'dose60.js'));
 const { TARGETS_60: TARGETS_60_ALL } = await import(path.join(JS, 'see60.js'));
 const { parentModelName, f1FileName, recipe60, assemble60 } = await import(path.join(JS, 'model60.js'));
 const { coefficients103, AGES_103 } = await import(path.join(JS, 'dose103.js'));
@@ -1159,6 +1159,60 @@ if (!SYSTEM || SYSTEM === '103') {
     !off.length && Math.max(...far) > 0.02, off.join('; '));
 }
 
+/* ---- bone surfaces or bone volume (ICRP 60; model60.js parentModelName) ----------------------- */
+// Ten elements have a surface-seeker and a volume-seeker file; a nuclide of
+// 15 days or less takes the first, but 48V (16 d) and 95Nb (35 d) take it
+// too, as the ICRP has them.
+{
+  const of = (n) => parentModelName(d60.models, d60.index, n, 'ingestion', null);
+  const want = { 'V-47': 'V_SUR', 'V-48': 'V_SUR', 'V-49': 'V_VOL', 'Nb-95m': 'NB_SUR', 'Nb-95': 'NB_SUR', 'Nb-93m': 'NB_VOL', 'Nb-94': 'NB_VOL',
+    'P-32': 'P_SUR', 'P-33': 'P_VOL', 'Pd-103': 'PD_VOL', 'W-178': 'W_VOL', 'Sn-117m': 'SN_SUR', 'Sn-113': 'SN_VOL', 'Ta-183': 'TA_SUR', 'Ta-182': 'TA_VOL', 'Cr-51': 'CR_VOL' };
+  const got = Object.fromEntries(Object.keys(want).map((n) => [n, of(n)]));
+  check('ICRP 60: 48V and 95Nb on bone surfaces, the other nuclides of the elements with a surface and a volume model by their half-lives (15 days)',
+    Object.entries(want).every(([n, f]) => got[n] === f) && parentModelName(d60.models, d60.index, 'Nb-95', 'inhalation', null) === 'NB_SUR', JSON.stringify(got));
+}
+
+/* ---- gold all to the body tissues (ICRP 60; the AU_I30 model of gen-dose-icrp60.mjs) ----------- */
+// DCAL's Au.DEF without its way from blood straight to the bladder
+// contents, which the ICRP's coefficients do not have; taken for gold as a
+// parent, as the _I30 models of actinium and protactinium are.
+{
+  const au = d60.models.systemic.AU.transfers, i30 = d60.models.systemic.AU_I30.transfers;
+  const straight = au.filter(([from, to]) => from === 'Blood' && to === 'UB_Cont');
+  await d60.prepare('Au-198');
+  const sys = assemble60(d60, { ...recipe60(d60.cases, 'inhalation', { nuclide: 'Au-198', type: 'F' }), intakeAge: 7300 });
+  const fromBlood = sys.transfers.filter((t) => sys.comps[t.from].name === 'Blood' && t.to >= 0).map((t) => sys.comps[t.to].name);
+  check('ICRP 60: gold leaves blood for the body tissues only (Au.DEF sends 2.78 % straight to the bladder contents; AU_I30 is Au.DEF without it)',
+    straight.length === 1 && near(straight[0][2][0] / au.filter(([from]) => from === 'Blood').reduce((a, t) => a + t[2][0], 0), 0.0278, 2e-3)
+    && JSON.stringify(i30) === JSON.stringify(au.filter((t) => t !== straight[0])) && fromBlood.length > 0 && !fromBlood.some((n) => /UB_Cont/.test(n)), JSON.stringify({ i30, fromBlood }));
+}
+
+/* ---- the remainder's bookkeeping (ICRP 60; dose60.js remainder60) ----------------------------- */
+// As the ICRP's database of dose coefficients has it: nine tissues, without
+// the thymus; the masses of the age of the intake (the 3-month-old's 100/365
+// of the way from the newborn's to the 1-year-old's); split when the highest
+// remainder tissue exceeds every weighted one with the doses to two figures.
+{
+  const keys = Object.keys(REMAINDER_60);
+  const H0 = Object.fromEntries([...Object.keys(W_60), ...keys].map((k) => [k, 1e-9]));
+  const mass = (age) => keys.map((k) => { const m = REMAINDER_60[k]; return age === 100 ? m[0] + (100 / 365) * (m[1] - m[0]) : m[[0, 365, 1825, 3650, 5475, 7300].indexOf(age)]; });
+  const adult = remainder60({ ...H0, Kidneys: 0.5e-9 }, 7300), baby = remainder60({ ...H0, Muscle: 0.5e-9 }, 100);
+  const sum = (m) => m.reduce((a, b) => a + b, 0);
+  const byMass = near(adult.remainder, 1e-9 * (1 - 0.5 * 310 / sum(mass(7300))), 1e-12) && near(baby.remainder, 1e-9 * (1 - 0.5 * mass(100)[keys.indexOf('Muscle')] / sum(mass(100))), 1e-12)
+    && near(sum(mass(7300)), 30739, 1e-12) && near(mass(100)[keys.indexOf('Muscle')], 1360 + (100 / 365) * 2560, 1e-12) && adult.split === null && near(sum(Object.values(adult.weights)), 1, 1e-12);
+  // 1.04 of the highest weighted tissue but the same two figures: no split; 1.06 and another second figure: split.
+  const tie = remainder60({ ...H0, Liver: 1.01e-9, Spleen: 1.049e-9 }, 7300), over = remainder60({ ...H0, Liver: 1.01e-9, Spleen: 1.07e-9 }, 7300);
+  const others = (sum(mass(7300)) - 180);
+  const split = tie.split === null && over.split === 'Spleen' && near(over.remainder, 0.5 * 1.07e-9 + 0.5 * 1e-9, 1e-12) && near(over.weights.Muscle, 0.5 * 28000 / others, 1e-12)
+    && near(sum(Object.values(over.shares)), over.remainder, 1e-12) && remainder60({ ...H0, Spleen: 1.07e-9 }, 7300, null).split === null && remainder60(H0, 7300, 'Brain').weights.Brain === 0.5;
+  check('ICRP 60: the remainder by the masses of the age of the intake, nine tissues without the thymus; split on doses to two figures (1.049 against 1.01: no; 1.07: yes)',
+    byMass && split && !keys.includes('Thymus') && keys.length === 9, JSON.stringify({ adult: adult.remainder, baby: baby.remainder, tie: tie.split, over: over.split }));
+  const colon = Object.fromEntries(TISSUES_60.Colon);
+  check('ICRP 60: the colon 0.568 upper + 0.432 lower large intestine wall', colon.ULI_Wall === 0.568 && colon.LLI_Wall === 0.432);
+  check('ICRP 60: the lungs 0.167 BB basal + 0.167 BB secretory + 0.333 bb + 0.333 AI + 0.001 LN(TH); ET 0.001 ET1 + 0.998 ET2 + 0.001 LN(ET)',
+    JSON.stringify(TISSUES_60.Lung) === '[["BBi-bas",0.167],["BBi-sec",0.167],["bbe-sec",0.333],["AI",0.333],["LN-Th",0.001]]' && JSON.stringify(TISSUES_60.ET) === '[["ET1-bas",0.001],["ET2-bas",0.998],["LN-ET",0.001]]');
+}
+
 /* ---- the steps of an age-dependent calculation (ICRP 60; solve.js dose.hold, dose60.js HOLD_60) ---- */
 // 36Cl swallowed at 5 years: all of it that reaches a soft tissue is in blood
 // or the body tissues, so the muscle's dose per transformation there is the
@@ -1234,9 +1288,9 @@ if (!SYSTEM || SYSTEM === '103') {
 }
 
 /* ---- each remainder tissue's part of the remainder (ICRP 60; the tissue table's bars) ---------- */
-// They add up to the remainder's dose whichever way it is taken: by mass, the
-// masses changing as a child grows (Cs-137 at 3 months), or split (Si-31's
-// small intestine, Gd-149's ET at 3 months), the split tissue taking half.
+// They add up to the remainder's dose whichever way it is taken: by mass
+// (Cs-137), or split (Si-31's small intestine, Gd-149's ET at 3 months),
+// the split tissue taking half.
 {
   const out = [];
   for (const [nuc, route, type] of [['Cs-137', 'ingestion'], ['Si-31', 'ingestion'], ['Gd-149', 'inhalation', 'F']]) {
@@ -1392,6 +1446,22 @@ if (!SYSTEM || SYSTEM === '60') {
       }
     }
     check(`ICRP 60 photons between the tabulated energies: ${xr.map(([r, n, t]) => `${n}${t ? ` ${t}` : ' ingested'}`).join(', ')} -- e and the organ that hangs on them within 3.5 % of ICRP 72 at every age`, !offX.length, offX.join('; '));
+    // 48V and 95Nb on bone surfaces (model60.js ON_BONE_SURFACES_60): with
+    // the volume model, Type F, their e was 0.87-0.99 of ICRP 72, the bone
+    // surface 0.2-0.9 and the red marrow 0.5-0.7.
+    const offB = [];
+    for (const nuclide of ['V-48', 'Nb-95']) {
+      await d60.prepare(nuclide);
+      const res = coefficients60(d60, recipe60(d60.cases, 'inhalation', { nuclide, bio: null, f1file: null, type: 'F' }), AGES_60);
+      for (const r of res) {
+        const R = ref.find((x) => x.route === 'inhalation' && x.nuclide === nuclide && x.age === r.age && x.type === 'F');
+        for (const [k, k72] of [['E', 'E'], ['Bone surface', 'Bone Surface'], ['Red marrow', 'Red Marrow']]) {
+          const q = (k === 'E' ? r.E : r.H[k]) / R.H[k72];
+          if (!(Math.abs(q - 1) <= 0.05)) offB.push(`${nuclide} ${k} ${r.age} d ${q.toFixed(3)}`);
+        }
+      }
+    }
+    check('ICRP 60 on bone surfaces: 48V and 95Nb Type F -- e, bone surface and red marrow within 5 % of ICRP 72 at every age', !offB.length, offB.join('; '));
   }
   // The ICRP's database of dose coefficients (local/icrpdose.json): each
   // tissue's dose integrated to 1, 7 and 30 days, 1, 5, 10 ... years, to the
@@ -1436,6 +1506,71 @@ if (!SYSTEM || SYSTEM === '60') {
       for (const age of AGES_60) { const r = await over(nuclide, age, tissue); const far = r.reduce((m, x) => (Math.abs(x - 1) > Math.abs(m - 1) ? x : m), 1); if (Math.abs(far - 1) > lim) offD.push(`${nuclide} ${tissue} ${age} d ${far.toFixed(4)}`); }
     }
     check('ICRP 60 vs the ICRP database, every age and every time to which it integrates: 60Co liver and muscle and 131I thyroid within 0.15 %, 239Pu bone surface 0.25 %, 90Sr red marrow 0.35 %', !offD.length, offD.join('; '));
+    // The bookkeeping of the effective dose, on the database's own committed
+    // tissue doses (each series' last value): its remainder by remainder60,
+    // its colon from the two walls, its lungs and ET airways from the parts
+    // it stores (with this page's weights, in its order), its e from them
+    // all. Five nuclides are stored to two figures only and left out.
+    {
+      const TWO = new Set(['Th-228', 'Th-231', 'Th-232', 'Ra-227', 'U-231']);
+      const n = { rows: 0, rem: 0, split: 0, told: 0, colon: 0, colonOf: 0, e: 0, lung: 0, lungOf: 0, et: 0, etOf: 0 };
+      const parts = (name, k) => TISSUES_60[name].map(([, w], i) => [`${k} part ${i + 1}`, w]);
+      for (const c of cd.rows) {
+        if (TWO.has(c.nuclide)) continue;
+        const last = (k) => { const v = c.H[k]; return v && v.length ? v[v.length - 1] : NaN; };
+        const H = Object.fromEntries(Object.keys(TISSUES_60).map((k) => [k, last(k === 'Oesophagus' ? 'Thymus' : k)]));
+        H.Gonads = Math.max(H.Testes, H.Ovaries);
+        const want = last('Remainder');
+        if (![...Object.keys(W_60), ...Object.keys(REMAINDER_60)].every((k) => H[k] >= 0) || !(want > 0) || !(last('E') > 0)) continue;
+        n.rows++;
+        const got = remainder60(H, c.age), other = remainder60(H, c.age, got.split ? null : Object.keys(REMAINDER_60).reduce((a, k) => (H[k] > H[a] ? k : a)));
+        if (near(got.remainder, want, 1e-4)) n.rem++;
+        // where the two ways give different remainders, the database has the rule's
+        if (!near(got.remainder, other.remainder, 1e-3)) { n.told++; if (near(got.remainder, want, 1e-4) || !near(other.remainder, want, 1e-4)) n.split++; }
+        if (H.Colon > 0 && !near(H['Upper large intestine'], H['Lower large intestine'], 0.05)) { n.colonOf++; if (near(0.568 * H['Upper large intestine'] + 0.432 * H['Lower large intestine'], H.Colon, 1e-5)) n.colon++; }
+        let e = 0.05 * want; for (const [k, w] of Object.entries(W_60)) e += w * H[k];
+        if (near(e, last('E'), 1e-5)) n.e++;
+        if (c.route === 'inhalation') for (const [name, k, of, ok] of [['Lung', 'Lung', 'lungOf', 'lung'], ['ET', 'ET', 'etOf', 'et']]) {
+          const sum = parts(name, k).reduce((a, [key, w]) => a + w * last(key), 0);
+          if (!(sum > 0)) continue;
+          n[of]++; if (near(sum, H[name], 1e-5)) n[ok]++;
+        }
+      }
+      const pc = (a, b) => (100 * a / b).toFixed(1);
+      check(`ICRP 60 vs the ICRP database, its own bookkeeping on ${n.rows} intakes: the remainder from its tissues within 1e-4 for ${pc(n.rem, n.rows)} %, the split as the two-figure rule has it in ${n.split} of ${n.told}, the colon within 1e-5 for ${pc(n.colon, n.colonOf)} %, e within 1e-5 for ${pc(n.e, n.rows)} %; of ${n.lungOf} inhaled, the lungs from their five parts within 1e-5 for ${pc(n.lung, n.lungOf)} %, ET from its three for ${pc(n.et, n.etOf)} %`,
+        n.rows > 14000 && n.rem / n.rows > 0.997 && n.split === n.told && n.colon / n.colonOf > 0.99 && n.e / n.rows > 0.998 && n.lungOf > 9000 && n.lung / n.lungOf > 0.995 && n.et / n.etOf > 0.995, JSON.stringify(n));
+    }
+    // Bone surfaces or bone volume, for every nuclide of the ten elements
+    // with both models that the database holds by this name: swallowed by
+    // the adult, the bone surface and red marrow within 2 % of the
+    // database's on the model the page chooses (the other one is 0.1-0.9
+    // or 1.2-14 times it). The tantalum-180 pair goes by other names there.
+    {
+      const offS = []; let count = 0;
+      for (const n of Object.keys(d60.index)) {
+        if (!['P', 'V', 'Cr', 'Zn', 'Nb', 'Mo', 'Pd', 'Sn', 'Ta', 'W'].includes(n.split('-')[0]) || /^Ta-180/.test(n)) continue;
+        const c = cd.rows.filter((x) => x.nuclide === n && x.route === 'ingestion' && x.age === 7300);
+        if (c.length !== 1) continue;
+        await d60.prepare(n);
+        const r = coefficients60(d60, recipe60(d60.cases, 'ingestion', { nuclide: n }), [7300])[0];
+        count++;
+        for (const k of ['Bone surface', 'Red marrow']) { const v = c[0].H[k], q = r.H[k] / v[v.length - 1]; if (!(Math.abs(q - 1) <= 0.02)) offS.push(`${n} ${k} ${q.toFixed(3)}`); }
+      }
+      check(`ICRP 60 vs the ICRP database, bone surfaces or bone volume: ${count} nuclides of P, V, Cr, Zn, Nb, Mo, Pd, Sn, Ta and W swallowed by the adult, bone surface and red marrow within 2 %`, count >= 60 && !offS.length, offS.join('; '));
+    }
+    // Gold breathed in as Type F: every tissue of the body within 0.7 % of
+    // the database's, the bladder wall too (2.2-2.5 % low and 1.8 % high
+    // with Au.DEF's way from blood straight to the bladder contents).
+    {
+      const offG = [];
+      for (const [nuclide, age] of [['Au-198', 7300], ['Au-198', 365], ['Au-195', 7300], ['Au-199', 3650]]) {
+        const c = cd.rows.find((x) => x.nuclide === nuclide && x.route === 'inhalation' && x.type === 'F' && x.age === age);
+        await d60.prepare(nuclide);
+        const r = coefficients60(d60, recipe60(d60.cases, 'inhalation', { nuclide, type: 'F' }), [age])[0];
+        for (const k of ['Liver', 'Kidneys', 'Muscle', 'Red marrow', 'Testes', 'Bladder']) { const v = c.H[k], q = r.H[k] / v[v.length - 1]; if (!(Math.abs(q - 1) <= 0.007)) offG.push(`${nuclide} ${age} d ${k} ${q.toFixed(4)}`); }
+      }
+      check('ICRP 60 vs the ICRP database, gold Type F: liver, kidneys, muscle, red marrow, testes and bladder wall within 0.7 % (198Au adult and 1 year, 195Au adult, 199Au 10 years)', !offG.length, offG.join('; '));
+    }
   }
 }
 

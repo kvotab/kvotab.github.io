@@ -841,7 +841,7 @@ async def main():
         done = await calculate('Sr-90', 'inhalation', 'Type M')
         check('ICRP 60 Sr-90 Type M inhalation calculates', done and await p.ev("document.getElementById('dcStatus').classList.contains('ok')"))
         check('adult e(50) is 3.6E-08 (ICRP 72: 3.6E-08)', await adult(), '3.6E-08')
-        check('in the ICRP 60 system too the bars add up: the terms to e, the remainder’s tissues (by mass, as the child grows) to its share, the gonad taken to the gonads’ term',
+        check('in the ICRP 60 system too the bars add up: the terms to e, the remainder’s tissues (by their masses at the age of the intake) to its share, the gonad taken to the gonads’ term',
               bars_add_up(await p.ev(BARS), gonads=True))
         await p.ev("document.querySelector('.dc-tabs button[data-tab=\"model\"]').click()")
         await asyncio.sleep(0.6)

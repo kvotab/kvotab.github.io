@@ -9,21 +9,33 @@
   phantoms) to age 70 for children and over 50 years for adults, and combine
   the target doses:
 
-    Lung    0.333 BB + 0.333 bb + 0.333 AI + 0.001 LN(TH), BB the mean of the
-            basal and secretory cell doses           (ICRP 66; DCAL LUNGAS.DAT)
+    Lung    0.167 BB basal + 0.167 BB secretory + 0.333 bb + 0.333 AI +
+            0.001 LN(TH)   (ICRP 66's thirds, the half of BB's to three
+            figures as the ICRP's database of dose coefficients has it: its
+            lung dose follows from the five parts it stores to 1e-5 for every
+            inhaled intake; DCAL's LUNGAS.DAT has 0.333 of BB's mean)
     ET      0.001 ET1 + 0.998 ET2 + 0.001 LN(ET)
-    Colon   0.57 ULI wall + 0.43 LLI wall            (ICRP 67)
+    Colon   0.568 ULI wall + 0.432 LLI wall          (ICRP 67's 0.57 and 0.43:
+            the walls' 210 and 160 g, to the three figures of the ICRP's
+            database of dose coefficients)
     Oesophagus  the thymus dose                      (SEECAL's surrogate)
     Gonads  the higher of testes and ovaries
 
   and the effective dose with the tissue weighting factors of ICRP 60 and the
-  remainder of ICRP 66/68/72: adrenals, brain, extrathoracic airways, small
-  intestine, kidneys, muscle, pancreas, spleen, thymus and uterus, averaged by
-  mass, with the splitting rule -- a remainder tissue whose committed dose
-  exceeds that of every tissue with a weighting factor of its own takes half
-  the remainder weight, the mass-weighted mean of the others the other half.
-  The ICRP 72 values were checked against this bookkeeping from their own
-  organ doses (resources/tests/dose_coefficients/README.md).
+  remainder of ICRP 66/68/72 as the ICRP's database of dose coefficients has
+  it (NRPB's PLEIADES; README): adrenals, brain, extrathoracic airways, small
+  intestine, kidneys, muscle, pancreas, spleen and uterus -- not the thymus,
+  whose dose stands for the oesophagus's -- their committed doses averaged by
+  the masses at the age of the intake, with the splitting rule: a remainder
+  tissue whose committed dose exceeds that of every tissue with a weighting
+  factor of its own takes half the remainder weight, the mass-weighted mean of
+  the others the other half. The database compares the two doses as printed,
+  to two figures (its help says so of Publication 72: so that the reader of
+  two figures "would decide on the same formulation as the computer code").
+  Its remainder follows from its own tissue doses by this
+  bookkeeping to 1e-4 for every one of 15,054 intakes (five nuclides that it
+  stores to two figures apart), its split for all of them, its effective dose
+  to 1e-6 for 99.9 % (resources/tests/dose_coefficients/README.md).
 */
 import { assemble60 } from './model60.js';
 import { phantom60, TARGETS_60 } from './see60.js';
@@ -49,14 +61,22 @@ export const W_60 = {
    (40 d) and 1e-3 at 3 months (9 d). */
 export const HOLD_60 = [[365, 9], [1825, 40], [5475, 50], [Infinity, 180]];
 
-/* Remainder tissues and their masses in grams at the reference ages (ICRP 72's
-   organ masses: the phantoms', ICRP 23's for the adult, and the ET airways). */
+/* Remainder tissues and their masses in grams at the reference ages (newborn,
+   1, 5, 10 and 15 years, adult), as the ICRP's database of dose coefficients
+   weights them (read off its remainder and tissue doses; README): the
+   phantoms' organ masses, ICRP 23's for the adult, but the muscle 40 % of a
+   body of 3.4, 9.8, 19, 32, 52.5 and 70 kg (the phantoms' own: 0.76, 2.5, 5,
+   11, 22 and 28 kg) and the ET airways 1.2 to 15 g. The 3-month-old's are
+   100/365 of the way from the newborn's to the 1-year-old's. (A mean shows
+   the ratios of its weights only: the newborn's muscle and airways are the
+   ones that make the 3-month-old's ratios so.) No thymus: its dose is the
+   oesophagus's, which has a weighting factor of its own. */
 export const REMAINDER_60 = {
   Adrenals: [5.83, 3.52, 5.27, 7.22, 10.5, 14], Brain: [352, 884, 1260, 1360, 1410, 1400],
-  ET: [1.3, 2.15, 4.3, 7.08, 12.1, 15.5], 'Small intestine': [32.6, 84.9, 169, 286, 516, 640],
-  Kidneys: [22.9, 62.9, 116, 173, 248, 310], Muscle: [760, 2500, 5000, 11000, 22000, 28000],
+  ET: [1.2, 2.1, 4.1, 6.8, 11, 15], 'Small intestine': [32.6, 84.9, 169, 286, 516, 640],
+  Kidneys: [22.9, 62.9, 116, 173, 248, 310], Muscle: [1360, 3920, 7600, 12800, 21000, 28000],
   Pancreas: [2.8, 10.3, 23.6, 30, 64.9, 100], Spleen: [9.11, 25.5, 48.3, 77.4, 123, 180],
-  Thymus: [11.3, 22.9, 29.6, 31.4, 28.4, 20], Uterus: [3.85, 1.45, 2.7, 4.16, 80, 80],
+  Uterus: [3.85, 1.45, 2.7, 4.16, 80, 80],
 };
 
 /* Each reported tissue as a combination of targets. */
@@ -65,40 +85,70 @@ export const TISSUES_60 = {
   Adrenals: [['Adrenals', 1]], Bladder: [['UB_Wall', 1]], 'Bone surface': [['Bone_Sur', 1]], Brain: [['Brain', 1]],
   Breast: [['Breasts', 1]], Oesophagus: [['Thymus', 1]], Stomach: [['St_Wall', 1]], 'Small intestine': [['SI_Wall', 1]],
   'Upper large intestine': [['ULI_Wall', 1]], 'Lower large intestine': [['LLI_Wall', 1]],
-  Colon: [['ULI_Wall', 0.57], ['LLI_Wall', 0.43]], Kidneys: [['Kidneys', 1]], Liver: [['Liver', 1]],
+  Colon: [['ULI_Wall', 0.568], ['LLI_Wall', 0.432]], Kidneys: [['Kidneys', 1]], Liver: [['Liver', 1]],
   Muscle: [['Muscle', 1]], Ovaries: [['Ovaries', 1]], Pancreas: [['Pancreas', 1]], 'Red marrow': [['R_Marrow', 1]],
   ET: [['ET1-bas', 0.001], ['ET2-bas', 0.998], ['LN-ET', 0.001]],
-  Lung: [['BBi-bas', 0.1665], ['BBi-sec', 0.1665], ['bbe-sec', 0.333], ['AI', 0.333], ['LN-Th', 0.001]],
+  Lung: [['BBi-bas', 0.167], ['BBi-sec', 0.167], ['bbe-sec', 0.333], ['AI', 0.333], ['LN-Th', 0.001]],
   Skin: [['Skin', 1]], Spleen: [['Spleen', 1]], Testes: [['Testes', 1]], Thymus: [['Thymus', 1]],
   Thyroid: [['Thyroid', 1]], Uterus: [['Uterus', 1]],
 };
 const REM_KEYS = Object.keys(REMAINDER_60);
-const R = REM_KEYS.length;
-/* The virtual targets after the real ones: [0] the remainder; [1 + k] the
-   remainder without tissue k (the splitting rule); [1 + R + k] tissue k's
-   share of the remainder; [1 + 2R + kR + i] tissue i's share of the
-   remainder without tissue k. The remainder's masses change as a child grows,
-   so these shares, which add up to the remainder's dose whichever way it is
-   taken, have to be integrated: each tissue's part of e (the tissue table's
-   bars) follows from them. */
-const N_VIRTUAL = 1 + 2 * R + R * R;
+
+/** The remainder's masses at an age, in the order of REMAINDER_60: linear between the reference ages. */
+function remainderMasses(age) {
+  const ages = PHANTOM_AGES_60;
+  let k = 0;
+  while (k < ages.length - 2 && age > ages[k + 1]) k++;
+  const w = Math.min(1, Math.max(0, (age - ages[k]) / (ages[k + 1] - ages[k])));
+  return REM_KEYS.map((r) => REMAINDER_60[r][k] + w * (REMAINDER_60[r][k + 1] - REMAINDER_60[r][k]));
+}
+
+/* A dose as the database compares it for the splitting rule: to two figures. */
+const twoFigures = (x) => Number(x.toPrecision(2));
+
+/**
+ * The remainder of an intake at an age from its tissues' doses: their mean by
+ * the masses of that age, or, split, half of it the dose of the one tissue
+ * and half the mean of the others.
+ * @param {object} H  dose by tissue (TISSUES_60's names, with Gonads)
+ * @param {number} intakeAge  days
+ * @param {string|null} [split]  the tissue that takes half, or null for none; left out, the
+ *   splitting rule decides it on these doses (the committed ones are the ones to give it)
+ * @returns {{remainder: number, split: string|null, weights: object, shares: object}} weights: each
+ *   tissue's weight in the remainder; shares: its part of the remainder's dose (they add up to it)
+ */
+export function remainder60(H, intakeAge, split) {
+  const mass = remainderMasses(intakeAge);
+  if (split === undefined) {
+    const top = REM_KEYS.reduce((a, r) => (H[r] > H[a] ? r : a));
+    const named = Math.max(...Object.keys(W_60).map((k) => H[k]));
+    split = twoFigures(H[top]) > twoFigures(named) ? top : null;
+  }
+  const M = mass.reduce((a, m, k) => (REM_KEYS[k] === split ? a : a + m), 0);
+  const weights = Object.fromEntries(REM_KEYS.map((r, k) => [r, r === split ? 0.5 : (split ? 0.5 : 1) * mass[k] / M]));
+  const shares = Object.fromEntries(REM_KEYS.map((r) => [r, weights[r] * H[r]]));
+  return { remainder: REM_KEYS.reduce((a, r) => a + shares[r], 0), split, weights, shares };
+}
 
 /*
-  The effective dose as weights of the target rows of an integration (the
-  targets, the remainder, and the remainder with each of its tissues split
-  off): E = base + 0.20 H_gonads + 0.05 remainder, where the gonads are the
-  testes or the ovaries and the remainder follows the splitting rule, both
-  decided on the committed doses. So the pieces: [0] base, the weighted
-  tissues but the gonads; [1] testes; [2] ovaries; [3] the remainder; then
-  for each remainder tissue its dose and the remainder without it.
+  The effective dose as weights of the target rows of an integration:
+  E = base + 0.20 H_gonads + 0.05 remainder, where the gonads are the testes
+  or the ovaries and the remainder follows the splitting rule, both decided
+  on the committed doses. So the pieces: [0] base, the weighted tissues but
+  the gonads; [1] testes; [2] ovaries; [3] the remainder by mass; then for
+  each remainder tissue its dose and the remainder without it.
 */
-function effectivePieces60(nT) {
-  const len = nT + 1 + REM_KEYS.length;
-  const tissue = (name, w = 1, into = new Float64Array(len)) => { for (const [t, wp] of TISSUES_60[name]) into[T[t]] += w * wp; return into; };
-  const row = (i) => { const v = new Float64Array(len); v[i] = 1; return v; };
-  const base = new Float64Array(len);
+function effectivePieces60(nT, intakeAge) {
+  const tissue = (name, w = 1, into = new Float64Array(nT)) => { for (const [t, wp] of TISSUES_60[name]) into[T[t]] += w * wp; return into; };
+  const base = new Float64Array(nT);
   for (const [k, w] of Object.entries(W_60)) if (k !== 'Gonads') tissue(k, w, base);
-  return [base, tissue('Testes'), tissue('Ovaries'), row(nT), ...REM_KEYS.flatMap((k, i) => [tissue(k), row(nT + 1 + i)])];
+  const mass = remainderMasses(intakeAge);
+  const mean = (without) => {
+    const M = mass.reduce((a, m, k) => (k === without ? a : a + m), 0), v = new Float64Array(nT);
+    REM_KEYS.forEach((r, k) => { if (k !== without) tissue(r, mass[k] / M, v); });
+    return v;
+  };
+  return [base, tissue('Testes'), tissue('Ovaries'), mean(-1), ...REM_KEYS.flatMap((r, k) => [tissue(r), mean(k)])];
 }
 
 const BONE_V = ['C_Bone-V', 'T_Bone-V'];
@@ -158,15 +208,6 @@ function otherShares(j, members, targets, mS) {
   return [['Other', 1 - shares.reduce((a, [, f]) => a + f, 0)], ...shares];
 }
 
-/** Interpolated remainder masses at an age, in the order of REMAINDER_60. */
-function remainderMasses(age) {
-  const ages = PHANTOM_AGES_60;
-  let k = 0;
-  while (k < ages.length - 2 && age > ages[k + 1]) k++;
-  const w = Math.min(1, Math.max(0, (age - ages[k]) / (ages[k + 1] - ages[k])));
-  return REM_KEYS.map((r) => REMAINDER_60[r][k] + w * (REMAINDER_60[r][k + 1] - REMAINDER_60[r][k]));
-}
-
 /**
  * Dose coefficients for one intake at the given ages.
  * @param {object} data  {index, models, saf, emissions: (nuclide) => {r, bs}}
@@ -202,15 +243,13 @@ export function coefficients60(data, spec, ages = AGES_60, opt = {}) {
     });
     // Per member and phantom: how its Other activity divides among the regions.
     const otherSplit = sys.members.map((m, j) => phantoms.map((ph) => otherShares(j, sys.members, targets[j], ph.masses.sources)));
-    // Virtual targets: the remainder, normal and with each tissue split off.
     const nT = TARGETS_60.length;
-    const remRows = REM_KEYS.map((r) => TISSUES_60[r].map(([t, w]) => [T[t], w]));
     // One column per member and source region, shared by its compartments
     // (solve.js integrates them as one group): the SEE of the region at a
     // phantom, for Other with the shares of a phantom (the same one, or with
     // `pShare`, the other end of the interval: solve.js's cross columns).
     const column = (c, p, pShare = p) => {
-      const col = new Float64Array(nT + N_VIRTUAL);
+      const col = new Float64Array(nT);
       const m = seeOf[c.member][p];
       if (c.region === 'Other') {
         for (const [region, share] of otherSplit[c.member][pShare]) {
@@ -220,15 +259,6 @@ export function coefficients60(data, spec, ages = AGES_60, opt = {}) {
       } else {
         const s = regionsOf[c.member].indexOf(c.region);
         for (let t = 0; t < nT; t++) col[t] = m[t][s];
-      }
-      const mass = remainderMasses(PHANTOM_AGES_60[p]);
-      const tissue = remRows.map((row) => row.reduce((acc, [t, w]) => acc + w * col[t], 0));
-      const M = mass.reduce((a, b) => a + b, 0);
-      col[nT] = tissue.reduce((acc, h, i) => acc + mass[i] * h, 0) / M;
-      for (let k = 0; k < R; k++) {
-        col[nT + 1 + k] = tissue.reduce((acc, h, i) => (i === k ? acc : acc + mass[i] * h), 0) / (M - mass[k]);
-        col[nT + 1 + R + k] = mass[k] * tissue[k] / M;
-        for (let i = 0; i < R; i++) if (i !== k) col[nT + 1 + 2 * R + k * R + i] = mass[i] * tissue[i] / (M - mass[k]);
       }
       return col;
     };
@@ -261,30 +291,24 @@ export function coefficients60(data, spec, ages = AGES_60, opt = {}) {
     // With a time series, the shares of each dose group in the pieces the
     // effective dose is made of (effectivePieces60), put together below; a
     // group for each compartment (the Model tab's boxes).
-    const pieces = opt.outputs ? effectivePieces60(nT) : null;
-    const res = integrate(sys, { phantomAges: PHANTOM_AGES_60, columns, nTargets: nT + N_VIRTUAL, groups, interp: 'linear', weights: 'dcal', hold: opt.dcal ? undefined : HOLD_60, cross: cross || undefined, functionals: pieces || undefined, byCompartment: !!opt.outputs },
+    const pieces = opt.outputs ? effectivePieces60(nT, intakeAge) : null;
+    const res = integrate(sys, { phantomAges: PHANTOM_AGES_60, columns, nTargets: nT, groups, interp: 'linear', weights: 'dcal', hold: opt.dcal ? undefined : HOLD_60, cross: cross || undefined, functionals: pieces || undefined, byCompartment: !!opt.outputs },
       { intakeAge, period, outputs: opt.outputs, rtol: opt.rtol });
     const Ht = Object.fromEntries(TARGETS_60.map((t, i) => [t, res.H[i]]));
     const H = {};
     for (const [name, parts] of Object.entries(TISSUES_60)) H[name] = parts.reduce((acc, [t, w]) => acc + w * Ht[t], 0);
     H.Gonads = Math.max(H.Testes, H.Ovaries);
-    // Remainder and the splitting rule, decided on the committed doses.
-    const named = Math.max(...Object.keys(W_60).map((k) => H[k]));
-    let kmax = 0;
-    REM_KEYS.forEach((r, k) => { if (H[r] > H[REM_KEYS[kmax]]) kmax = k; });
-    const split = H[REM_KEYS[kmax]] > named;
-    const remainder = split ? 0.5 * H[REM_KEYS[kmax]] + 0.5 * res.H[nT + 1 + kmax] : res.H[nT];
-    H.Remainder = remainder;
-    // Each remainder tissue's part of it: by its mass, or, split, half the
+    // The remainder and the splitting rule, decided on the committed doses;
+    // each remainder tissue's part of it: by its mass, or, split, half the
     // remainder to the one and the rest by mass among the others.
-    const remainderShares = Object.fromEntries(REM_KEYS.map((r, i) => [r, !split ? res.H[nT + 1 + R + i]
-      : i === kmax ? 0.5 * H[r] : 0.5 * res.H[nT + 1 + 2 * R + kmax * R + i]]));
+    const { remainder, split, shares: remainderShares } = remainder60(H, intakeAge);
+    H.Remainder = remainder;
     let E = 0.05 * remainder;
     for (const [k, w] of Object.entries(W_60)) E += w * H[k];
     // The gonads' dose is the higher of the testes' and the ovaries' (as committed).
     const gonads = H.Testes >= H.Ovaries ? 'Testes' : 'Ovaries';
     if (pieces) {
-      const K = pieces.length, splitAt = split ? REM_KEYS.indexOf(REM_KEYS[kmax]) : -1;
+      const K = pieces.length, splitAt = split ? REM_KEYS.indexOf(split) : -1;
       const combine = (parts) => {
         const out = new Float64Array(parts.length / K);
         for (let g = 0; g < out.length; g++) {
@@ -297,7 +321,7 @@ export function coefficients60(data, spec, ages = AGES_60, opt = {}) {
       for (const p of res.series) { p.parts = combine(p.parts); p.rates = combine(p.rates); }
     }
     return {
-      age: age0, intakeAge, E, H, Ht, split: split ? REM_KEYS[kmax] : null, gonads, remainderShares,
+      age: age0, intakeAge, E, H, Ht, split, gonads, remainderShares,
       doseGroups: opt.outputs ? res.doseGroups.map((g) => ({ ...g, name: sys.comps[g.comps[0]].name })) : null,
       transformations: groupKeys.map((k, g) => ({ member: sys.members[Number(k.split('|')[0])].name, region: k.split('|')[1], n: res.U[g] })),
       system: sys, stats: res.stats, series: opt.outputs ? res.series : null,

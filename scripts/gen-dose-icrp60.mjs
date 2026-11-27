@@ -264,8 +264,17 @@ function readLng(file) {
     Pa  0.40 to bone, 100 y; 0.15 to liver, 0.7 of it with 10 d and 0.3 with
         60 d; 0.02 to kidneys, 0.2 with 10 d and 0.8 with 60 d; the rest
         excreted
+
+  And gold, whose model is ICRP 30 Part 2's in both: all of it through the
+  body with 3 d, excreted in urine. DCAL's Au.DEF has that, and beside it a
+  way from blood straight to the bladder contents (28.6 of 1028.6 d-1) that
+  the ICRP's coefficients do not have: with it every tissue of the body gets
+  2.2-2.5 % less than in the ICRP's database of dose coefficients after gold
+  breathed in as Type F and the bladder wall 1.8 % more, without it the
+  adult's are the database's within 0.2 % (README of the page's tests).
+  Au_I30 is Au.DEF without that way.
 */
-function icrp30Models() {
+function icrp30Models(systemic) {
   const L = Math.LN2 / 0.25;
   const r = (half) => Math.LN2 / half;
   const Y = 365.25;
@@ -286,7 +295,12 @@ function icrp30Models() {
     ...out('Liver_a', r(10)), ...out('Liver_b', r(60)), ...out('Kidneys_a', r(10)), ...out('Kidneys_b', r(60)),
   ];
   const model = (title, transfers) => ({ title, text: ['ICRP Publication 30 Part 3, as used in ICRP Publication 72'], ages: [100], ageNames: ['All ages'], transfers, notes: '' });
-  return { AC_I30: model('Actinium, ICRP 30 Part 3', ac), PA_I30: model('Protactinium, ICRP 30 Part 3', pa) };
+  const au = systemic.AU.transfers.filter(([from, to]) => !(from === 'Blood' && to === 'UB_Cont'));
+  if (au.length !== systemic.AU.transfers.length - 1) throw new Error('Au.DEF: no single way from blood to the bladder contents');
+  return {
+    AC_I30: model('Actinium, ICRP 30 Part 3', ac), PA_I30: model('Protactinium, ICRP 30 Part 3', pa),
+    AU_I30: { ...model('Gold, ICRP 30 Part 2', au), text: ['ICRP Publication 30 Part 2, as used in ICRP Publication 72'] },
+  };
 }
 
 /* ICRP66.DEP: per reference individual, a fraction deposited in each
@@ -382,7 +396,7 @@ function buildModels() {
   const lngb = readAssignments(path.join(DAT, 'mis', '$LNGDEF.DAT'));
   const lungdef = parseElementBlock(lngb['ELEMENT ASSIGNMENT'] || [], (l) => ({ file: l.slice(3, 11).trim().toUpperCase(), text: l.slice(12).trim() }));
 
-  Object.assign(systemic, icrp30Models());
+  Object.assign(systemic, icrp30Models(systemic));
 
   const lung = {};
   for (const f of fs.readdirSync(path.join(DAT, 'mis')).sort()) {

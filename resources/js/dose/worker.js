@@ -27,7 +27,7 @@
                    {id, type: 'error', message}
 */
 import { loadSystem, fetchIO } from './data.js';
-import { coefficients60, AGES_60, TISSUES_60, W_60, REMAINDER_60 } from './dose60.js';
+import { coefficients60, AGES_60, TISSUES_60, W_60, remainder60 } from './dose60.js';
 import { recipe60, f1Table, assemble60 } from './model60.js';
 import { assemble103, sexSpecific103, OPTIONS103, chainOptions103 } from './model103.js';
 import { TARGETS_60 } from './see60.js';
@@ -179,11 +179,9 @@ function describe(sys, data, spec, age0) {
   if (sys === '60') {
     const s = specFor60(data, spec);
     S = assemble60(data, { ...s, intakeAge: age0 === 7300 && s.adultAge ? s.adultAge : age0 });
-    // The remainder, and the remainder with each of its tissues split off (dose60.js).
     regions = TARGETS_60.length;
     sexes = 0;
-    const nr = Object.keys(REMAINDER_60).length;
-    targets = regions + 1 + 2 * nr + nr * nr; // dose60.js's virtual targets
+    targets = regions;
   } else {
     const adultAge = data.elements[spec.nuclide.split('-')[0]]?.adultAge || 7300;
     const split = sexSpecific103(data, spec);
@@ -615,16 +613,12 @@ function effectiveTerms(sys, r, h) {
     out.Remainder = W_REMAINDER_103 * (rem('M') + rem('F')) / 2;
     return out;
   }
-  const targets = Object.keys(r.Ht);
-  const nT = targets.length;
-  const Ht = Object.fromEntries(targets.map((t, i) => [t, h[i]]));
+  const Ht = Object.fromEntries(Object.keys(r.Ht).map((t, i) => [t, h[i]]));
   const H = {};
   for (const [name, parts] of Object.entries(TISSUES_60)) H[name] = parts.reduce((a, [t, w]) => a + w * (Ht[t] || 0), 0);
   H.Gonads = r.gonads ? H[r.gonads] : Math.max(H.Testes, H.Ovaries);
-  const remKeys = Object.keys(REMAINDER_60);
-  let remainder = h[nT];
-  if (r.split) remainder = 0.5 * H[r.split] + 0.5 * h[nT + 1 + remKeys.indexOf(r.split)];
   for (const [k, w] of Object.entries(W_60)) out[k] = w * H[k];
-  out.Remainder = 0.05 * remainder;
+  // The remainder as the committed doses decided it: by mass, or with the one tissue split off.
+  out.Remainder = 0.05 * remainder60(H, r.intakeAge, r.split).remainder;
   return out;
 }

@@ -40,12 +40,23 @@ function memberModelName(memberEl, parentEl) {
 
 const ROUTE_CODE = { ingestion: 'g', inhalation: 'h', injection: 'j' };
 
+/* Two nuclides of more than 15 days that the ICRP has on bone surfaces all the
+   same. 48V (16 d): "it is assumed that V-49 is retained in bone volume and
+   all other isotopes are retained on bone surfaces" (the help of the ICRP's
+   database of dose coefficients, on vanadium, after Publication 30). 95Nb
+   (35 d): its bone surface, red marrow and effective doses in that database
+   are the surface model's within 0.1 % at every age and by every route; with
+   the volume model the bone surface gets a fifth to a half of them. For the
+   other 70 nuclides of the ten elements with such a pair the split at 15 days
+   is the database's choice (README). */
+const ON_BONE_SURFACES_60 = new Set(['V-48', 'Nb-95']);
+
 /**
  * Which systemic model file the parent uses (ORNL/TM-2001/190, 3.6 and the
  * notes of $BIODEF.DAT): a nuclide assignment, then an assignment by route of
  * intake, then the form the caller chose among the element's prompts, then
- * the short-lived/long-lived pair (_SUR, _VOL) split at 15 days, then the
- * element's own file.
+ * the short-lived/long-lived pair (_SUR, _VOL) split at 15 days -- but for
+ * ON_BONE_SURFACES_60 --, then the element's own file.
  */
 export function parentModelName(models, index, nuclide, route, chosen) {
   const el = elementOf(nuclide);
@@ -58,7 +69,7 @@ export function parentModelName(models, index, nuclide, route, chosen) {
   const prompts = (models.biodef.prompts[el] || []).filter((a) => a.route === 'a' || a.route === r);
   if (prompts.length) return prompts[0].file;
   const E = el.toUpperCase();
-  if (models.systemic[`${E}_SUR`] && models.systemic[`${E}_VOL`]) return index[nuclide].T <= 15 ? `${E}_SUR` : `${E}_VOL`;
+  if (models.systemic[`${E}_SUR`] && models.systemic[`${E}_VOL`]) return index[nuclide].T <= 15 || ON_BONE_SURFACES_60.has(nuclide) ? `${E}_SUR` : `${E}_VOL`;
   if (models.systemic[E]) return E;
   throw new Error(`no systemic model for ${nuclide}`);
 }

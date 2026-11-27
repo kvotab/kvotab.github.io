@@ -854,17 +854,19 @@ const TISSUE_ORDER_103 = {
 const TISSUE_ORDER_60 = {
   weighted: [['Gonads', 0.20], ['Red marrow', 0.12], ['Colon', 0.12], ['Lung', 0.12], ['Stomach', 0.12], ['Bladder', 0.05], ['Breast', 0.05],
     ['Liver', 0.05], ['Oesophagus', 0.05], ['Thyroid', 0.05], ['Skin', 0.01], ['Bone surface', 0.01]],
-  remainder: ['Adrenals', 'Brain', 'ET', 'Small intestine', 'Kidneys', 'Muscle', 'Pancreas', 'Spleen', 'Thymus', 'Uterus'],
-  other: ['Testes', 'Ovaries', 'Upper large intestine', 'Lower large intestine'],
+  remainder: ['Adrenals', 'Brain', 'ET', 'Small intestine', 'Kidneys', 'Muscle', 'Pancreas', 'Spleen', 'Uterus'],
+  other: ['Testes', 'Ovaries', 'Upper large intestine', 'Lower large intestine', 'Thymus'],
 };
 
 /* External exposure's tissues: the reports' phantoms are hermaphrodite. FGR 15
    has the ICRP 103 tissues but the eye lens and ureters, and the testes,
    ovaries, prostate and uterus apart; FGR 12 the ICRP 60 ones but the
-   extrathoracic airways, and the gallbladder and the heart besides. */
+   extrathoracic airways, and the gallbladder and the heart besides -- with
+   an oesophagus of its own, so that the thymus is one of the remainder. */
 const TISSUE_ORDER_EXT = {
   103: { ...TISSUE_ORDER_103, other: ['Testes', 'Ovaries', 'Prostate', 'Uterus'] },
-  60: { ...TISSUE_ORDER_60, remainder: TISSUE_ORDER_60.remainder.filter((t) => t !== 'ET'), other: [...TISSUE_ORDER_60.other, 'Gallbladder', 'Heart'] },
+  60: { ...TISSUE_ORDER_60, remainder: ['Adrenals', 'Brain', 'Small intestine', 'Kidneys', 'Muscle', 'Pancreas', 'Spleen', 'Thymus', 'Uterus'],
+    other: ['Testes', 'Ovaries', 'Upper large intestine', 'Lower large intestine', 'Gallbladder', 'Heart'] },
 };
 /* Dose rates per second (the reports'), hour or year. */
 const RATE = { s: [1, 's'], h: [3600, 'h'], y: [365.25 * 86400, 'y'] };
@@ -914,8 +916,10 @@ function eSharesOf(r, o, view = 'avg', withProgeny = false) {
   if (sixty) {
     const g = src.gonads || (H.Testes >= H.Ovaries ? 'Testes' : 'Ovaries');
     set(g, 0.20 * H[g], 'the gonads');
-    set('Upper large intestine', 0.12 * 0.57 * H['Upper large intestine'], 'the colon');
-    set('Lower large intestine', 0.12 * 0.43 * H['Lower large intestine'], 'the colon');
+    // The colon's halves: 0.57 and 0.43 (FGR 12's organs), to three figures for an intake (dose60.js).
+    const upper = ext ? 0.57 : 0.568;
+    set('Upper large intestine', 0.12 * upper * H['Upper large intestine'], 'the colon');
+    set('Lower large intestine', 0.12 * (1 - upper) * H['Lower large intestine'], 'the colon');
   } else if (ext) {
     set('Testes', 0.04 * H.Testes, 'the gonads');
     set('Ovaries', 0.04 * H.Ovaries, 'the gonads');
@@ -1005,8 +1009,8 @@ function renderCoef() {
       : `${Math.round(100 * share)} % of the energy this chain emits in 50 years comes from progeny of other elements. They follow the models of the parent element’s section of the OIR series (Help: “Progeny”), with which this page reproduces the ICRP’s coefficients for nearly every chain; the Help lists the few that still differ.`));
   }
   if (r.system === '103') items.push(h('li', {}, 'Effective dose: the average of the male and female equivalent doses, weighted by the tissue weighting factors of Publication 103. “Gonads” are the testes for males and the ovaries for females, “Prostate/uterus” the prostate for males and the uterus for females.'));
-  else items.push(h('li', {}, 'Effective dose: the tissue weighting factors of Publication 60; gonads the higher of testes and ovaries; colon 0.57 upper + 0.43 lower large intestine; oesophagus the thymus dose, as in ICRP 72.'));
-  if (shares) items.push(h('li', {}, `${sharesNote(shares)}${r.system === '103' && sex !== 'avg' ? ` In the ${sex === 'M' ? 'Male' : 'Female'} view each bar is that sex’s half of the term, as e averages the sexes.` : ''}${r.system === '60' ? ' The remainder’s tissues share it by their masses, which change as a child grows, or by the splitting rule.' : ''}`));
+  else items.push(h('li', {}, 'Effective dose: the tissue weighting factors of Publication 60; gonads the higher of testes and ovaries; colon 0.568 upper + 0.432 lower large intestine; oesophagus the thymus dose; the remainder the mean of its nine tissues by their masses at the age of the intake, or split, as in the ICRP’s database of the Publication 72 coefficients.'));
+  if (shares) items.push(h('li', {}, `${sharesNote(shares)}${r.system === '103' && sex !== 'avg' ? ` In the ${sex === 'M' ? 'Male' : 'Female'} view each bar is that sex’s half of the term, as e averages the sexes.` : ''}${r.system === '60' ? ' The remainder’s tissues share it by their masses at the age of the intake, or by the splitting rule.' : ''}`));
   $('dcNotes').replaceChildren(h('ul', {}, items));
 }
 

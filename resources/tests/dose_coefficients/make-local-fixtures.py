@@ -363,7 +363,10 @@ def fgr12(folder):
 ICRPDOSE_CLASS = {'E1': 7300, 'E2': 100, 'E3': 365, 'E4': 1825, 'E5': 3650, 'E6': 5475}  # members of the public, by age (days)
 ICRPDOSE_SERIES = {0: 'Ovaries', 1: 'Testes', 2: 'Breast', 3: 'Red marrow', 4: 'Thyroid', 5: 'Bone surface', 6: 'Stomach', 7: 'Small intestine',
                    8: 'Upper large intestine', 9: 'Lower large intestine', 10: 'Liver', 11: 'Kidneys', 12: 'Spleen', 13: 'Pancreas', 14: 'Adrenals',
-                   15: 'Skin', 16: 'Bladder', 17: 'Thymus', 18: 'Uterus', 19: 'Remainder', 20: 'Brain', 23: 'Muscle', 32: 'ET', 33: 'Lung', 34: 'Colon', 35: 'E'}
+                   15: 'Skin', 16: 'Bladder', 17: 'Thymus', 18: 'Uterus', 19: 'Remainder', 20: 'Brain', 23: 'Muscle',
+                   # the parts ET and the lungs are made of: ET = 0.001, 0.998, 0.001 of the three; the lungs 0.167, 0.167, 0.333, 0.333, 0.001 of the five
+                   24: 'ET part 1', 25: 'ET part 2', 26: 'ET part 3', 27: 'Lung part 1', 28: 'Lung part 2', 29: 'Lung part 3', 30: 'Lung part 4', 31: 'Lung part 5',
+                   32: 'ET', 33: 'Lung', 34: 'Colon', 35: 'E'}
 ICRPDOSE_TIMES = ['1 d', '7 d', '30 d', '1 y', '5 y', '10 y', '20 y', '30 y', '45 y', '50 y or to the age of 70']
 
 

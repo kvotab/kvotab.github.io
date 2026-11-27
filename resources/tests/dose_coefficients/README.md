@@ -2540,7 +2540,7 @@ those at intake. Refitted this way, ICRP 72's own Remainder, rebuilt from its
 own tissue values, rounds back 63-72 % instead of 42-53 %. The effect on e is
 a few hundredths of a percent; no source for these masses was found.
 
-## 1 MeV = 1.6e-13 J in the ICRP 60 system; whose numbers ICRP 72's are (2026-11-28)
+## 1 MeV = 1.6e-13 J in the ICRP 60 system; whose numbers ICRP 72's are (2026-11-27, afternoon)
 
 **A uniform 0.19 %.** With the photons as above, the page's adult doses sat
 above ICRP 72's by one factor everywhere. Scaling the page's values and
@@ -2619,7 +2619,7 @@ Smaller, also open: the walls of the large intestine 0.1 % further above
 ICRP 72 than other organs at every route; ET after inhalation 0.4 %, with
 a wide spread (78-80 % rounding).
 
-## The ICRP 60 system in steps, as PLEIADES; the ICRP database to seven figures (2026-11-28, later)
+## The ICRP 60 system in steps, as PLEIADES; the ICRP database to seven figures (2026-11-27, later)
 
 **Two sources that settle what was open above.**
 
@@ -2707,3 +2707,353 @@ and the ICRP 60 rows of "Checking it" (192nIr Type F joins the near-ties).
   steps; the first year's step (8.85 d fits a month, 8.1 d a year).
 - The names of some isomers and chemical forms differ between the database
   and the page and are not matched yet (2,341 of 2,999 cases per age are).
+
+## The remainder, its split and the colon as the ICRP database has them (2026-11-27, evening)
+
+**The database's own bookkeeping.** local/icrpdose.json holds for every
+intake the committed dose of each tissue and, beside them, the remainder,
+the colon and e, all to seven figures. So the rules that join them can be
+read off the database alone, without this page's dosimetry in between:
+15,054 intakes at the six ages (each series at its last stored value).
+Five nuclides are stored to two figures only (228Th, 231Th, 232Th, 227Ra,
+231U: ratios such as 4.700 and 11.000 between their tissues) and are left
+out of what follows.
+
+- **e** is the sum of w_T H_T with the gonads the higher of testes and
+  ovaries, the oesophagus the thymus series and 0.05 of the remainder: to
+  1e-6 for 99.9 % (with the ovaries always 93.8 %, the testes 12 %, the
+  mean 6 %). Nineteen single intakes are 0.5-12 % off their own tissues
+  (131mBa Type F and 133mBa Type M at 3 months, 241Pu Type S at 1 year ...).
+- **The colon** is 0.568 of the upper and 0.432 of the lower large
+  intestine's wall: a least-squares fit gives 0.568000 and 0.432000 at every
+  age, and 99.5 % of the intakes whose two walls differ follow it to 1e-5.
+  With ICRP 67's 0.57 and 0.43, 2 % do. (The walls' 210 and 160 g make
+  0.5676.)
+- **The remainder's masses.** A least-squares fit of the unsplit intakes'
+  remainder on the doses of the ten tissues the page had in it, per age,
+  with the muscle's mass held (outliers trimmed; 85 % of the intakes then
+  fit to 5e-6), gives the masses relative to the muscle's. The thymus comes
+  out at zero (-0.0001 to -0.01 g) at every age. For the adult the others
+  are the page's (14.0002, 1399.99, 639.999, 310, 99.998, 179.999, 79.996 g)
+  but the ET airways 15.000 g, not 15.5. For children every tissue came out
+  low by one factor per age, 0.6378, 0.6579, 0.8594 and 1.0476 at 1, 5, 10
+  and 15 years: the muscle is 3,920, 7,600, 12,800 and 21,000 g there (40 %
+  of a body of 9.8, 19, 32 and 52.5 kg) against the phantoms' 2,500, 5,000,
+  11,000 and 22,000 g, and the other tissues the phantoms' own; the airways
+  2.1, 4.1, 6.8 and 11 g. At 3 months every mass is 100/365 of the way from
+  a newborn's to the 1-year-old's, which makes the newborn's muscle 1,360 g
+  (40 % of 3.4 kg) and airways 1.2 g. These are the masses the two-figure
+  values of ICRP 72 had hinted at (above: "about 1.4-1.6, 3.9, 7.6 and
+  12.8 kg").
+- **The masses are those of the age at the intake.** With them the
+  committed doses of the nine tissues give the committed remainder to 1e-5,
+  for short- and long-lived nuclides alike. (The page had let the masses
+  grow with the child and integrated the weighted dose rates.)
+- **The split is decided on two figures.** The database's choice against
+  the ratio of the highest remainder tissue to the highest weighted one:
+
+      ratio           by mass   split
+      below 1           8,699       0
+      1.000-1.005          23       0
+      1.005-1.01           12       5
+      1.01-1.02            22      17
+      1.02-1.05            16      60
+      1.05-1.08             3      62
+      above 1.08            0   6,081
+
+  11C as a gas shows what decides: its chemical forms have the same ratio
+  of pancreas to ovaries (1.013 at 10 years) and doses that differ by a
+  factor, and the database splits three of them and not the fourth. With
+  both doses rounded to two figures and the split made when the remainder
+  tissue's is then the higher, the choice is the database's in 15,000 of
+  15,000 intakes where the two ways can be told apart. Exact comparison
+  misses 76, three figures 62, "at least equal" on two figures 121, a margin
+  of 5 % 85.
+
+With all of it the database's remainder follows from its own tissues to
+1e-4 for every one of the 15,054 intakes, and to 1e-5 for 98.7 % of all
+15,174 with the five two-figure nuclides counted in.
+
+**What the database's help says of it** (RPDHLP.chm in the installer;
+extract_chmLib unpacks it; "Equivalent dose to remainder tissues" and
+"Target tissues"). The split: "In the calculations for Publication 72 the
+remainder formulation was based on a comparison of numerical values of
+equivalent doses rounded to two significant figures. This has the advantage
+that the reader, who has access only to two significant figures, would
+decide on the same formulation as the computer code used to generate the
+results", while for workers (Publication 68) the database compares "in the
+full significance of the computer"; and the formulation that applies to the
+committed dose is applied at every time. That is what the numbers show. Two
+things it says they do not show: "the mass-weighted mean dose to the ten
+organs and tissues listed in Table 9 of Publication 68", with the thymus at
+20 g -- with the thymus in at the phantoms' masses 11-41 % of the public's
+remainders fit to 1e-5 instead of 98.7 % -- and "H(colon) = 0.57 H(ULI) +
+0.43 H(LLI)". The children's masses are not in it.
+
+**In the engine.** dose60.js REMAINDER_60 has the nine tissues with these
+masses; `remainder60(H, intakeAge, split)` takes the mean of the committed
+doses by the masses of the age at the intake (the adult's from 20 years)
+and decides the split on two figures; TISSUES_60's colon is 0.568 and 0.432.
+The integration no longer carries the remainder as targets of its own (the
+remainder, the remainder without each tissue, and each tissue's share of
+both: 121 rows beside the targets'), since fixed masses make it a weighting
+of the committed doses; the parts of e in time (effectivePieces60) take the
+same weights. worker.js's terms of e in time use remainder60 with the split
+the committed doses decided. The tissue table lists the thymus with the
+other tissues, no longer under the remainder. External exposure keeps its
+own bookkeeping (external.js): FGR 12's phantom has an oesophagus of its
+own, so the thymus is one of its remainder, and the colon is 0.57 and 0.43.
+`dcal` does not change the remainder: DCAL's own e is not what that option
+is for.
+
+**What it brings.** Against the database (committed doses, 14,046
+case-ages matched by name), the share within 0.1, 0.2, 0.5, 1 and 2 %:
+
+    remainder        11.4  20.1  34.7  52.7  68.2  ->  32.4  52.1  69.2  83.8  92.7   (median 1.0063 -> 1.0015)
+    e                28.3  47.5  76.3  89.8  95.9  ->  31.0  50.4  76.8  90.0  96.2
+    large intestine  32.7  59.6  86.8  93.4  96.6  ->  37.2  65.2  86.9  93.4  96.6   (the colon)
+
+Against ICRP 72's two figures: e rounding 86.0 -> 86.6 %, organ doses with
+the remainder 88.5 -> 89.6 %, within 5 % 99.0 -> 99.3 % and 98.1 -> 98.7 %;
+Publication 119's e 90.2 -> 91.6 % swallowed and 84.0 -> 84.3 % breathed in.
+Effective doses more than 10 % off Publication 119: 24 -> 10 swallowed, 50
+-> 34 breathed in. The intakes that Help listed as near-ties of the split
+are level now: 31Si, 89Nb and 161Ho swallowed and 192nIr Type F at every
+age, 198mAu Type M at 1 year (its 3 months stays). So are 56Mn, 115In,
+142La, 177Yb, 115mCd, 113mIn, 250mEs, 131Ba, 198Au, 232Np (1.43), 133I,
+244mAm, 133mBa, 149Gd, 185W, 237U (1.29) and 249Cm (1.36) at single ages.
+Two came: 171Er Type M at 15 years (0.87) and 97Zr Type S at 15 years (0.90;
+the adult was 1.10 before and is), where ET is 1-5 % above the lungs and
+this page's two doses, 0.3-0.9 % from the database's, round together or
+apart the other way. A full comparison takes 12 minutes (14 to 22 before).
+
+The page's choice of split differs from the database's in 45 of 13,926
+case-ages (81 with exact comparison). Twenty-two of them are not the same
+nuclide: the database's Ta-180 and Ta-180m, and Rh-102 and Rh-102m, are the
+page's the other way round (to be matched with the other names). Seventeen
+are near-ties (75Se, 131mTe, 64Cu, 171Lu, 59Fe, 136Cs, 90mY, 133mBa, 171Er,
+185Os, 198mAu, 212Pb, 97Zr, 200Pt, 239Np), where the page's ET is 0.3-3.6 %
+or its lungs up to 1.5 % from the database's. Two are 207At Type F, whose ET
+is a quarter high here. Four are 95Nb Type F, which the database shows for
+what it is: its bone surface gets three to five times and its red marrow
+up to one and a half times the page's dose, from the first day on (48V Type
+F has the same marrow), so the bone surface is the highest weighted tissue
+there and ET does not split the remainder; open.
+
+Tests: remainder60 by itself (the masses of the adult and of 3 months, nine
+tissues, the split at 1.07 and not at 1.049 of 1.01, a split given or
+withheld), the colon's fractions; with local/icrpdose.json the database's
+own bookkeeping on its 15,054 intakes -- the remainder from its tissues
+within 1e-4 for all, the split as the two-figure rule has it in 14,987 of
+14,987 where the two ways differ by 1e-3, the colon within 1e-5 for 99.5 %,
+e within 1e-5 for 99.9 %. 307 engine checks, 167 in the browser. Help:
+"Effective dose" of the ICRP 60 section says all of it; "Checking it" has
+the new shares (99.6, 99.8, 100.0 % of 4,534 swallowed; 99.2, 99.7, 99.9 %
+of 9,872 breathed in) and its table of intakes off at two ages loses five
+rows and gains 97Zr Type S.
+
+**What the database shows next:**
+
+- 95Nb and 48V Type F: bone surface and red marrow (above).
+- The mass of the whole body (0.19 % for adults, more in children), lungs
+  and ET after inhalation, the names of isomers and chemical forms, as
+  listed in the section before this one.
+
+## 48V and 95Nb on bone surfaces (2026-11-27, late evening)
+
+**What the split of the remainder showed.** For 95Nb Type F the database
+does not split the remainder where the page did: its highest weighted
+tissue is the bone surface, at three to five times the page's dose, with
+the red marrow at one and a half times, from the first day on. 48V Type F
+was the other intake left "not resolved" in Help, with two thirds of ICRP
+72's red marrow.
+
+**The models.** Ten elements have two systemic model files in DCAL's
+library, one with the bone activity on the surfaces (_SUR) and one with it
+in the volume (_VOL): P, V, Cr, Zn, Nb, Mo, Pd, Sn, Ta, W. DCAL takes the
+first for a nuclide of 15 days or less (ORNL/TM-2001/190, 3.6; Publication
+30's general rule), and so did model60.js. The database, each nuclide
+swallowed by the adult with either file (the private surfvol.mjs; bone
+surface, red marrow and e over the database's; 64 nuclides):
+
+    nuclide   half-life   surface model        volume model
+    117mSn     13.6 d     1.003 1.000 1.002    0.131 0.624 0.991
+    32P        14.3 d     1.010 1.010 1.005    0.871 0.342 0.724
+    48V        16.2 d     1.004 1.001 1.002    0.985 0.962 0.999
+    103Pd      17.0 d     2.705 1.188 1.001    1.000 1.000 1.001
+    178W       21.7 d     5.048 1.463 1.021    0.999 1.001 1.001
+    33P        25.4 d     13.98 3.145 2.266    1.016 1.015 1.005
+    95Nb       35.1 d     1.001 1.000 1.000    0.448 0.938 0.995
+    188W       69.4 d     2.909 3.417 1.056    1.000 1.001 1.001
+    93mNb      13.6 y     12.65 2.883 1.063    1.001 1.002 1.002
+
+For 62 of the 64 the model that the split at 15 days chooses is within 1.2 %
+of the database in both tissues (1.6 % for 33P), and the other one differs
+from it by anything from nothing (nuclides of minutes, of which little
+reaches bone) to a factor of 14. The two others are 48V and 95Nb, on the
+surfaces in the database. By
+inhalation, Types F, M and S at 3 months, 10 years and the adult, the same:
+48V 1.002-1.018 in the bone surface and 1.001-1.004 in the red marrow with
+the surface model (0.91-0.97 and 0.52-0.89 with the volume model), 95Nb
+0.999-1.001 and 1.000-1.001 (0.19-0.87 and 0.52-0.99), while 33P, 103Pd and
+178W stay with the volume model.
+
+**Why.** The database's help (BIO.chm) gives the assignment element by
+element "following the recommendations of ICRP Publication 30", and for
+vanadium it reads: "it is assumed that V-49 is retained in bone volume and
+all other isotopes are retained on bone surfaces." Its lists for tin (113,
+119m, 121m, 123, 126 in volume), tungsten (178, 181, 185, 188), palladium
+(103, 107), tantalum (179, 180, 182), phosphorus (33) and chromium (51) are
+those of the 15 days. Niobium's page (Publication 56) says nothing of it;
+there the doses decide.
+
+**In the engine.** model60.js ON_BONE_SURFACES_60 = {V-48, Nb-95}, asked
+before the half-life. dcal-compare.mjs gives the two the volume model, as
+DCAL has them.
+
+**What it brings.** 48V Type F: e 0.87-0.92 of Publication 119 -> 1.00 at
+every age (1.001-1.002 of the database; bone surface 1.014-1.018, red marrow
+1.002-1.004); 95Nb Type F 0.87-0.99 -> 1.00 (1.000; 0.999-1.001; 1.000-
+1.001), and its remainder is no longer split. Both leave Help's table of
+intakes off at two ages, which now holds 246Pu (the americium isomer), 207At
+Type F and 97Zr Type S. Effective doses more than 10 % off Publication 119
+breathed in: 34 -> 30. The page's split differs from the database's in 41
+case-ages (45).
+
+Tests: the choice of model for sixteen nuclides around the 15 days; with
+local/icrp72.json, 48V and 95Nb Type F within 5 % of ICRP 72 in e, bone
+surface and red marrow at every age; with local/icrpdose.json, 64 nuclides
+of the ten elements swallowed by the adult, bone surface and red marrow
+within 2 % of the database's (the tantalum-180 pair goes by other names
+there and is left out). Help: "Systemic models" of the ICRP 60 section.
+
+## The lungs' weights as the ICRP database has them (2026-11-27, late evening)
+
+The database stores the parts its composite tissues are made of (series 24
+to 31 of each record), so two more of its rules can be read off as the
+colon's was, by least squares on the 10,026 inhaled intakes:
+
+    ET   = 0.001000, 0.998000, 0.001000 of its three parts
+    Lung = 0.167000, 0.167000, 0.333000, 0.333000, 0.001000 of its five
+
+each to 1e-5 for every intake, at every age. ET is the page's (ET1, ET2 and
+the lymph nodes). The lungs' weights add up to 1.001: the two cell layers
+of the bronchi have 0.167 each, a sixth to three figures, where DCAL's
+LUNGAS.DAT gives the mean of the two 0.333 (0.1665 each), as the page had
+it. dose60.js TISSUES_60.Lung now has 0.167 and 0.167, which raises the lung
+dose by 0.0005 of the two bronchial doses: 0.04-0.15 % for the five intakes
+below, 0.1 % where all the parts get the same dose.
+
+make-local-fixtures.py --icrpdose keeps the eight parts ("ET part 1" to 3,
+"Lung part 1" to 5). Test: the database's lungs and ET from their parts
+with the page's weights, within 1e-5 for all 10,026. The deposition
+fractions in the database's help (RPDHLP.chm, by region, particle size and
+age) are DCAL's to all four figures, 828 of 840 at the ten sizes the two
+share, six ages and the worker; the other twelve are the adult's at 0.003
+um, where the help repeats its 0.001 um block. So what is left in the lungs
+and airways, 0.1-1 %, is not in the deposition.
+
+**What it brings, and what it uncovers.** By the scores this rule alone is
+a small step back: e rounding to ICRP 72's two figures 86.7 -> 86.4 %,
+Publication 119's e breathed in 84.4 -> 84.0 %; against the database the
+lungs and ET within 0.5 % 65.9 -> 64.3 % (their median 1.0013 -> 1.0019).
+The parts say why (the private lungparts.mjs: the page's eight airway and
+lung targets over the database's stored parts; its "Lung part 1" is the
+bronchi's secretory cells and "part 2" the basal ones). After 60Co Type M
+the page's parts are 0.1-0.5 % below the database's and the new weights
+bring the adult's lungs from 0.9965 to 0.9978 of it (239Pu Type S 0.9988 to
+0.9992); after 90Sr, 137Cs or 131I Type F every part is 0.1-0.6 % above it,
+as every tissue of the body is after an intake that goes to blood (the
+0.19 % of the whole body, open), and the lungs go from 1.0008, 1.0004 and
+1.0028 to 1.0019, 1.0014 and 1.0043: a dose that is the same in all five
+parts is a thousandth higher with weights that add up to 1.001. The old
+weights hid that much of the excess. The rule is the database's own, exact for every intake, and the
+split of the remainder compares the lungs it gives (the page's choice of
+split differs from the database's in 40 case-ages, 41 before). It stays;
+the excess is the next thing to find.
+
+## Gold from blood to the body tissues only (2026-11-27, late evening)
+
+The database's help gives every element's retention table (BIO.chm), which
+can be set beside the page's systemic model files (the private biocmp.py:
+the share and half-time of each compartment, the transfer compartment, the
+prompt excretion). They are the same for every element with a table of
+that form but gold -- and for gold neither is what the database's numbers
+have. The help's table (kidneys and liver 10 % each, spleen 1 %, adrenals
+0.1 %, 20 % excreted promptly, half-times of 8 and 200 d) is not Publication
+30's gold, and the doses do not follow it: after gold breathed in as Type F
+the page's liver, kidneys, red marrow, testes and muscle are all 0.975-0.978
+of the database's, one factor for every tissue, which a kidney or liver of
+its own would not give. Publication 30's gold is the whole body with 3 d,
+all excreted in urine, and DCAL's Au.DEF is that, with one way more: 28.6
+d-1 of the 1028.6 d-1 out of blood go straight to the bladder contents,
+2.78 %. Without that way (the private gold.mjs):
+
+    198Au Type F, adult      e 0.9979 -> 1.0030   liver 0.9752 -> 1.0013   kidneys 0.9758 -> 1.0013   bladder 1.0181 -> 0.9996
+    198Au Type F, 1 year     e 0.9987 -> 1.0040   liver 0.9800 -> 1.0053   kidneys 0.9797 -> 1.0054   bladder 1.0064 -> 1.0034
+    195Au Type F, adult      e 0.9931 -> 1.0015   liver 0.9747 -> 1.0015   kidneys 0.9751 -> 1.0015   bladder 0.9956 -> 1.0010
+    198Au swallowed, adult   e 1.0006 -> 1.0010   liver 0.9895 -> 1.0005   kidneys 0.9920 -> 1.0004   bladder 1.0096 -> 0.9999
+
+So the database's gold leaves blood for the body tissues only. gen-dose-
+icrp60.mjs writes it as AU_I30 (Au.DEF without the way to the bladder),
+beside the Publication 30 models of actinium and protactinium that ICRP 72
+used, and assemble60 takes an _I30 model for the parent when there is one.
+models.json got the one object appended, as the generator writes it (the
+file round-trips through JSON.parse; nothing else in it changed). Tests:
+AU_I30 is Au.DEF less that way and gold's blood feeds no bladder; with the
+database, 198Au (adult and 1 year), 195Au and 199Au Type F within 0.7 % in
+six tissues, the bladder wall among them.
+
+The same comparison showed no other difference: where the help's table and
+the page's file look different it is the mineral bone written as cortical
+and trabecular halves, or the excretion written as a compartment. The
+help's phosphorus has 1,500 d for the mineral bone where DCAL's file keeps
+it for good (32P and 33P do not live to tell).
+
+## Where the ICRP 60 system stands after the evening of 2026-11-27
+
+From the run before the remainder (r60-step) to the last (r60-final: the
+remainder and its split, the colon, 48V and 95Nb, the lungs' weights, gold).
+Against ICRP 72's two figures:
+
+    e rounding to the print            86.0 -> 86.4 %     (86.7 before the lungs' weights)
+    organ doses rounding to the print  88.5 -> 90.0 %
+    within 5 %: e, organ doses         99.0 -> 99.3 %,  98.1 -> 98.8 %
+    Publication 119's e                90.2 -> 91.7 % swallowed,  84.0 -> 84.1 % breathed in
+    e more than 10 % off P119          24 -> 10 swallowed,  50 -> 28 breathed in
+
+Against the database, the share of 14,046 case-ages within 0.1, 0.2, 0.5, 1
+and 2 %:
+
+    e                28.3  47.5  76.3  89.8  95.9  ->  30.0  49.7  76.2  89.8  96.2
+    soft tissues     46.3  71.1  88.2  93.7  96.0  ->  47.2  72.2  89.2  94.4  96.4
+    large intestine  32.7  59.6  86.8  93.4  96.6  ->  37.2  65.2  87.0  93.4  96.6
+    bone surface     32.0  55.1  78.8  90.2  94.9  ->  32.5  55.9  79.8  91.0  95.4
+    lungs, ET        24.0  42.9  65.8  83.1  93.2  ->  24.4  42.2  64.7  82.5  93.2
+    remainder        11.4  20.1  34.7  52.7  68.2  ->  32.9  52.7  69.5  83.8  92.8
+
+Help's table of intakes more than 10 % off Publication 119 at two ages now
+holds 246Pu (four rows; the americium isomer) and 207At Type F; 97Zr Type S
+is at 0.905 and 1.11. Of the single ages left, most are near-ties of the
+split (64Cu, 171Lu, 90mY, 171Er, 185Os, 190mIr, 198mAu, 212Pb, 97Zr, 200Pt,
+239Np), 131mBa Type F at 3 months is the database's own e 12 % off its
+tissues, and three polonium rows of the comparison's case list are the
+workers' f1 against the public's table (the page's own 210Po is ICRP 72's
+at every age).
+
+**What the database shows next:**
+
+- The excess after intakes that go to blood: 0.19 % in every tissue for
+  adults (whole body, Other), more in children. The help's table of
+  reference masses has DCAL's total body (68,831 g for the adult), so it is
+  not a body mass that is printed there.
+- The airways and lungs part by part (lungparts.mjs): ET1 after alpha
+  emitters (a third of the database's for 239Pu, 1.09 for 210Po) and 1-2 %
+  high after Type F; ET2 up to 0.7 % low for alpha emitters; the bronchi's
+  two layers within 0.5 % but for 210Po's basal cells (1.04). The energies
+  between the tabulated ones again, for alpha particles this time.
+- 207At Type F's ET (1.26-1.30); 246Pu; 40K; strontium and barium in
+  infancy; the names of isomers (180Ta and 102Rh are the other way round in
+  the database) and of chemical forms.
+
+

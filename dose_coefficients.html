@@ -417,7 +417,18 @@
               transfer rates interpolated linearly in age, and the adult at 25 years for bone-seeking elements. Progeny
               follow the kinetics DCAL’s batch files give them: shared with the parent, or independent with the
               element-specific models for lead, radium, thorium and uranium chains, iodine from tellurium and noble
-              gases.</li>
+              gases. Ten elements (phosphorus, vanadium, chromium, zinc, niobium, molybdenum, palladium, tin, tantalum
+              and tungsten) have what they deposit in bone on the bone surfaces for a nuclide of 15 days or less and
+              through the bone volume for a longer-lived one. Two longer-lived ones are on the surfaces all the same,
+              as the ICRP has them: <sup>48</sup>V (16 days; “V-49 is retained in bone volume and all other isotopes
+              are retained on bone surfaces”, in the notes of the ICRP’s database of dose coefficients) and
+              <sup>95</sup>Nb (35 days), whose bone surface and red marrow doses in the database are those of the
+              surface model within 0.1 % at every age and by every route; the volume model gives the bone surfaces as
+              little as a fifth of that. For the other nuclides of the ten elements the database’s doses are those of
+              the split at 15 days. Gold goes from blood to the tissues of the whole body and nowhere else, as in
+              Publication 30; DCAL’s file also passes 2.8 % of it straight from blood to the urinary bladder, with
+              which every tissue would get 2.2–2.5 % less than in the database after gold breathed in as Type F,
+              and the bladder wall 1.8 % more.</li>
             <li><b>Growing up</b>: an intake before adulthood is calculated in steps, as PLEIADES does it: within a
               step the transfer rates and the specific effective energies are those of the age at its start. The steps
               run from the intake and are 9 days long while one starts before the age of 1 year, 40 days from 1 to 5
@@ -456,8 +467,35 @@
               batch files leave <sup>248</sup>Cm, <sup>250</sup>Cm, <sup>252</sup>Cf and <sup>254</sup>Cf out, as
               Federal Guidance Report 13 does; they are here, as in Publication 72, with the forms of the other
               isotopes of their elements.</li>
-            <li><b>Effective dose</b>: the tissue weighting factors of Publication 60 with the remainder of
-              Publication 72 (mass-weighted, with the splitting rule).</li>
+            <li><b>Effective dose</b>: the tissue weighting factors of Publication 60, with the gonads the higher of
+              the testes’ and the ovaries’ dose, the colon 0.568 of the upper and 0.432 of the lower large intestine’s
+              wall (Publication 67 prints 0.57 and 0.43), and the oesophagus the thymus dose. The lungs are 0.167
+              each of the basal and the secretory cells of the bronchi, 0.333 each of the bronchioles and the
+              alveolar region and 0.001 of the thoracic lymph nodes (Publication 66’s thirds, to three figures);
+              the extrathoracic airways 0.001 of ET<sub>1</sub>, 0.998 of ET<sub>2</sub> and 0.001 of their lymph
+              nodes. The remainder, weighted 0.05, is the mean of the committed
+              doses of nine tissues by their masses at the age of the intake: adrenals, brain, extrathoracic airways,
+              small intestine, kidneys, muscle, pancreas, spleen and uterus. When the highest of them is above every
+              tissue with a weighting factor of its own, it takes half of the remainder’s weight and the mean of the
+              other eight the other half (the splitting rule). The details are those of the ICRP’s database of dose
+              coefficients, whose colon, lungs, airways, remainder and effective dose follow from its own tissue doses
+              in this way, to four figures or better, for 99.5 % or more of the intakes it holds (five nuclides it
+              stores to two figures apart):
+              <ul>
+                <li>the two doses of the splitting rule are compared rounded to two figures, so that a remainder
+                  tissue up to a tenth above the highest weighted one can leave the remainder unsplit. The database’s
+                  own notes say so: “In the calculations for Publication 72 the remainder formulation was based on a
+                  comparison of numerical values of equivalent doses rounded to two significant figures. This has the
+                  advantage that the reader, who has access only to two significant figures, would decide on the same
+                  formulation as the computer code used to generate the results”;</li>
+                <li>the thymus, which Publication 60 names among the remainder’s tissues and the database’s notes
+                  list with 20 g, has no weight in its numbers: the thymus dose already stands for the
+                  oesophagus’s;</li>
+                <li>the muscle is 40 % of the body (2.1 kg at 3 months, 3.9, 7.6, 12.8 and 21 kg at 1, 5, 10 and
+                  15 years, 28 kg in the adult), not the 0.76 to 22 kg of the children’s phantoms, so that the other
+                  tissues have less of a child’s remainder; the airways are 1.4, 2.1, 4.1, 6.8, 11 and 15 g;</li>
+                <li>the masses are those of the age at the intake, however long the dose takes to build up.</li>
+              </ul></li>
           </ul>
 
           <h3 id="help-103">The ICRP 103 system as calculated here</h3>
@@ -1041,8 +1079,8 @@
             printed coefficients to two significant figures, so a perfect calculation agrees with them to within about ±2.5–5 %;
             the annex gives more digits.</p>
             <div class="dc-table-wrap"><table class="dc-ref"><thead><tr><th>Committed effective dose</th><th>values</th><th>within 5 %</th><th>within 10 %</th><th>within 20 %</th></tr></thead><tbody>
-            <tr><td>ICRP 60, ingestion, against Publication 119 Table F.1</td><td class="num">4534</td><td class="num">99.0 %</td><td class="num">99.5 %</td><td class="num">100.0 %</td></tr>
-            <tr><td>ICRP 60, inhalation (Types F, M, S), against Table G.1</td><td class="num">9872</td><td class="num">99.0 %</td><td class="num">99.5 %</td><td class="num">99.9 %</td></tr>
+            <tr><td>ICRP 60, ingestion, against Publication 119 Table F.1</td><td class="num">4534</td><td class="num">99.5 %</td><td class="num">99.8 %</td><td class="num">100.0 %</td></tr>
+            <tr><td>ICRP 60, inhalation (Types F, M, S), against Table G.1</td><td class="num">9872</td><td class="num">99.3 %</td><td class="num">99.7 %</td><td class="num">99.9 %</td></tr>
             <tr><td>ICRP 103, ingestion, against Publication 158 and the Part 2 draft</td><td class="num">744</td><td class="num">100.0 %</td><td class="num">100.0 %</td><td class="num">100.0 %</td></tr>
             <tr><td>ICRP 103, inhalation, against Publication 158 and the Part 2 draft</td><td class="num">2214</td><td class="num">100.0 %</td><td class="num">100.0 %</td><td class="num">100.0 %</td></tr>
             <tr><td>ICRP 103, ingestion, against the Part 3 draft</td><td class="num">342</td><td class="num">100.0 %</td><td class="num">100.0 %</td><td class="num">100.0 %</td></tr>
@@ -1071,19 +1109,14 @@
             After <sup>182</sup>Ir the thyroid is 2.2 % below the viewer and the gut walls up to 0.8 % above, by the rhenium and
             osmium it forms, for a reason not found.</p>
             <p class="dc-note"><sup>†</sup> OIR Data Viewer for ICRP Publications 134, 137 and 141 (Occupational Intakes of Radionuclides, Parts 2 to 4),
-            © ICRP. The comparisons read it from a local copy; none of its values are part of this page.</p><p>In the ICRP 60 system the few values outside 10 % are single ages here and there (rounding and the
-            interpolations of the first year) and these, more than 10 % off at two ages or more (– where Publication 119 gives
-            the infant another f<sub>1</sub>):</p>
+            © ICRP. The comparisons read it from a local copy; none of its values are part of this page.</p><p>In the ICRP 60 system the few values outside 10 % are single ages here and there and these, more than 10 % off
+            at two ages or more (– where Publication 119 gives the infant another f<sub>1</sub>). Most of the single ages are
+            intakes whose highest remainder tissue and highest weighted tissue get nearly the same dose: the remainder is
+            split or not by the second figure of the two doses (“Effective dose” above), so that half a percent in a
+            tissue’s dose can move e by a tenth. The others are rounding and the interpolations of the first year.</p>
             <div class="dc-table-wrap"><table class="dc-ref dc-ratios"><thead><tr><th rowspan="2">Intake</th><th colspan="6" class="group">Ratio, this page / Publication 119</th><th rowspan="2">Why</th></tr>
             <tr><th class="age">3 months</th><th class="age">1 year</th><th class="age">5 years</th><th class="age">10 years</th><th class="age">15 years</th><th class="age">Adult</th></tr></thead><tbody>
-            <tr><td>Si-31 ingestion (f1 0.01)</td><td class="num">–</td><td class="num">1.05</td><td class="num">1.13</td><td class="num">1.11</td><td class="num">1.12</td><td class="num">1.00</td><td>the remainder split on a near-tie: ICRP 72 gives the small intestine and the colon the same dose to two figures, and splits at other ages than this page does</td></tr>
-            <tr><td>Nb-89 ingestion (f1 0.01)</td><td class="num">–</td><td class="num">1.01</td><td class="num">1.02</td><td class="num">1.01</td><td class="num">1.11</td><td class="num">1.11</td><td>the remainder split on a near-tie: ICRP 72 gives the small intestine and the colon the same dose to two figures, and splits at other ages than this page does</td></tr>
-            <tr><td>Ho-161 ingestion (f1 0.0005)</td><td class="num">–</td><td class="num">1.10</td><td class="num">1.10</td><td class="num">1.12</td><td class="num">1.00</td><td class="num">0.97</td><td>the remainder split on a near-tie: ICRP 72 gives the small intestine and the colon the same dose to two figures, and splits at other ages than this page does</td></tr>
-            <tr><td>Pu-246 ingestion (f1 0.0005)</td><td class="num">–</td><td class="num">0.84</td><td class="num">0.83</td><td class="num">0.85</td><td class="num">0.86</td><td class="num">0.85</td><td>ICRP 72 lets Pu-246 decay to Am-246 (39 min) instead of Am-246m (25 min), which its ICRP 38 file, DCAL and later data give and this page uses: with Am-246 the page comes within 4 % of ICRP 72 at every age and route</td></tr>
-            <tr><td>V-48 inhalation (Type F)</td><td class="num">0.91</td><td class="num">0.92</td><td class="num">0.91</td><td class="num">0.91</td><td class="num">0.89</td><td class="num">0.87</td><td>red marrow (two-thirds of ICRP 72’s) and gonads; not resolved</td></tr>
-            <tr><td>Nb-95 inhalation (Type F)</td><td class="num">0.93</td><td class="num">0.99</td><td class="num">0.99</td><td class="num">0.87</td><td class="num">0.88</td><td class="num">0.98</td><td>not resolved</td></tr>
-            <tr><td>Ir-192n inhalation (Type F)</td><td class="num">1.11</td><td class="num">1.11</td><td class="num">1.01</td><td class="num">1.01</td><td class="num">1.01</td><td class="num">1.00</td><td>the remainder split on a near-tie of the spleen and the liver (the same dose to two figures in ICRP 72): split here, not in ICRP 72, at these ages</td></tr>
-            <tr><td>Au-198m inhalation (Type M)</td><td class="num">1.13</td><td class="num">1.13</td><td class="num">1.01</td><td class="num">1.01</td><td class="num">1.00</td><td class="num">0.97</td><td>the remainder split on a near-tie of ET and the highest weighted organ: split here, not in ICRP 72, at these ages</td></tr>
+            <tr><td>Pu-246 ingestion (f1 0.0005)</td><td class="num">–</td><td class="num">0.85</td><td class="num">0.83</td><td class="num">0.85</td><td class="num">0.86</td><td class="num">0.86</td><td>ICRP 72 lets Pu-246 decay to Am-246 (39 min) instead of Am-246m (25 min), which its ICRP 38 file, DCAL and later data give and this page uses: with Am-246 the page comes within 4 % of ICRP 72 at every age and route</td></tr>
             <tr><td>At-207 inhalation (Type F)</td><td class="num">1.05</td><td class="num">1.04</td><td class="num">1.05</td><td class="num">1.05</td><td class="num">1.17</td><td class="num">1.17</td><td>ET a quarter higher here, which splits the remainder at 15 y and adult (5 % at the other ages); not resolved</td></tr>
             <tr><td>Pu-246 inhalation (Type F)</td><td class="num">0.89</td><td class="num">0.86</td><td class="num">0.85</td><td class="num">0.87</td><td class="num">0.87</td><td class="num">0.92</td><td>ICRP 72 lets Pu-246 decay to Am-246 (39 min) instead of Am-246m (25 min), which its ICRP 38 file, DCAL and later data give and this page uses: with Am-246 the page comes within 4 % of ICRP 72 at every age and route</td></tr>
             <tr><td>Pu-246 inhalation (Type M)</td><td class="num">0.69</td><td class="num">0.67</td><td class="num">0.65</td><td class="num">0.61</td><td class="num">0.60</td><td class="num">0.61</td><td>ICRP 72 lets Pu-246 decay to Am-246 (39 min) instead of Am-246m (25 min), which its ICRP 38 file, DCAL and later data give and this page uses: with Am-246 the page comes within 4 % of ICRP 72 at every age and route</td></tr>
@@ -1305,6 +1338,6 @@
   -->
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
   <script src="./resources/js/ensdf-sources.js?v=20261006"></script>
-  <script type="module" src="./resources/js/dose/ui.js?v=20261127a"></script>
+  <script type="module" src="./resources/js/dose/ui.js?v=20261127b"></script>
 </body>
 </html>

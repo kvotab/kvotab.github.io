@@ -294,8 +294,9 @@ export const W_60_EXTERNAL = {
   Thyroid: 0.05, Skin: 0.01, 'Bone surface': 0.01,
 };
 /* The remainder of ICRP 72 without the extrathoracic airways, which the
-   phantom has no dose for: mass-weighted with the adult masses of
-   dose60.js's REMAINDER_60, and the splitting rule. */
+   phantom has no dose for, and with the thymus (the phantom has an
+   oesophagus of its own): mass-weighted with the adult masses, grams, and
+   the splitting rule. */
 export const REMAINDER_60_EXTERNAL = { Adrenals: 14, Brain: 1400, 'Small intestine': 640, Kidneys: 310, Muscle: 28000, Pancreas: 100, Spleen: 180, Thymus: 20, Uterus: 80 };
 /* FGR 12's effective dose equivalent (ICRP 26): the gonads the higher of the
    two, the remainder the mean of the five highest of its organs, skin left out. */
