@@ -2435,3 +2435,37 @@ and 123Te Type S); 241Am Type M e 0.989-1.001 of DCAL's with every organ
 within 0.3 % (the page's e is ICRP 72's, 0.995-1.003). Test: 90Sr's and
 241Am's adult Other and 55Fe's BT-Soft at 5 years to the bone surface and
 red marrow as DCAL's four figures.
+
+## The two organs: 125Cs's thyroid and 234Pa's bladder (2026-11-27, night)
+
+**234Pa (Type M)**: its bladder 1.06-1.32 of DCAL's, liver 1.13, bone
+surface 0.82-0.85, is the protactinium model: the page takes ICRP 30's
+(PA_I30, shared kinetics) as Publication 72 did, DCAL FGR 13's updated one.
+Against ICRP 72 every organ is within 0-5 % (bladder 1.007-1.031); its lungs
+4-6 % above, and so e 3-6.5 %, as DCAL's are for short-lived nuclides.
+
+**125Cs**: the thyroid 0.75-0.85 of DCAL's, every other organ equal; against
+ICRP 72 every organ but the stomach 0.6-0.8, e 0.85-0.97 -- DCAL as low.
+ACTACAL's log of a DCAL run with its files kept shows what it does: 125Xe
+born in the body leaves from every compartment for excreta at 1000 d-1
+(0.1 % of it decays first) and the 125I born of that takes iodine's model.
+ICRP 72 does neither: with 125Xe and 125I following caesium's model, in the
+lungs too, 125Cs comes to ICRP 72 by every route (e 0.988-1.033, thyroid
+0.996-1.019 swallowed). But 127Xe (from 127Cs) and 79Kr (from 79Rb) do
+escape in ICRP 72: following the parent their e comes out 1.08-1.35 times
+its, escaping 0.99-1.04. FGR 13 (Treatment of decay chain members) names
+only radon's rules for noble gases. What tells 125Xe from the others is the
+radioactive iodine behind it, so model60.js keptGas: a noble gas followed
+in the chain by a radioactive member that is no noble gas stays with the
+parent, in the body and the respiratory tract, after the rules for radon
+and 83mKr; xenon from iodine still leaves (its daughters are xenon or
+stable). A half-life rule (gases under a day stay) fits the same three
+cases; no case in ICRP 72 tells the two apart.
+
+Against ICRP 72's database: 8 cases move, 125Cs (e 0-1 → 4-5 of 6 by every
+route, organ doses 2-5 → 116-131 of 156) and 226Ac a little (its 222Rn,
+followed by 218Po, now stays: 12 more organ values round); e rounding 73.9
+→ 74.1 %, organ doses 71.8 → 72.0 %. Tests: the chain's compartments
+(125Xe kept, 127Xe and 79Kr never born) and, with local/icrp72.json, 125Cs
+swallowed and Type M within 5 % of ICRP 72 in e, thyroid, muscle, bone
+surface, lungs.

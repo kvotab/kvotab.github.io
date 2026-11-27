@@ -1075,6 +1075,17 @@ if (!SYSTEM || SYSTEM === '103') {
   const bi = s.members.find((m) => m.name === 'Bi-212'), po = s.members.find((m) => m.name === 'Po-212');
   check('ICRP 60 Pb-212 Type S: 212Bi absorbed from the gut at most as the parent (PB$S), 212Po by its own PO$S',
     bi.f1 === 'BI' && bi.f1cap === 'PB$S' && po.f1 === 'PO$S' && !po.f1cap, `Bi ${bi.f1}/${bi.f1cap} Po ${po.f1}/${po.f1cap}`);
+  // A noble gas born in the body escapes, but one followed by a radioactive
+  // member that is no noble gas stays with the parent (ICRP 72's 125Cs).
+  const gasComps = async (nuclide, route, type) => {
+    await d60.prepare(nuclide);
+    const g = assemble60(d60, { ...recipe60(d60.cases, route, { nuclide, type }), intakeAge: 7300 });
+    const j = g.members.findIndex((m) => /^(Xe|Kr)-/.test(m.name));
+    return { n: g.comps.filter((c) => c.member === j).length, moves: g.transfers.filter((t) => g.comps[t.from]?.member === j).length };
+  };
+  const xe125 = await gasComps('Cs-125', 'ingestion'), xe125h = await gasComps('Cs-125', 'inhalation', 'M'), xe127 = await gasComps('Cs-127', 'ingestion'), kr79 = await gasComps('Rb-79', 'ingestion');
+  check('ICRP 60: 125Xe (followed by 125I) stays with caesium, in the body and the lungs; 127Xe and 79Kr escape and are never born',
+    xe125.n > 5 && xe125.moves > 5 && xe125h.moves > xe125.moves && xe127.n === 0 && kr79.n === 0, JSON.stringify({ xe125, xe125h, xe127, kr79 }));
 }
 
 /* ---- spontaneous fission (ICRP 60; SEECAL 8.4's SponFiss, see60.js) ---------------------- */
@@ -1257,6 +1268,10 @@ if (!SYSTEM || SYSTEM === '60') {
     // absorbed fractions of 2.5 MeV alphas in the respiratory tract (254Cf's lungs 0.65-0.75 of ICRP 72 at 2 MeV, about
     // twice ICRP 72's at 4 MeV); within 5 %, the size of ICRP 72's two figures.
     const fis = [
+      // and 125Cs, whose xenon stays in the body (model60.js keptGas): with it
+      // escaping e was 0.85-0.97 of ICRP 72 and the thyroid 0.64-0.71
+      ['ingestion', 'Cs-125', null, ['E', 'Thyroid', 'Muscle', 'Bone surface'], 0.05, 'noble gas kept'],
+      ['inhalation', 'Cs-125', 'M', ['E', 'Thyroid', 'Lung'], 0.05, 'noble gas kept'],
       ['ingestion', 'Pu-244', null, ['Liver', 'Bone surface', 'Kidneys', 'Muscle', 'Brain'], 0.05],
       ['inhalation', 'Cf-250', 'M', ['Kidneys', 'Muscle', 'Brain', 'Thyroid'], 0.05],
       ['inhalation', 'Cf-254', 'M', ['E', 'Lung', 'ET'], 0.05],
@@ -1264,7 +1279,7 @@ if (!SYSTEM || SYSTEM === '60') {
       ['inhalation', 'Cm-248', 'S', ['E', 'Lung', 'ET'], 0.05],
     ];
     const N72 = { Liver: 'Liver', 'Bone surface': 'Bone Surface', Kidneys: 'Kidneys', Muscle: 'Muscle', Brain: 'Brain', Thyroid: 'Thyroid', Lung: 'Lungs', ET: 'ET' };
-    for (const [route, nuclide, type, keys, tol] of fis) {
+    for (const [route, nuclide, type, keys, tol, what = 'fission'] of fis) {
       await d60.prepare(nuclide);
       const res = coefficients60(d60, recipe60(d60.cases, route, { nuclide, bio: null, f1file: null, type: type ?? undefined }), AGES_60);
       const off = [];
@@ -1275,7 +1290,7 @@ if (!SYSTEM || SYSTEM === '60') {
           if (Math.abs(q - 1) > tol) off.push(`${k} ${r.age} d ${q.toFixed(3)}`);
         }
       }
-      check(`ICRP 60 fission, ${nuclide} ${route}${type ? ` Type ${type}` : ''}: ${keys.join(', ')} within ${tol * 100} % of ICRP 72 at every age`, !off.length, off.join('; '));
+      check(`ICRP 60 ${what}, ${nuclide} ${route}${type ? ` Type ${type}` : ''}: ${keys.join(', ')} within ${tol * 100} % of ICRP 72 at every age`, !off.length, off.join('; '));
     }
   }
 }

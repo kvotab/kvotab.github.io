@@ -232,7 +232,14 @@ export function assemble60(data, spec) {
      A gas that "decays at the site of production" keeps the compartments it
      is born in and moves nowhere; one that "escapes" leaves before decaying,
      which is the same as never being formed in the body. */
-  const gasRule = chain.members.map((m, j) => (j > 0 && kinetics === 'S' ? nobleGasRule(m.name, chain.members[0].name, m.T) : null));
+  /* A noble gas followed in the chain by a radioactive member that is no
+     noble gas stays in the body with the parent (125Xe, followed by 125I);
+     the others escape (127Xe, 79Kr). That is ICRP 72's: its coefficients
+     for 125Cs are those of the xenon staying, by every route, and for 127Cs
+     and 79Rb those of the gas leaving; FGR 13 names only the radon rules. */
+  const keptGas = chain.members.map((m, j) => j > 0 && NOBLE_GASES.has(elementOf(m.name))
+    && chain.branches.some((b) => b.from === j && !NOBLE_GASES.has(elementOf(chain.members[b.to].name))));
+  const gasRule = chain.members.map((m, j) => (j > 0 && kinetics === 'S' ? nobleGasRule(m.name, chain.members[0].name, m.T, keptGas[j]) : null));
 
   const git = models.git;
   const bladder = models.bladder;
@@ -243,11 +250,12 @@ export function assemble60(data, spec) {
     if (gasRule[j]) return; // no biological transfers: it stays where it is born, or is never born
     // Respiratory tract: the parent's model for every member (ICRP 71: the
     // absorption parameters of the parent apply to the whole chain), except
-    // noble gases, which leave it: radon at 100 d-1, xenon (from iodine)
-    // before it decays (ORNL/TM-2001/190, 9.1).
+    // noble gases, which leave it: radon at 100 d-1, the others (xenon from
+    // iodine) before they decay (ORNL/TM-2001/190, 9.1) -- but for a gas the
+    // body keeps (keptGas).
     if (lung) {
       const el = elementOf(m.name);
-      if (j > 0 && NOBLE_GASES.has(el)) {
+      if (j > 0 && NOBLE_GASES.has(el) && (el === 'Rn' || !keptGas[j])) {
         const rate = el === 'Rn' ? 100 : 1e5;
         for (const name of lung.compartments) {
           if (giKeys.has(key(name)) || isSink(name) || key(name) === 'BLOOD') continue;
@@ -352,16 +360,18 @@ const BONE = new Set(['C_Bone-S', 'C_Bone-V', 'T_Bone-S', 'T_Bone-V']);
  *   222Rn from 226Ra: escapes from soft tissues; 30 % of it decays in bone
  *   220Rn: decays at the site of production
  *   83mKr from 83Rb: 20 % decays at the site, 80 % escapes
- *   any other noble gas: escapes before it decays
+ *   any other noble gas: escapes before it decays, unless the body keeps it
+ *     (`kept`: a radioactive member that is no noble gas follows it), when it
+ *     has the parent's model like any member (null)
  */
-export function nobleGasRule(member, parent, halfLifeDays) {
+export function nobleGasRule(member, parent, halfLifeDays, kept = false) {
   const el = elementOf(member);
   if (!NOBLE.has(el)) return null;
   // 220Rn (56 s) decays where it is born; so, a fortiori, do 219Rn (4 s) and 218Rn (35 ms).
   if (member === 'Rn-220' || halfLifeDays < 60 / 86400) return () => 1;
   if (member === 'Rn-222' && parent === 'Ra-226') return (region) => (BONE.has(region) ? 0.3 : 0);
   if (member === 'Kr-83m') return () => 0.2;
-  return () => 0;
+  return kept ? null : () => 0;
 }
 
 /* The source regions a systemic model names: those it carries the
