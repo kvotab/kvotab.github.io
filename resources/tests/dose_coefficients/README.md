@@ -2255,3 +2255,42 @@ Against the annex: 3 nuclides move, all nearer (11C 0.024 → 0.013 % rms,
 
 Still open: 228Ra and 224Ra, 223Ra, radon, 85Y, 85mY and 87Y swallowed,
 81Sr, 87Zr's and 90Mo's bladder wall at 3 months, 133Ba at 1 year.
+
+## Looked at after methane and rubidium, left open (2026-11-27)
+
+- **Inhalation has offsets by age that every nuclide shares.** The
+  effective dose of an inhaled nuclide against the annex, median over the
+  nuclides of a half-life class (quartiles within ±0.003 %): under an hour
+  +0.02 % at 3 months, +0.018 at 1 year, +0.008 at 5, −0.033 at 10, 0.00 at
+  15 and −0.005 for adults, the same for Types F, M and S; from 1 day to 30
+  days about half of it; long-lived Type S nothing. Injection and ingestion
+  show none (within ±0.002 % at every age but 3 months). So it is in what
+  the respiratory tract is given at each age. Not Table A.1's four figures
+  alone: every one of the 10-year-old's five fractions moved by the most
+  its rounding allows moves e by 0.029 %, less than the 0.033 % asked.
+  Publication 66's deposition model, built from its Tables 12, 13 and 15
+  with the errata of Publication 71 and Supporting Guidance 3 and the ET
+  split of Publication 130 (para A15), reproduces Publication 158's Tables
+  A.2-A.4 to 0.1-0.8 % by region and age (the aerosol integrated over the
+  aerodynamic diameter for the AMTD rows too, tidal volume as B/f and flow
+  as 2B), not to their four figures: Table 15's anatomical inputs are
+  rounded, and mouth breathing at heavy exercise is not right yet.
+  This is most of what is left between 0.05 and 0.1 % for the short-lived
+  nuclides inhaled at 10 years (half-lives of minutes: 101Tc, 120Sb, 128I,
+  94Y, 63Zn, 106Ag and some 25 others).
+- **The pelvic organs after a parent whose progeny lasts minutes**: the
+  bladder wall, prostate, ovaries and uterus 0.05-0.10 % high (uterus 0.17 %
+  for adults after 137Cs, in the OIR Data Viewer too) after 137Cs (137mBa,
+  2.6 min), 66Ni (66Cu, 5 min) and 128Ba (128Cs, 4 min), where 134Cs, 136Cs,
+  63Ni and the other barium isotopes are exact. 137mBa's rates worked out
+  from Publication 137 para 317 ("two times" barium's own: 19.44, 15.56,
+  40.32 for the printed 19.4, 15.6, 40.3; the soft tissues' return a third
+  of 184) leave the pelvic organs as they are and put the bone surface
+  0.04 % high: the printed figures stay.
+- 224Ra once more: bismuth formed from lead in radium's soft tissue leaving
+  slower (any rate from 59 d⁻¹ down to its ST2's) takes away the same part
+  of the ask each time (0.072 → 0.056 % rms over the viewer's organs); five
+  knobs together leave 0.029, with thallium's rate up 186 %: no mechanism.
+
+Still open: 228Ra, 224Ra and 223Ra, radon, 85Y, 85mY and 87Y swallowed,
+81Sr, 133Ba at 1 year, the inhaled offsets by age, the pelvic organs above.
