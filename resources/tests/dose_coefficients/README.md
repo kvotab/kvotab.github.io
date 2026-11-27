@@ -2359,8 +2359,7 @@ batch files leave out (FGR 13 names 248Cm, 250Cm, 252Cf and 254Cf, with
 244Pu, as not addressed), run with their element's cases (246Cm's, 250Cf's):
 e, lungs, ET, bone surface, liver, kidneys, brain and muscle within 5 % of
 ICRP 72 by ingestion and every type it gives, 196 of 216 of their e, lung
-and ET values rounding. They are not in
-the page's list.
+and ET values rounding. They joined the page's list the same day (below).
 
 **Red marrow to bone surface: the alpha recoil counts** (see60.js). FGR 13
 (appendix B) leaves recoils out for sources in bone surface or volume only;
@@ -2375,3 +2374,24 @@ and 248Cm Type S (with their element's cases) within 5 % in e, lungs and ET.
 Left open: Other to bone surface and red marrow where the red marrow is
 named (the page's equation (9) gives below zero for alphas, SEECAL about the
 soft tissue's; four thousandths of the bone surfaces' own and less).
+
+## 248Cm, 250Cm, 252Cf and 254Cf in the ICRP 60 list (2026-11-27, later)
+
+DCAL's batch files for FGR 13 leave these four out, as FGR 13 does, its
+dosimetry having no spontaneous fission; Publication 72 gives them. With
+fission counted they are added: gen-dose-icrp60.mjs (addLeftOut) gives each
+the forms of the other isotopes of its element, which the batch files run
+all alike (curium by ingestion and Types F, M and S with the adult at 25
+years, californium the same with the adult at 20), placed after the
+isotopes of lower mass, and stops if the isotopes of an element ever
+differ. Only cases.json changes: 757 → 761 ingestion and 2,303 → 2,315
+inhalation cases; the rest of the generator's output is the same byte for
+byte.
+
+Against ICRP 72 (which gives californium as Type M only): of the four's
+values 64 of 72 effective doses and 1,708 of 1,872 organ doses round to its
+two figures, the farthest 1.059 (252Cf Type M at 1 year, the remainder).
+All of DCAL's batch with them: e 73.4 % rounding, organ doses 71.6 %. The
+page now has every nuclide of Publication 72 but 193mIr, which DCAL's ICRP
+38 data do not carry (Publication 72's 98Nb of 51.5 minutes is the page's
+98mNb).

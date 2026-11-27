@@ -212,6 +212,12 @@ const d60 = await loadSystem('60', io);
   check('cases ICRP 60: every model, f1 and lung file a case names is in the library', !lacking.length, lacking.join(', '));
   const pu = c60.nuclides.find((n) => n.name === 'Pu-238');
   check('catalogue ICRP 60: Pu-238 by ingestion once, f1 5E-4 (ICRP 72; FGR 13 Table 2.2a)', pu.ingestion.length === 1 && pu.ingestion[0].f1 === 5e-4, pu.ingestion.map((f) => f.label).join(', '));
+  // The four strong fissioners DCAL's batch files leave out (gen-dose-icrp60.mjs,
+  // addLeftOut) have the forms of their elements' other isotopes.
+  const formsOf = (name) => { const n = c60.nuclides.find((x) => x.name === name); return n ? `${n.ingestion.map((f) => f.key).join(' ')} / ${n.inhalation.map((f) => f.key).join(' ')}` : 'none'; };
+  const fis = [['Cm-248', 'Cm-246'], ['Cm-250', 'Cm-246'], ['Cf-252', 'Cf-250'], ['Cf-254', 'Cf-250']].filter(([n, like]) => formsOf(n) !== formsOf(like) || !/F\|.*M\|.*S\|/.test(formsOf(n)));
+  check('catalogue ICRP 60: 248Cm, 250Cm, 252Cf and 254Cf, which DCAL\'s batch files leave out, by ingestion and Types F, M and S as 246Cm and 250Cf',
+    !fis.length, fis.map(([n]) => `${n}: ${formsOf(n)}`).join('; '));
   let threw = '';
   try { coefficients60(d60, recipe60(d60.cases, 'ingestion', { nuclide: 'Pu-238', bio: null, f1file: 'PU_2' }), [7300]); } catch (e) { threw = e.message; }
   check('ICRP 60: an f1 file not in the library is an error, not f1 = 0', /no f1 file PU_2\.GF1/.test(threw), threw);
@@ -1223,10 +1229,9 @@ if (!SYSTEM || SYSTEM === '60') {
     }
     // Spontaneous fission (see60.js). Without it 244Pu's organs were 0.92-0.98
     // of ICRP 72 and 250Cf's (Type M) kidneys 0.12-0.39, its brain 0.20-0.53.
-    // The strong fissioners ICRP 72 lists and DCAL's batch files leave out run
-    // here with their element's cases: their lungs and ET hang on the
-    // fragments taking the absorbed fractions of 2.5 MeV alphas in the
-    // respiratory tract (254Cf's lungs 0.65-0.75 of ICRP 72 at 2 MeV, about
+    // The lungs and ET of the strong fissioners (248Cm, 250Cm, 252Cf and 254Cf,
+    // which DCAL's batch files leave out) hang on the fragments taking the
+    // absorbed fractions of 2.5 MeV alphas in the respiratory tract (254Cf's lungs 0.65-0.75 of ICRP 72 at 2 MeV, about
     // twice ICRP 72's at 4 MeV); within 5 %, the size of ICRP 72's two figures.
     const fis = [
       ['ingestion', 'Pu-244', null, ['Liver', 'Bone surface', 'Kidneys', 'Muscle', 'Brain'], 0.05],
@@ -1235,12 +1240,10 @@ if (!SYSTEM || SYSTEM === '60') {
       ['inhalation', 'Cf-252', 'M', ['E', 'Lung', 'ET'], 0.05],
       ['inhalation', 'Cm-248', 'S', ['E', 'Lung', 'ET'], 0.05],
     ];
-    const like = { 'Cf-254': 'Cf-250', 'Cf-252': 'Cf-250', 'Cm-248': 'Cm-246' };
     const N72 = { Liver: 'Liver', 'Bone surface': 'Bone Surface', Kidneys: 'Kidneys', Muscle: 'Muscle', Brain: 'Brain', Thyroid: 'Thyroid', Lung: 'Lungs', ET: 'ET' };
     for (const [route, nuclide, type, keys, tol] of fis) {
       await d60.prepare(nuclide);
-      const cases = like[nuclide] ? { [route]: d60.cases[route].filter((c) => c.nuclide === like[nuclide]).map((c) => ({ ...c, nuclide })) } : d60.cases;
-      const res = coefficients60(d60, recipe60(cases, route, { nuclide, bio: null, f1file: null, type: type ?? undefined }), AGES_60);
+      const res = coefficients60(d60, recipe60(d60.cases, route, { nuclide, bio: null, f1file: null, type: type ?? undefined }), AGES_60);
       const off = [];
       for (const r of res) {
         const R = ref.find((x) => x.route === route && x.nuclide === nuclide && x.age === r.age && (!type || x.type === type));

@@ -417,7 +417,7 @@ async function loadCatalog(system) {
   refreshInfo();
   const decay = state.decay ? ` Decay data: ${decayLabel(state.decay, system)}.` : '';
   status((system === '60'
-    ? 'The ICRP 60 system: the ICRP 72 cases, every nuclide and form DCAL calculated them for.'
+    ? 'The ICRP 60 system: the ICRP 72 cases, as DCAL’s batch files run them, and the four fissioners they leave out.'
     : `The ICRP 103 system: ${cat.elements.length} elements of Publication 158 and the Part 2 and 3 drafts.`) + decay);
   nuclideChanged();
 }

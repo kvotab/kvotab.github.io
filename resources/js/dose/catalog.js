@@ -6,7 +6,9 @@
     ICRP 60   the inhalation and ingestion cases of ICRP 72, as DCAL's batch
               files for Federal Guidance Report 13 run them: every nuclide of
               ICRP 72's tables with each of its forms (f1 values, absorption
-              types, gases and vapours)
+              types, gases and vapours); and 248Cm, 250Cm, 252Cf and 254Cf,
+              which those files leave out, with the forms of their elements'
+              other isotopes (gen-dose-icrp60.mjs)
     ICRP 103  every ICRP 107 nuclide with a half-life of at least 10 minutes
               (ICRP 158 section 1.4.1) of an element whose model is
               transcribed here, with the element's inhaled and ingested forms

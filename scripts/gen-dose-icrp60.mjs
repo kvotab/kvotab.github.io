@@ -32,7 +32,8 @@
                          gastrointestinal tract, the bladder voiding rates
       cases.json         the inhalation and ingestion cases DCAL's batch
                          files ran: chain length, kinetics of the progeny,
-                         special model and f1 files, adult age
+                         special model and f1 files, adult age; and the four
+                         strong fissioners they leave out (addLeftOut)
 
   The numbers are the files' own; nothing is fitted or rounded beyond the six
   significant figures the files carry.
@@ -456,10 +457,41 @@ function keepCases(file, cases, library) {
   });
 }
 
+/* FGR 13 leaves 244Pu, 248Cm, 250Cm, 252Cf and 254Cf out, spontaneous fission
+   not being part of its dosimetry, and the batch files run 244Pu but not the
+   other four. Publication 72 gives them with the forms of the other isotopes
+   of their elements, which the batch files run all alike; each takes those,
+   after the isotopes of its element of lower mass. */
+const LEFT_OUT = ['Cm-248', 'Cm-250', 'Cf-252', 'Cf-254'];
+function addLeftOut(file, cases) {
+  const elementOf = (n) => n.split('-')[0], massOf = (n) => parseInt(n.split('-')[1], 10);
+  for (const nuclide of LEFT_OUT) {
+    if (cases.some((c) => c.nuclide === nuclide)) throw new Error(`${file}: ${nuclide} is in the batch files`);
+    const el = elementOf(nuclide);
+    const own = cases.filter((c) => elementOf(c.nuclide) === el);
+    const isotopes = new Set(own.map((c) => c.nuclide));
+    const forms = new Map();
+    for (const c of own) {
+      const k = JSON.stringify({ ...c, nuclide: null });
+      if (!forms.has(k)) forms.set(k, new Set());
+      forms.get(k).add(c.nuclide);
+    }
+    if (!isotopes.size || [...forms.values()].some((s) => s.size !== isotopes.size)) throw new Error(`${file}: the isotopes of ${el} differ in their forms`);
+    let at = -1;
+    cases.forEach((c, i) => { if (elementOf(c.nuclide) === el && massOf(c.nuclide) < massOf(nuclide)) at = i; });
+    const add = [...forms.keys()].map((k) => ({ ...JSON.parse(k), nuclide }));
+    cases = [...cases.slice(0, at + 1), ...add, ...cases.slice(at + 1)];
+  }
+  return cases;
+}
+
 function buildCases(library) {
-  const ingestion = keepCases('FGR13ING.INP', readCases('FGR13ING.INP'), library);
-  const inhalation = keepCases('FGR13INH.INP', readCases('FGR13INH.INP'), library);
-  const bytes = write('cases.json', { source: 'DCAL batch input files of Federal Guidance Report 13 (wrk/fgr13/FGR13ING.INP, FGR13INH.INP)', ingestion, inhalation });
+  const ingestion = addLeftOut('FGR13ING.INP', keepCases('FGR13ING.INP', readCases('FGR13ING.INP'), library));
+  const inhalation = addLeftOut('FGR13INH.INP', keepCases('FGR13INH.INP', readCases('FGR13INH.INP'), library));
+  const bytes = write('cases.json', {
+    source: 'DCAL batch input files of Federal Guidance Report 13 (wrk/fgr13/FGR13ING.INP, FGR13INH.INP); 248Cm, 250Cm, 252Cf and 254Cf, which they leave out, with the forms of their elements\' other isotopes (Publication 72)',
+    ingestion, inhalation,
+  });
   console.log(`cases: ${ingestion.length} ingestion, ${inhalation.length} inhalation, ${(bytes / 1e3).toFixed(0)} kB`);
 }
 
