@@ -774,6 +774,11 @@ if (!SYSTEM || SYSTEM === '103') {
         ['Blood 1', 'ST0'].every((to) => PBF.every((f, k) => near(pb(to)[k], pb(to)[5] * f, 1e-6))) && near(pb('Blood 1')[3], 23.04, 1e-9) && near(pb('ST0')[3], 18.23451, 1e-6)
         && pb('Kidneys 1')[3] === 2.02 && pb('Kidneys 1')[4] === 1.76 && pb('ST2')[3] === 0.115,
         `${JSON.stringify(pb('Blood 1'))} ${JSON.stringify(pb('ST0'))} ${JSON.stringify(pb('Kidneys 1'))}`);
+      // Methane's blood empties at the 100 d-1 Publication 134 para 139 states for its half-time of 10 min: with ln 2 / 10 min
+      // (99.81) every organ dose of 11C inhaled as methane was 0.06-0.10 % above the annex.
+      const ch4 = d103.elements.C.systemic.methane.transfers.filter((x) => x[0] === 'Blood (methane)');
+      check('103 data: methane\'s blood compartment empties at 100 d-1 at every age, 70 to expired air and 30 to the short-term tissue (Publication 134 para 139)',
+        ch4.length === 2 && ch4.every((x) => x[2].every((v) => v === (x[1] === 'Expired air' ? 70 : 30))), JSON.stringify(ch4));
     }
     check('103 data: plutonium has the rates of Publication 141 Table 18.6 -- the adult\'s to trabecular surface 0.12474, cortical surface 0.08778 and testes 0.0002695 (children as the draft has them), and at every age 0.0001266 out of ST2, 28.95 from Blood 2 to ST0 and 0.01155 to the right colon',
       r('Blood 1', 'Trab bone surf').join() === '0.26,0.26,0.208,0.208,0.208,0.12474' && r('Blood 1', 'Cort bone surf').at(-1) === 0.08778 && r('Blood 1', 'Testes').join() === '0.0000154,0.0000231,0.0000262,0.0000308,0.000246,0.0002695'
@@ -899,8 +904,18 @@ if (!SYSTEM || SYSTEM === '103') {
     check('polonium formed in the ST1 of a bismuth that is a progeny is in its own soft tissue; in that bismuth\'s ST0, or in the ST1 of the bismuth taken in, in a compartment of its own there; lead formed from polonium in that soft tissue is in lead\'s ST1',
       String(a.to) === 'Po-210/Other' && String(b.to) === 'Po-210/ST0 (Bi-210)' && String(c.to) === 'Po-210/ST1 (Bi-210)' && String(e.to) === 'Pb-210/ST1', `${a.to} | ${b.to} | ${c.to} | ${e.to}`);
     const sr = await bornAt('Sr-82', 'Sr-82/ST0', { intakeAge: 100 });
-    check('82Sr: rubidium formed in strontium\'s ST0 leaves for blood at the rate of its own Other at each age, 15.3 d-1 at 3 months and 7.3 for adults',
-      String(sr.to) === 'Rb-82/ST0 (Sr-82)' && JSON.stringify(sr.out('Rb-82/ST0 (Sr-82)')) === '[["Rb-82/Blood",[15.3,13.9,11.7,10.2,8.03,7.3]]]', `${sr.to} ${JSON.stringify(sr.out('Rb-82/ST0 (Sr-82)'))}`);
+    check('82Sr: rubidium formed in strontium\'s ST0 leaves for blood at the rate of its own Other at each age, 15.33 d-1 at 3 months and 7.3 for adults',
+      String(sr.to) === 'Rb-82/ST0 (Sr-82)' && JSON.stringify(sr.out('Rb-82/ST0 (Sr-82)')) === '[["Rb-82/Blood",[15.33,13.87,11.68,10.22,8.03,7.3]]]', `${sr.to} ${JSON.stringify(sr.out('Rb-82/ST0 (Sr-82)'))}`);
+    // Rubidium's children's rates are worked out by the rules of the Part 3 draft's paras 227-230 (Table 20.2 rounds them):
+    // plasma to muscle x 0.5, 0.5, 0.7, 0.85, to the bone surfaces x 2 through 10 years, to Other what keeps the adult's
+    // total 1087.2 d-1, the tissues' outflows x 2.1, 1.9, 1.6, 1.4, 1.1. 81Sr and 83Sr, its parents in the annex, come nearer.
+    {
+      const rb = d103.elements.Rb.systemic.default.transfers, rr = (a, b) => rb.find((x) => x[0] === a && x[1] === b)[2];
+      const tot = [0, 1, 2, 3, 4, 5].map((k) => rb.filter((x) => x[0] === 'Blood').reduce((q, x) => q + x[2][k], 0));
+      check('103 data: rubidium\'s children\'s rates by the rules of their section (to muscle 127.5 at 3 months for the printed 128, out of the liver 20.958 for 21; the outflow from plasma 1087.2 at every age)',
+        rr('Blood', 'Muscle').join() === '127.5,127.5,178.5,216.75,255,255' && rr('Liver', 'Blood').join() === '20.958,18.962,15.968,13.972,10.978,9.98'
+        && rr('Blood', 'Other').join() === '513.5,513.5,462.5,424.25,400,400' && tot.every((x) => near(x, 1087.2, 1e-9)), `${rr('Blood', 'Muscle')} | ${tot.map((x) => x.toFixed(2))}`);
+    }
     const cutOf = (n) => JSON.stringify(buildChain(d103.index, n, { cutoff: 1e-4, horizonDays: 36525, sidePaths: 1e-3 }).cut);
     // The chain followed way by way: a way is followed if what comes by it is a thousandth of the chain's energy.
     const chainOf = (n, cutoff = 1e-4) => buildChain(d103.index, n, chainOptions103({ nuclide: n, cutoff }));

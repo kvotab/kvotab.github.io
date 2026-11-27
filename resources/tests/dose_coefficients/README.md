@@ -2219,3 +2219,39 @@ Against the annex: 16 nuclides move, all nearer; organ doses more than
 Still open: 228Ra and 224Ra, radon, 85Y, 85mY and 87Y swallowed, 81Sr at
 3 months, 87Zr's and 90Mo's bladder wall at 3 months, 133Ba at 1 year
 (every organ 0.05-0.14 % low; 226Ra and 90Sr exact there).
+
+## Methane's blood at 100 d⁻¹, rubidium's children by its rules (2026-11-26, night)
+
+Against the annex: 3 nuclides move, all nearer (11C 0.024 → 0.013 % rms,
+81Sr 0.043 → 0.033, 83Sr 0.015 → 0.008); organ doses more than 0.1 % off
+1,941 → 1,868. The printed tables and the OIR Data Viewer do not move.
+
+- **Methane's blood compartment empties at 100 d⁻¹** (elements.json: 70 to
+  expired air, 30 to the short-term tissue), the removal rate Publication
+  134 para 139 gives for the half-time of 10 minutes. The page had computed
+  ln 2 / 10 min = 99.81 (69.87 and 29.94): every organ dose of 11C inhaled
+  as methane was 0.06-0.10 % above the annex at every age, the 20-minute
+  11C decaying a little longer in that blood; with 100 within 0.005 %. 14C,
+  which lives long, cannot tell the two apart. A search of Publications
+  134, 137, 141, 151 and 158 for another half-time given with a rate in
+  brackets found only the HRTM's 2.1 d⁻¹ for ET1, which is printed so.
+- **Rubidium's rates before adulthood are worked out by the rules of its
+  section** (Part 3 draft paras 227-230; elements.json): plasma to muscle
+  the adult's x 0.5, 0.5, 0.7, 0.85 (127.5 for the printed 128), to the
+  bone surfaces x 2 through 10 years, to Other what keeps the total outflow
+  from plasma the adult's 1087.2 d⁻¹ (513.5 for 514; the printed figures sum
+  to 1088.2), out of the tissues x 2.1, 1.9, 1.6, 1.4, 1.1 (20.958 for 21
+  out of the liver at 3 months). Rubidium is no parent in the annex, but
+  81Rb and 83Rb are progeny of strontium there: organ doses more than 0.1 %
+  off of the strontium nuclides 84 → 31. The tissues' outflows alone did
+  less than half of it (84 → 61). Rubidium formed in strontium's soft tissue leaves
+  at rubidium's own Other rate, so now 15.33 d⁻¹ at 3 months.
+- 81Sr's lungs (0.04-0.12 % low at every age) and uterus (0.2-0.3 % low but
+  at 5 years and for adults) are left; 223Ra's excess in the blood-rich
+  organs (lungs, spleen, gut walls, up to 0.18 % at 3 months and 15 years)
+  fits radon-219 leaving soft tissue at 30 d⁻¹ instead of 33.27 for adults,
+  but 222Rn needs the 33.27 (226Ra 0.020 → 0.196 % rms with 30), and the
+  rest follows radium's bone uptake: not resolved.
+
+Still open: 228Ra and 224Ra, 223Ra, radon, 85Y, 85mY and 87Y swallowed,
+81Sr, 87Zr's and 90Mo's bladder wall at 3 months, 133Ba at 1 year.
