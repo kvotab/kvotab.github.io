@@ -416,7 +416,13 @@
               gases.</li>
             <li><b>Dosimetry</b>: specific effective energies from the Cristy–Eckerman phantoms (newborn, 1, 5, 10 and
               15 years, adult), the ICRP 30 bone and walled-organ absorbed fractions, and the ICRP 66 absorbed fractions
-              of the airways, interpolated in age between the phantoms with the weights DCAL gives them.</li>
+              of the airways, interpolated in age between the phantoms with the weights DCAL gives them. Between the
+              12 energies of the photon tables (10 keV to 4 MeV) the energy a photon leaves per kilogram, its energy
+              times the specific absorbed fraction, is linear in energy, as Publication 72’s coefficients have it.
+              DCAL takes the specific absorbed fraction itself linearly, which puts organ doses from emitters of X-rays
+              between the tabulated energies up to 13 % off Publication 72’s (the extrathoracic airways after
+              <sup>119</sup>Sb is breathed in, 13 % above; the testes after <sup>145</sup>Pm is swallowed, 10 % below);
+              this way they are within 5 % of it.</li>
             <li><b>Spontaneous fission</b>, as SEECAL 8.4 (DCAL’s program for the specific effective energies) counts
               it: per fission two fragments of 0.0698 Z<sup>2</sup>/A<sup>1/3</sup> − 10.988 MeV each, absorbed as alpha
               particles are and weighted 20; ν̄ neutrons of 0.75 + 0.65 √(1 + ν̄) MeV, weighted 10 and spread through
@@ -960,8 +966,9 @@
             restarted wherever a rate table has a corner; it crosses the commitment period in one to two thousand steps
             however stiff the system (rates from 10<sup>−5</sup> to 4·10<sup>4</sup> d<sup>−1</sup>) and however long
             the chain (a few hundred compartments for the actinide series). Specific
-            absorbed fractions are interpolated in energy as each publication says (linearly for the ICRP 60 photon
-            SAFs, as DCAL; PCHIP for the ICRP 103 SAFs), beta particles enter through their spectra.</p>
+            absorbed fractions are interpolated in energy as each system’s coefficients have them (for ICRP 60
+            photons the energy a photon leaves per kilogram, linear in energy, as in Publication 72; PCHIP for the
+            ICRP 103 SAFs), beta particles enter through their spectra.</p>
           <p>A year has 365 days in the ICRP 103 system, as in the calculation behind the ICRP’s coefficients: the dose
             is added up over 18,250 days for an adult and to the age of 25,550 days for a child, and a half-life given in
             years is that many times 365 days. The decay data count a half-life in days by 365.25 to the year, and the

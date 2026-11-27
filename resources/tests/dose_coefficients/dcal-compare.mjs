@@ -7,7 +7,9 @@
       node resources/tests/dose_coefficients/dcal-compare.mjs WORK NUCLIDE ROUTE [TYPE] [TISSUE...]
 
   ROUTE is ingestion, inhalation or injection; TYPE F, M or S for inhalation
-  (or - to skip it). Each cell is this page / DCAL, then DCAL / ICRP 72.
+  (or - to skip it). Each cell is this page / DCAL, then DCAL / ICRP 72. The
+  engine interpolates the photon SAFs as DCAL does here (photons: 'saf'); the
+  page itself follows ICRP 72 there (see60.js interpPhoton, README).
 */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -64,7 +66,7 @@ const io = {
 };
 const d60 = await loadSystem('60', io);
 await d60.prepare(nuc);
-const res = coefficients60(d60, recipe60(d60.cases, route, { nuclide: nuc, type: type ?? undefined }), AGES_60);
+const res = coefficients60(d60, recipe60(d60.cases, route, { nuclide: nuc, type: type ?? undefined }), AGES_60, { photons: 'saf' });
 const refFile = path.join(HERE, 'local/icrp72.json');
 const ref = fs.existsSync(refFile) ? JSON.parse(fs.readFileSync(refFile, 'utf8')) : null;
 const N72 = { E: 'E', Testes: 'Testes', Ovaries: 'Ovaries', 'Red marrow': 'Red Marrow', 'Bone surface': 'Bone Surface', Liver: 'Liver', Kidneys: 'Kidneys', Spleen: 'Spleen', Lung: 'Lungs', ET: 'ET', Colon: 'Colon', Stomach: 'Stomach', Bladder: 'Urinary Bladder', Muscle: 'Muscle', Breast: 'Breast', Thyroid: 'Thyroid', Brain: 'Brain', Skin: 'Skin' };

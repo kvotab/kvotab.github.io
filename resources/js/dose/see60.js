@@ -7,7 +7,14 @@
     SEE(T<-S) = sum_i wR_i Y_i E_i SAF_i(T<-S)
 
   Photons of 10 keV and more take the specific absorbed fractions of the
-  Cristy-Eckerman phantoms, interpolated linearly in energy. Electrons
+  Cristy-Eckerman phantoms, tabulated at 12 energies; between them the energy
+  a photon leaves per kilogram, E SAF(E), is linear in energy. That is how
+  Publication 72's coefficients have it: with the SAF itself linear in energy,
+  as DCAL's SEECAL 8.4 interpolates (and as FGR 13 and the SEECAL manual put
+  it, "linearly between energies"), 72 % of ICRP 72's organ doses round to
+  its two figures; with E SAF 85 %, and the emitters of X-rays between the
+  tabulated energies (145Pm's 37-43 keV, 165Er's 47-55 keV) from 3-7 % off
+  to within them (README). Electrons
   (beta particles at the mean energy of each transition, conversion and Auger
   electrons), photons under 10 keV, alpha particles and alpha recoil nuclei
   are absorbed where they are emitted, except:
@@ -191,7 +198,8 @@ export function phantom60(saf, phantom) {
    * @param {string[]} sources  source regions (may include Other, Blood, Body_Tis, BT-Soft)
    * @param {Set<string>} explicit  the explicitly named systemic regions, for Other
    * @param {string[]} targets
-   * @param {{Z?: number}} [opt]  the atomic number, for spontaneous fission
+   * @param {{Z?: number, photons?: 'saf'}} [opt]  the atomic number, for spontaneous
+   *   fission; photons: 'saf' interpolates the photon SAFs as DCAL does (interpPhoton)
    * @returns {Float64Array[]}  see[t][s], Sv per transformation
    */
   function see(em, A, sources, explicit, targets = TARGETS_60, opt = {}) {
@@ -199,6 +207,7 @@ export function phantom60(saf, phantom) {
     const photons = (r.p || []).filter(([e]) => e >= 0.01);
     const softPh = (r.p || []).filter(([e]) => e < 0.01).reduce((s, [e, y]) => s + e * y, 0);
     const betas = r.b || [], elec = r.e || [], alphas = r.a || [];
+    const safLinear = opt.photons === 'saf';
     const recoilE = alphas.reduce((s, [e, y]) => s + y * e * 4.0026 / (A - 4), 0);
     const alphaE = alphas.reduce((s, [e, y]) => s + y * e, 0);
     // Electron energy by class: under / over 0.2 MeV, with soft photons in the
@@ -211,7 +220,7 @@ export function phantom60(saf, phantom) {
       const v = tab(t, s);
       if (v === 0) return 0; // an all-zero row is stored as 0
       let sum = 0;
-      for (const [e, y] of photons) sum += y * e * interpPhoton(E, v, e);
+      for (const [e, y] of photons) sum += y * e * interpPhoton(E, v, e, safLinear);
       return sum;
     };
     // Lung sources: electrons against the beta spectrum and the lines.
@@ -319,10 +328,19 @@ export function phantom60(saf, phantom) {
   return { see, masses: P.masses, phantom, targets: TARGETS_60 };
 }
 
-/* Linear interpolation of a 12-point photon SAF row in energy; held at the
-   end values outside 10 keV - 4 MeV. */
-function interpPhoton(E, v, e) {
-  return lerp(E, v, e);
+/* The photon SAF of a 12-point row at energy e: the energy the photon leaves
+   per kilogram, E SAF(E), linear in energy between the tabulated energies
+   (Publication 72's coefficients have it so), or with `saf` the SAF itself
+   linear in energy (DCAL's SEECAL 8.4); held at the end values outside
+   10 keV - 4 MeV. */
+function interpPhoton(E, v, e, saf = false) {
+  if (saf) return lerp(E, v, e);
+  const n = E.length;
+  if (e <= E[0]) return v[0];
+  if (e >= E[n - 1]) return v[n - 1];
+  let lo = 0, hi = n - 1;
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; if (E[m] <= e) lo = m; else hi = m; }
+  return (E[lo] * v[lo] + (E[hi] * v[hi] - E[lo] * v[lo]) * (e - E[lo]) / (E[hi] - E[lo])) / e;
 }
 
 function indexLungAF(t) {

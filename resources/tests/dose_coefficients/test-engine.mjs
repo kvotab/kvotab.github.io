@@ -1092,8 +1092,9 @@ if (!SYSTEM || SYSTEM === '103') {
 // What a fission gives off, and the SEE of 244Pu against DCAL's own
 // (Pu244HT.SEE, adult male, Sv per transformation) for pairs before SEECAL's
 // photon slip (README): the liver's kidneys and brain take nothing but
-// fission's photons and neutrons. Red marrow to bone surface counts the
-// alpha recoil, as SEECAL does (FGR 13 leaves recoils out from bone only).
+// fission's photons and neutrons and 244Pu's own. Red marrow to bone surface
+// counts the alpha recoil, as SEECAL does (FGR 13 leaves recoils out from bone
+// only). Photon SAFs interpolated as SEECAL does (photons: 'saf').
 {
   const { phantom60, TARGETS_60, fission60 } = await import(path.join(JS, 'see60.js'));
   const f = fission60(3.89, 98, 254);
@@ -1102,7 +1103,7 @@ if (!SYSTEM || SYSTEM === '103') {
   await d60.prepare('Pu-244');
   const srcs = ['St_Cont', 'Liver', 'C_Bone-S', 'R_Marrow'];
   const explicit = new Set(['Liver', 'C_Bone-S', 'T_Bone-S', 'Kidneys', 'Testes', 'Ovaries', 'C_Bone-V', 'R_Marrow', 'T_Bone-V']);
-  const see = phantom60(d60.saf, 'AM').see(d60.emissions('Pu-244'), 244, srcs, explicit, TARGETS_60, { Z: 94 });
+  const see = phantom60(d60.saf, 'AM').see(d60.emissions('Pu-244'), 244, srcs, explicit, TARGETS_60, { Z: 94, photons: 'saf' });
   const at = (s, t) => see[TARGETS_60.indexOf(t)][srcs.indexOf(s)];
   const dcal = [['Liver', 'Liver', 8.674e-12], ['Liver', 'Kidneys', 3.048e-16], ['Liver', 'Brain', 3.089e-18], ['C_Bone-S', 'Bone_Sur', 3.201e-11],
     ['R_Marrow', 'Bone_Sur', 5.208e-12], ['St_Cont', 'St_Wall', 3.188e-13]];
@@ -1111,13 +1112,29 @@ if (!SYSTEM || SYSTEM === '103') {
     !off.length, off.join('; '));
 }
 
+/* ---- photon SAFs between the tabulated energies (ICRP 60, see60.js interpPhoton) -------- */
+// A 40 keV photon (between 30 and 50 keV) in the adult liver: by default the
+// energy it leaves per kilogram, E SAF(E), is linear in energy; with photons:
+// 'saf' the SAF itself is (DCAL's SEECAL 8.4).
+{
+  const { phantom60, TARGETS_60, MEV } = await import(path.join(JS, 'see60.js'));
+  const row = d60.saf.phantoms.AM.saf['Liver<-Liver'], E = d60.saf.photonEnergies;
+  const i30 = E.indexOf(0.03), i50 = E.indexOf(0.05);
+  const em = { r: { p: [[0.04, 1]] } };
+  const at = (opt) => phantom60(d60.saf, 'AM').see(em, 100, ['Liver'], new Set(['Liver']), TARGETS_60, opt)[TARGETS_60.indexOf('Liver')][0];
+  const wantE = MEV * 0.04 * (0.5 * (0.03 * row[i30] + 0.05 * row[i50]) / 0.04);
+  const wantS = MEV * 0.04 * 0.5 * (row[i30] + row[i50]);
+  check('ICRP 60 photon SAFs: E SAF linear in energy between the tabulated energies (a 40 keV photon in the adult liver), the SAF itself with photons: saf (DCAL)',
+    near(at({}), wantE, 1e-12) && near(at({ photons: 'saf' }), wantS, 1e-12) && !near(wantE, wantS, 1e-3), `${at({})} vs ${wantE}; ${at({ photons: 'saf' })} vs ${wantS}`);
+}
+
 /* ---- Other and BT-Soft to the bone surface and red marrow (ICRP 60, see60.js) ---------- */
 // As DCAL's SEECAL has it (SR90HT.SEE, AM241HT.SEE, FE55HT.SEE): from Other
 // a named region gets no electrons or alphas and every other target 1/M_Other,
 // the bone targets too; from BT-Soft the red marrow 1/M and the bone surface
 // the share of it in the marrow. Equation (9) taken to the bone targets gave
 // 90Sr's adult bone surface under a third of this and 241Am's red marrow
-// below zero.
+// below zero. Photon SAFs interpolated as SEECAL does (photons: 'saf').
 {
   const { phantom60, TARGETS_60 } = await import(path.join(JS, 'see60.js'));
   const cases = [
@@ -1128,7 +1145,7 @@ if (!SYSTEM || SYSTEM === '103') {
   const off = [];
   for (const [nuclide, phantom, s, named, want] of cases) {
     await d60.prepare(nuclide);
-    const see = phantom60(d60.saf, phantom).see(d60.emissions(nuclide), Number(nuclide.split('-')[1]), [s], new Set(named), TARGETS_60, {});
+    const see = phantom60(d60.saf, phantom).see(d60.emissions(nuclide), Number(nuclide.split('-')[1]), [s], new Set(named), TARGETS_60, { photons: 'saf' });
     for (const [t, v] of want) { const got = see[TARGETS_60.indexOf(t)][0]; if (!near(got, v, 6e-4)) off.push(`${nuclide} ${s}->${t} ${got.toExponential(4)} vs ${v}`); }
   }
   check('ICRP 60: Other and BT-Soft to the bone surface and red marrow as DCAL\'s SEE to its four figures (90Sr, 241Am adult; 55Fe at 5 years)', !off.length, off.join('; '));
@@ -1292,6 +1309,31 @@ if (!SYSTEM || SYSTEM === '60') {
       }
       check(`ICRP 60 ${what}, ${nuclide} ${route}${type ? ` Type ${type}` : ''}: ${keys.join(', ')} within ${tol * 100} % of ICRP 72 at every age`, !off.length, off.join('; '));
     }
+    // Photons between the tabulated energies (see60.js interpPhoton): with the
+    // energy a photon leaves per kilogram, E SAF, linear in energy these X-ray
+    // emitters come within 3.5 % of ICRP 72; with the SAF itself linear (DCAL)
+    // their e was up to 1.066 of it, the ET 1.05-1.13, 181W's bone surface
+    // 1.04-1.06 and 145Pm's liver 1.03-1.05.
+    const xr = [
+      ['ingestion', 'Pm-145', null, ['E', 'Liver']],
+      ['inhalation', 'Er-165', 'M', ['E', 'ET']],
+      ['inhalation', 'W-181', 'F', ['E', 'Bone surface']],
+      ['inhalation', 'Sb-119', 'M', ['E', 'ET']],
+      ['inhalation', 'Ce-137', 'S', ['E', 'ET']],
+    ];
+    const offX = [];
+    for (const [route, nuclide, type, keys] of xr) {
+      await d60.prepare(nuclide);
+      const res = coefficients60(d60, recipe60(d60.cases, route, { nuclide, bio: null, f1file: null, type: type ?? undefined }), AGES_60);
+      for (const r of res) {
+        const R = ref.find((x) => x.route === route && x.nuclide === nuclide && x.age === r.age && (!type || x.type === type));
+        for (const k of keys) {
+          const q = k === 'E' ? r.E / R.H.E : r.H[k] / R.H[N72[k]];
+          if (Math.abs(q - 1) > 0.035) offX.push(`${nuclide} ${k} ${r.age} d ${q.toFixed(3)}`);
+        }
+      }
+    }
+    check(`ICRP 60 photons between the tabulated energies: ${xr.map(([r, n, t]) => `${n}${t ? ` ${t}` : ' ingested'}`).join(', ')} -- e and the organ that hangs on them within 3.5 % of ICRP 72 at every age`, !offX.length, offX.join('; '));
   }
 }
 

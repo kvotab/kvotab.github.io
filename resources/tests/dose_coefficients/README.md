@@ -2469,3 +2469,73 @@ followed by 218Po, now stays: 12 more organ values round); e rounding 73.9
 (125Xe kept, 127Xe and 79Kr never born) and, with local/icrp72.json, 125Cs
 swallowed and Type M within 5 % of ICRP 72 in e, thyroid, muscle, bone
 surface, lungs.
+
+## Photons between the tabulated energies: the energy per photon, linear (2026-11-27, night)
+
+The photon SAFs of the Cristy-Eckerman phantoms are tabulated at 12
+energies, 10 keV to 4 MeV. DCAL's SEECAL 8.4 interpolates the SAF itself
+linearly in energy (SEECAL.INI `'gamdos', 'linear'`; the other choice it
+offers is `'pchip loglog'`), and FGR 13 and the SEECAL manual (ORNL/TM-12351)
+say "interpolates linearly between energies". The page did as DCAL. Against
+ICRP 72's database that left two systematic gaps:
+
+- beta, EC and IT parents under a day were 0.5-0.7 % high (medians, every
+  age and route), near the sources only: the gut walls +0.5 %, the organs
+  beside them +0.7-1.1 %, the bone surface +1.7 %, the brain, thyroid and
+  breast not at all;
+- emitters of X-rays between the tabulated energies were further off: e up
+  to 6.6 % high (165Er Type M), organs up to 13 % (119Sb's extrathoracic
+  airways 1.13, 145Pm's adult testes 0.90).
+
+Full runs against ICRP 72's database (share of values that round to its two
+figures, e / organ doses):
+
+| between the tabulated energies | e | organs |
+| --- | --- | --- |
+| SAF linear in E (DCAL) | 74.1 % | 72.0 % |
+| SAF log-log | 80.6 % | 79.7 % |
+| SAF by PCHIP in log-log (SEECAL's other choice) | 77.8 % | 76.0 % |
+| ln SAF linear in E | 77.7 % | 73.6 % |
+| E × SAF linear in E | **82.2 %** | **85.3 %** |
+
+Scored by the interval that holds most of a case's photon energy, E × SAF is
+the best in every one from 10 keV to 4 MeV (30-50 keV 47.6 → 89.0 %, 50-100
+keV 58.0 → 83.1 %, 500-1000 keV 74.2 → 86.9 %). Log-log was better than
+linear above 30 keV and worse below. On the emitters of photons under 100 keV
+these did no better: the SAF or E × SAF linear in ln E, a natural cubic
+spline in ln SAF against ln E (the curve TM-8381 smoothed the SAFs with),
+and log-log above 15, 20, 30, 50 or 100 keV with linear below. DCAL itself,
+run with `'pchip loglog'`, fits no better at low energies: 41 of 108 values
+of 231Th swallowed round (105 with the SAF linear).
+
+So see60.js interpPhoton: between the tabulated energies, the energy a photon
+leaves per kilogram, E × SAF(E) -- the term of the SEE sum -- is linear in
+energy. The SEECAL manual's sentence fits this as well as DCAL 8.4's reading.
+1,942 cases move closer to ICRP 72, 139 further away; e rounding 74.1 → 82.2
+%, organ doses 72.0 → 85.3 %; against Publication 119's e (Tables F.1, G.1)
+78.6 → 87.1 % swallowed, 72.1 → 79.9 % breathed in. The X-ray emitters come
+within 5 % (165Er Type M's extrathoracic airways 1.05-1.09 → 0.98-1.01).
+The short-lived excess falls to +0.2-0.4 %, and long-lived nuclides sit
+0.2-0.3 % low; no cause found for either. Further off than before: 231Th and
+231U, both giving protactinium's X-rays (231Th swallowed: the adult's organs
+far from the gut 3-7 % high), and gold isotopes (195Au Type F 2-5 % low).
+
+Fission's photon lines keep SponFiss's own interpolation (the SAF linear,
+the line through 2 and 4 MeV above 4 MeV): with E × SAF they move 6 of
+17,820 values of the fissioners, four cases closer and three further.
+
+The page now differs from DCAL wherever photons fall between the tabulated
+energies (165Er's extrathoracic airways 0.93 of DCAL's). The tests that pin
+the page's SEE to DCAL's four figures interpolate as DCAL does (`photons:
+'saf'`). New tests: a 40 keV photon in the adult liver both ways; with
+local/icrp72.json, 145Pm swallowed, 165Er Type M, 181W Type F, 119Sb Type M
+and 137Ce Type S within 3.5 % of ICRP 72 in e and the organ that hangs on
+their X-rays at every age (with the SAF linear up to 1.13).
+
+The child remainder is a separate gap, left open. ICRP 72's printed
+Remainder at 3 months to 10 years behaves as if muscle weighed about 1.4-1.6,
+3.9, 7.6 and 12.8 kg. FGR 13 Table B.1, DCAL and the page use 0.76, 2.5, 5
+and 11 kg. Short- and long-lived nuclides give the same masses, so they are
+those at intake. Refitted this way, ICRP 72's own Remainder, rebuilt from its
+own tissue values, rounds back 63-72 % instead of 42-53 %. The effect on e is
+a few hundredths of a percent; no source for these masses was found.
