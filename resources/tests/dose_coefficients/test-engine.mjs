@@ -1100,6 +1100,29 @@ if (!SYSTEM || SYSTEM === '103') {
     !off.length, off.join('; '));
 }
 
+/* ---- Other and BT-Soft to the bone surface and red marrow (ICRP 60, see60.js) ---------- */
+// As DCAL's SEECAL has it (SR90HT.SEE, AM241HT.SEE, FE55HT.SEE): from Other
+// a named region gets no electrons or alphas and every other target 1/M_Other,
+// the bone targets too; from BT-Soft the red marrow 1/M and the bone surface
+// the share of it in the marrow. Equation (9) taken to the bone targets gave
+// 90Sr's adult bone surface under a third of this and 241Am's red marrow
+// below zero.
+{
+  const { phantom60, TARGETS_60 } = await import(path.join(JS, 'see60.js'));
+  const cases = [
+    ['Sr-90', 'AM', 'Other', ['T_Bone-S', 'C_Bone-S', 'T_Bone-V', 'C_Bone-V'], [['Bone_Sur', 4.951e-16], ['R_Marrow', 4.951e-16]]],
+    ['Am-241', 'AM', 'Other', ['Liver', 'C_Bone-S', 'T_Bone-S', 'Kidneys', 'Testes', 'Ovaries', 'C_Bone-V', 'R_Marrow', 'T_Bone-V'], [['Bone_Sur', 2.994e-13], ['R_Marrow', 1.913e-17]]],
+    ['Fe-55', 'A05', 'BT-Soft', ['R_Marrow', 'Liver', 'Spleen'], [['Bone_Sur', 3.341e-17], ['R_Marrow', 5.140e-17]]],
+  ];
+  const off = [];
+  for (const [nuclide, phantom, s, named, want] of cases) {
+    await d60.prepare(nuclide);
+    const see = phantom60(d60.saf, phantom).see(d60.emissions(nuclide), Number(nuclide.split('-')[1]), [s], new Set(named), TARGETS_60, {});
+    for (const [t, v] of want) { const got = see[TARGETS_60.indexOf(t)][0]; if (!near(got, v, 6e-4)) off.push(`${nuclide} ${s}->${t} ${got.toExponential(4)} vs ${v}`); }
+  }
+  check('ICRP 60: Other and BT-Soft to the bone surface and red marrow as DCAL\'s SEE to its four figures (90Sr, 241Am adult; 55Fe at 5 years)', !off.length, off.join('; '));
+}
+
 /* ---- the effective dose split by dose group (the Retention tab) ---------------------------- */
 // The shares of the dose groups add up to e at every output time; at the
 // end to the coefficient itself, radon's (a model per sex) included.

@@ -19,8 +19,11 @@
     - in the respiratory tract, where the absorbed fractions of ICRP 66 Annex
       H hold, against the beta spectrum for beta emitters;
     - from Body Tissues and Blood, which irradiate every target alike;
-    - from Other, the body tissues not named in the biokinetic model,
-      computed by SEECAL's equation (9).
+    - from Other, the body tissues not named in the biokinetic model: none to
+      a named region and 1/M_Other to every other target, the bone surface
+      and red marrow included (photons by SEECAL's equation (9));
+    - from BT-Soft, the body tissues without the bone volumes: 1/M to every
+      target, to the bone surface the share of it that lies in the marrow.
 
   wR is 20 for alphas and recoils, 1 otherwise.
 
@@ -267,21 +270,26 @@ export function phantom60(saf, phantom) {
         }
         if (s === 'Other') {
           ph += photons.length ? (MWB * phSum(t, 'Body_Tis') - otherParts.reduce((acc, x) => acc + mS[x] * phSum(t, x), 0)) / MOther : 0;
-          const npOther = (c, recoil) => {
-            if (t !== 'R_Marrow' && t !== 'Bone_Sur') return explicit.has(t) ? 0 : 1 / MOther;
-            return (MWB * (1 / MWB) - otherParts.reduce((acc, x) => acc + mS[x] * npSaf(t, x, c, recoil), 0)) / MOther;
-          };
-          np = eLo * npOther(E_LO, false) + eHi * npOther(E_HI, false);
-          al = alphaE * npOther(ALPHA, false) + recoilE * npOther(ALPHA, true);
-          if (fis) { ffAf = npOther(ALPHA, false); fbAf = npOther(E_HI, false); }
+          // Electrons, alphas and their recoils from Other: none to a region
+          // the model names, 1/M_Other to every other target, the bone
+          // surface and red marrow too (as SEECAL has it; equation (9) taken
+          // to the bone targets gives them less, and below zero where the
+          // model names the red marrow).
+          const npOther = explicit.has(t) ? 0 : 1 / MOther;
+          np = (eLo + eHi) * npOther;
+          al = (alphaE + recoilE) * npOther;
+          if (fis) { ffAf = npOther; fbAf = npOther; }
         } else if (s === 'BT-Soft') {
           const MB = mS['C_Bone-V'] + mS['T_Bone-V'];
           const M = MWB - MB;
           ph += photons.length ? (MWB * phSum(t, 'Body_Tis') - mS['C_Bone-V'] * phSum(t, 'C_Bone-V') - mS['T_Bone-V'] * phSum(t, 'T_Bone-V')) / M : 0;
-          const f = (c, recoil) => (1 - mS['C_Bone-V'] * npSaf(t, 'C_Bone-V', c, recoil) - mS['T_Bone-V'] * npSaf(t, 'T_Bone-V', c, recoil)) / M;
-          np = eLo * f(E_LO, false) + eHi * f(E_HI, false);
-          al = alphaE * f(ALPHA, false) + recoilE * f(ALPHA, true);
-          if (fis) { ffAf = f(ALPHA, false); fbAf = f(E_HI, false); }
+          // From the soft tissues, the bone volumes left out: 1/M to every
+          // target, the bone surface the part of it that lies in the marrow
+          // (as SEECAL has it).
+          const f = t === 'Bone_Sur' ? ENDOSTEAL_IN_MARROW[phantom] / M : 1 / M;
+          np = (eLo + eHi) * f;
+          al = (alphaE + recoilE) * f;
+          if (fis) { ffAf = f; fbAf = f; }
         } else if (LUNG_REGIONS.has(s)) {
           ph += photons.length ? phSum(t, s) : 0;
           const l = lungNp(t, s);

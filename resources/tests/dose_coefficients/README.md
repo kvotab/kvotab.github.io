@@ -2395,3 +2395,43 @@ All of DCAL's batch with them: e 73.4 % rounding, organ doses 71.6 %. The
 page now has every nuclide of Publication 72 but 193mIr, which DCAL's ICRP
 38 data do not carry (Publication 72's 98Nb of 51.5 minutes is the page's
 98mNb).
+
+## Other and BT-Soft to the bone targets, as SEECAL has them (2026-11-27, evening)
+
+238U swallowed was 1 % low against ICRP 72 and DCAL alike, its bone surface
+0.964-0.987 and red marrow 0.987-0.993 of DCAL's, everything else 1.000.
+The page took equation (9) of SEECAL's manual to the bone targets for
+electrons and alphas from Other: the whole body's 1/M_WB less the named
+regions' fractions to them, divided by M_Other. Where the model names bone
+volumes and the red marrow that comes out below zero (238U's, 241Am's,
+226Ra's), where it names bone alone under a third of SEECAL's (90Sr's adult
+bone surface). SEECAL's own SEE, from DCAL runs of 238U, 90Sr, 226Ra, 241Am,
+232Th, 210Pb, 55Fe and 59Fe with their SEE files kept:
+
+- **from Other** a region the model names gets no electrons or alphas, every
+  other target 1/M_Other, the bone surface and red marrow as any soft
+  tissue; alpha recoils alike (without them 1.7-1.9 % short);
+- **from BT-Soft** (iron's model only) 1/M to every target, M the body
+  tissues less the bone volumes, and to the bone surface the share of the
+  endosteal tissue in the marrow: 1.000, 0.830, 0.650, 0.650, 0.650 and
+  0.500 of 1/M from the newborn to the adult, SEECAL's table 2 note b.
+
+With these every pair of those SEE files agrees to 0.2 % (but a few photon
+pairs of 1e-18 Sv at 0.4-0.6 % and DCAL's fission slip), Body Tissues and
+Blood (137Cs) as before. 238U: e 0.999-1.000 of DCAL's, bone surface and red
+marrow 0.999-1.000; against ICRP 72 e 0.985-1.009. Against ICRP 72's
+database, all of DCAL's batch: e rounding 73.4 → 73.9 %, organ doses 71.6 →
+71.8 %; of 672 cases that move 407 gain (129 e and 1,253 organ values round
+now), 253 lose (55 and 413) and 12 come out even. The losses are short-lived
+beta emitters (Sb, Te, Ba, Nb, In, La, Ga, Hf...) whose bone surface rises
+1-3 % to DCAL's: 66Ga Type M, 143La Type F and 127Sb swallowed are now
+DCAL's to 0.1-0.3 % in bone surface and red marrow, ICRP 72's bone surface
+1-3 % lower than both. That belongs to what DCAL and ICRP 72 differ by (the
+lanthanides and short-lived nuclides 3-7 % high), still to be looked at.
+
+Against the 36 DCAL runs of 2026-11-27: e within 0.6 % in all but the four
+whose special files dcal-run.sh does not pass (225Ac, 125I Type M, 106Ru
+and 123Te Type S); 241Am Type M e 0.989-1.001 of DCAL's with every organ
+within 0.3 % (the page's e is ICRP 72's, 0.995-1.003). Test: 90Sr's and
+241Am's adult Other and 55Fe's BT-Soft at 5 years to the bone surface and
+red marrow as DCAL's four figures.
