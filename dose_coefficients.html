@@ -428,7 +428,13 @@
               the split at 15 days. Gold goes from blood to the tissues of the whole body and nowhere else, as in
               Publication 30; DCAL’s file also passes 2.8 % of it straight from blood to the urinary bladder, with
               which every tissue would get 2.2–2.5 % less than in the database after gold breathed in as Type F,
-              and the bladder wall 1.8 % more.</li>
+              and the bladder wall 1.8 % more. Where Publication 30 has an element go to its tissues at once (gold,
+              fluorine, thallium), it spends no time in blood here: DCAL’s files give it a minute and a half there,
+              in which a hundredth of <sup>18</sup>F decays, and that took 0.7 % from the bone surface’s dose and
+              added 0.7 % to the muscle’s and 1.5 % to the bladder wall’s. Potassium, which those files treat the
+              same way, passes the transfer compartment of Publication 30 with a half-time of 0.25 days, as the
+              database’s <sup>40</sup>K and <sup>42</sup>K show: their doses follow it in time within 0.1 %, where
+              without the quarter day the tissues got 0.9 % less and the bladder wall 7 % more on the first day.</li>
             <li><b>Growing up</b>: an intake before adulthood is calculated in steps, as PLEIADES does it: within a
               step the transfer rates and the specific effective energies are those of the age at its start. The steps
               run from the intake and are 9 days long while one starts before the age of 1 year, 40 days from 1 to 5
@@ -452,7 +458,22 @@
               1.6 × 10<sup>−13</sup> J, the rounded factor of Publication 30 that the ICRP’s coefficients carry:
               with the exact 1.602 × 10<sup>−13</sup> that DCAL has, every dose would be 0.136 % higher and the
               doses of adults 0.19 % above Publication 72’s, alike for alpha emitters and all others, short-lived
-              and long-lived, swallowed and breathed in.</li>
+              and long-lived, swallowed and breathed in. What is spread through the whole body, or through the rest
+              of it beside the organs a model names, is spread over the mass of the body’s tissues that the doses of
+              the ICRP’s database of dose coefficients show: 68.966 kg in the adult and 55.867, 32.680, 19.494 and
+              9.616 kg at 15, 10, 5 and 1 years. After <sup>3</sup>H, <sup>14</sup>C, <sup>36</sup>Cl,
+              <sup>135</sup>Cs and <sup>211</sup>At, which go to the whole body, every tissue’s dose in the database
+              is that of these masses within 0.01 %, at each age. DCAL’s phantom files have 68.831, 55.825, 32.620,
+              19.458 and 9.543 kg, the body without the contents of the gall bladder, the urinary bladder and the
+              alimentary tract, which gives doses 0.2 % higher (0.8 % at 1 year, 0.1 % at 15). The adult’s mass here
+              is DCAL’s with the 135 g of the lower large intestine’s contents left in; for the children’s
+              42, 60, 36 and 72 g more than DCAL’s no such account was found. The rest of the body is that mass
+              without the organs the model names, without the heart’s contents and, where the model names bone,
+              without the mineral bone (5 kg in the adult). Tellurium is the one element whose other tissues take
+              in the mineral bone although its model names the bone surfaces: that way the muscle and the brain
+              after <sup>125m</sup>Te, <sup>127m</sup>Te and <sup>129m</sup>Te are within 0.1 % of the database’s
+              at every time, the other way up to 6 % above them; for 47 nuclides of 35 other elements it is the
+              reverse.</li>
             <li><b>Spontaneous fission</b>, as SEECAL 8.4 (DCAL’s program for the specific effective energies) counts
               it: per fission two fragments of 0.0698 Z<sup>2</sup>/A<sup>1/3</sup> − 10.988 MeV each, absorbed as alpha
               particles are and weighted 20; ν̄ neutrons of 0.75 + 0.65 √(1 + ν̄) MeV, weighted 10 and spread through
@@ -1079,7 +1100,7 @@
             printed coefficients to two significant figures, so a perfect calculation agrees with them to within about ±2.5–5 %;
             the annex gives more digits.</p>
             <div class="dc-table-wrap"><table class="dc-ref"><thead><tr><th>Committed effective dose</th><th>values</th><th>within 5 %</th><th>within 10 %</th><th>within 20 %</th></tr></thead><tbody>
-            <tr><td>ICRP 60, ingestion, against Publication 119 Table F.1</td><td class="num">4534</td><td class="num">99.5 %</td><td class="num">99.8 %</td><td class="num">100.0 %</td></tr>
+            <tr><td>ICRP 60, ingestion, against Publication 119 Table F.1</td><td class="num">4534</td><td class="num">99.6 %</td><td class="num">99.8 %</td><td class="num">100.0 %</td></tr>
             <tr><td>ICRP 60, inhalation (Types F, M, S), against Table G.1</td><td class="num">9872</td><td class="num">99.3 %</td><td class="num">99.7 %</td><td class="num">99.9 %</td></tr>
             <tr><td>ICRP 103, ingestion, against Publication 158 and the Part 2 draft</td><td class="num">744</td><td class="num">100.0 %</td><td class="num">100.0 %</td><td class="num">100.0 %</td></tr>
             <tr><td>ICRP 103, inhalation, against Publication 158 and the Part 2 draft</td><td class="num">2214</td><td class="num">100.0 %</td><td class="num">100.0 %</td><td class="num">100.0 %</td></tr>
@@ -1338,6 +1359,6 @@
   -->
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
   <script src="./resources/js/ensdf-sources.js?v=20261006"></script>
-  <script type="module" src="./resources/js/dose/ui.js?v=20261127b"></script>
+  <script type="module" src="./resources/js/dose/ui.js?v=20261127c"></script>
 </body>
 </html>

@@ -51,6 +51,19 @@ const ROUTE_CODE = { ingestion: 'g', inhalation: 'h', injection: 'j' };
    is the database's choice (README). */
 const ON_BONE_SURFACES_60 = new Set(['V-48', 'Nb-95']);
 
+/* Systemic models whose "other tissues" take in the mineral bone although
+   the model names the bone surfaces. For every other model that names a bone
+   region the rest of the body is without the 5 kg of mineral bone (the
+   adult's), as DCAL has it and as the ICRP's database of dose coefficients
+   shows for 47 nuclides of 35 elements: a tissue the model does not name is
+   within 0.5 % of the database's that way, and 4-8 % below it the other way
+   where its dose is electrons' or alpha particles'.
+   Tellurium is the one the other way round: after 125mTe, 127mTe and 129mTe
+   the muscle and the brain were 1.005 to 1.06 of the database's, rising over
+   the first month; with the mineral bone in Other they are 0.9996-1.0004 of
+   it at every time (README). */
+export const BONE_IN_OTHER_60 = new Set(['TE']);
+
 /**
  * Which systemic model file the parent uses (ORNL/TM-2001/190, 3.6 and the
  * notes of $BIODEF.DAT): a nuclide assignment, then an assignment by route of

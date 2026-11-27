@@ -3056,4 +3056,155 @@ at every age).
   infancy; the names of isomers (180Ta and 102Rh are the other way round in
   the database) and of chemical forms.
 
+## The mass of the body's tissues, and how blood is left (2026-11-27, night)
+
+**The excess is a mass.** After a nuclide that goes to the whole body the
+page's dose is above the database's by one factor in every tissue, bone
+surface, red marrow, lungs and airways included, and from the first day to
+the last (3H in the adult: 1.00191 at 1 d, 1.00192 after). So the kinetics
+agree and the dose per transformation does not. Photons are not in it: 82Br,
+whose dose is nearly all photons, is 1.0003-1.0005. The muscle over the
+first day of an intake by mouth, page over database (cdcmp.mjs):
+
+    nuclide   3 months   1 year    5 years   10 years  15 years  adult
+    211At     1.00278    1.00761   1.00184   1.00187   1.00077   1.00199
+    14C       1.00282    1.00764   1.00188   1.00190   1.00080   1.00202
+    3H        1.00271    1.00754   1.00177   1.00179   1.00069   1.00191
+    36Cl      1.00278    1.00761   1.00184   1.00187   1.00077   1.00199
+    135Cs     1.00272    1.00755   1.00178   1.00180   1.00071   1.00193
+
+A nuclide keeps its place among the five at every age to 1e-5 (their mean
+energies per decay differ that much between the two calculations), and the
+ages differ by far more than the nuclides do. An electron or alpha particle
+from the whole body gives every target E/M, so these are ratios of masses:
+the database spreads the whole body's activity over more than DCAL's
+Body_Tis, by 0.76 % at 1 year and 0.08 % at 15. DCAL's REGMASS files say of
+theirs "excludes contents of gb, ub, st, si, uli, lli" (3.5357, 9.5431,
+19.458, 32.620, 55.825, 68.831 kg), and the database's help prints the same
+six numbers as "Total body mass". Its doses have, by the mean of the five:
+
+    newborn 3.5335   1 y 9.6155   5 y 19.4935   10 y 32.680   15 y 55.867   adult 68.966 kg
+
+(the newborn's is the one that gives the 3-month-old's ratio with DCAL's
+weights between the phantoms): 72.4, 35.5, 60.0, 42.0 and 135.0 g more than
+DCAL's, 2.2 g less for the newborn. The adult's is the 135 g of the lower
+large intestine's contents exactly (1.001961 against a mean of 1.00197). For
+the children no account was found. The lower large intestine's contents are
+18.3, 36.6, 61.7 and 109 g there: near at 5 and 10 years but 1.1 and 1.7 g
+off, where the ages compare to 0.3 g, and far at 1 and 15. Tried besides:
+the other contents alone or together (the heart's are 72.7 g at 1 year),
+the old and new bladder contents of REGMASS's notes, sums of Cristy and
+Eckerman's Table B-3, the nominal masses, three or four figures of DCAL's,
+and an interpolation between the phantoms by inverse body mass that would
+not land on a phantom at its own age. So the six masses are read off the
+database, as the remainder's muscle was.
+
+**What they were not fitted to.** Nuclides that go to the rest of the body
+beside named organs, whose mass is the body's less those organs', the
+mineral bone where bone is named and the heart's contents: a tissue the
+model does not name, over the first day, page over database in 1e-5 above
+one (othermass.mjs): the adult with DCAL's mass, then every age with these.
+
+    nuclide (named)                       adult, DCAL's    1 y    5 y   10 y   15 y   adult
+    33P (bone)                                 194         -17     -7    -10     -7     -7
+    45Ca (bone)                                200         -33     -7    -16     -7    -10
+    210Po (liver, kidneys, spleen, RM)         198         -21     -5     -4     -2     -4
+    79Se (six organs)                          196         -21     -5     -4     -3     -4
+    73As (liver, kidneys, spleen)              191         -15      0      2      3      3
+    107Pd F (bone, kidneys, liver)             197         -13     55     21    -12     -1
+    239Pu F (nine regions)                     177         -44     32     -3    -35    -25
+    204Tl (kidneys)                            232          25     33     34     34     34
+
+All within 0.06 % at every age, from 0.2 % (0.8 % at 1 year). In the mass
+balance of the photons from the rest of the body the two masses give the
+same to 6e-5 (60Co, 22Na, 54Mn, 65Zn and sixteen more); the one mass is
+used throughout. see60.js BODY_TISSUES_60; `dcal` keeps REGMASS's.
+
+**Potassium.** 40K was the one whole-body nuclide below the database, and
+not by a factor: muscle 0.99669 at 1 d, 0.99404 at 7 d, 0.99340 from a year
+on, the bladder wall 1.072 at 1 d. DCAL's K.DEF empties blood at 1000 d-1,
+which is its way of writing "at once". With ICRP 30's transfer compartment
+instead, a half-time of 0.25 d (the private variant.mjs), the muscle is
+1.00181 to 1.00164 at every time and the bladder wall 1.0015 to 1.0011:
+the factor of the mass alone. 42K the same (0.9969 and 0.9959 to 1.0013;
+bladder wall 1.088 to 1.0010). The database's help says of potassium
+"instantaneously distributed"; its doses have the quarter day.
+
+**Fluorine, thallium, gold.** The other files with 1000 d-1 out of blood
+are right about "at once", and the database means it: a minute and a half
+in blood is enough for 0.9 % of 18F to decay there. With 1e7 d-1:
+
+    18F     muscle 1.00655 -> 1.00000   liver 1.00895 -> 1.00000   bladder wall 1.01542 -> 0.99999   bone surface 0.99343 -> 1.00069
+    194mTl  kidneys 0.98905 -> 1.00188  bladder wall 0.99973 -> 1.00151 (the other tissues' factor)
+    201Tl   kidneys 1.00034 -> 1.00120
+    200Au   bladder wall 0.99584 -> 0.99912 (muscle 0.99916)
+
+With the quarter day instead thallium and fluorine are far off (201Tl
+kidneys 0.73 at 1 d, 18F bone surface 0.38). gen-dose-icrp60.mjs writes
+K_I30, F_I30, TL_I30 and AU_I30 with these rates out of blood; models.json
+got the four objects as the generator writes them.
+
+**Tellurium's other tissues take in the mineral bone.** With the masses
+right, a tissue that a model does not name shows what the database takes
+out of the rest of the body. Forty-eight nuclides of 36 elements whose
+models name a bone region and have a rest of the body, each with the
+mineral bone out of the rest (DCAL's way: 5 kg lighter in the adult) and
+left in (the private mkother.py and othermass.mjs; the brain's committed
+dose): out, all but one are within 0.5 % of the database (most within
+0.1 %); in, those whose dose there is electrons' or alpha particles' are
+4-8 % below it. The one is tellurium, the other way round:
+
+    127mTe   muscle 1.0064, 1.0402, 1.0601, 1.0613 at 1 d, 7 d, 30 d, 1 y   ->   0.99959, 0.99962, 0.99967, 0.99969
+    125mTe   muscle 1.0046, 1.0295, 1.0476, 1.0464                          ->   1.00007, 1.00026, 1.00039, 1.00024
+    129mTe   muscle 1.0055, 1.0340, 1.0522, 1.0537                          ->   0.99976, 0.99977, 0.99980, 0.99979
+
+(the rise over the first month is the dose from blood, which is the whole
+body's in both, giving way to that from the other tissues). model60.js
+BONE_IN_OTHER_60 = {TE}; see60.js takes `boneInOther`, dose60.js gives it
+to the whole chain of a tellurium parent and to the shares of a chain's
+Other. 132Te's muscle is 1.00001 of the database's.
+
+**What it brings.** Against the database (14,046 case-ages), the share
+within 0.1, 0.2, 0.5, 1 and 2 %, and the median:
+
+    e                30.0  49.7  76.2  89.8  96.2  1.0016  ->  32.9  51.6  76.9  90.0  96.2  1.0014
+    soft tissues     47.2  72.2  89.2  94.4  96.4  1.0006  ->  67.4  84.7  92.2  95.1  96.8  1.0000
+    large intestine  37.2  65.2  87.0  93.4  96.6  1.0011  ->  47.0  70.7  87.9  93.7  96.8  1.0008
+    bone surface     32.5  55.9  79.8  91.0  95.4  1.0012  ->  40.6  62.3  82.0  91.1  95.4  1.0007
+    lungs, ET        24.4  42.2  64.7  82.5  93.2  1.0019  ->  35.6  49.5  66.6  83.1  93.4  1.0008
+    remainder        32.9  52.7  69.5  83.8  92.8  1.0015  ->  46.0  60.0  71.0  84.5  93.1  1.0007
+
+The soft tissues are level with the database at every age (medians 0.9998
+to 1.0003; 1.0002 to 1.0013 before, the 1-year-old's highest). Against ICRP
+72's two figures: e rounding 86.4 -> 86.7 %, organ doses 90.0 -> 92.1 %;
+Publication 119's e 91.7 -> 91.9 % swallowed, 84.1 -> 84.3 % breathed in.
+The lungs' weights of the section before, which had taken e's rounding from
+86.7 to 86.4 %, no longer show an excess.
+
+Tests: the four models' rates out of blood, and that the engine takes them;
+BODY_TISSUES_60 and the whole body's SEE by it (DCAL's with `dcal`);
+tellurium's Other with the bone in; with local/icrpdose.json, five
+whole-body nuclides at six ages within 8e-5 over the first day (at least
+74e-5 above with DCAL's masses), 33P, 45Ca, 79Se and 210Po's brain within
+33e-5, 40K and 42K in time within 0.06 %, 18F's soft tissues within 9e-5,
+201Tl's kidneys 0.13 %, three tellurium isomers' muscle and brain within
+0.07 %. 319 engine checks. Help: "Dosimetry" and "Systemic models" of the
+ICRP 60 section.
+
+**Seen on the way, not done:**
+
+- Nickel. 63Ni's and 59Ni's doses to the body are 0.9997 of the database's
+  at 1 d, 0.9958 at 7 d and 0.9947 from a month on, alike in every tissue
+  but the kidneys. Publication 67 gives 30 % to "all organs (including
+  kidneys)" with 1200 d; DCAL's Ni.DEF has that in Body_Tis. The database's
+  doses are those of the body's tissues without the heart's contents:
+  68.466/68.831 = 0.99470. So there it is the rest of the body with nothing
+  named, which needs a source region the engine does not have.
+- Iron. 55Fe gives every tissue its model does not name 0.45 % more than
+  the database with the new masses (0.65 % before): the dose from blood.
+- Photon emitters in the rest of the body: 0.1-0.4 % either way by tissue
+  (54Mn brain +0.2 %, pancreas -0.2 %; 65Zn, 125Sb, 7Be, 133Ba): how the
+  photons of Other are put together.
+- The database's Hg-203 Type F is not the page's (its brain has twelve
+  times the dose): another chemical form under the name.
 

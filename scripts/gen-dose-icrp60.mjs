@@ -273,7 +273,20 @@ function readLng(file) {
   breathed in as Type F and the bladder wall 1.8 % more, without it the
   adult's are the database's within 0.2 % (README of the page's tests).
   Au_I30 is Au.DEF without that way.
+
+  And three more of ICRP 30's models, in how they leave blood. DCAL's files
+  write "goes to its tissues at once" as 1000 d-1 out of blood, a minute and
+  a half there on average. For potassium the ICRP's coefficients have the
+  transfer compartment of ICRP 30 instead, cleared with a half-time of 0.25
+  d: with it 40K's doses follow the database in time (muscle 0.9967 of it at
+  1 d and 0.9934 from a month on without, the bladder wall 1.07 at 1 d). For
+  fluorine, thallium and gold they have no time in blood at all: 18F decays
+  there by 0.9 % at 1000 d-1, which took 0.7 % from the bone surface and
+  gave 0.7 % to the muscle and 1.5 % to the bladder wall; with INSTANT d-1
+  every soft tissue is the database's to 1e-5. K_I30, F_I30, TL_I30 and
+  AU_I30 are the files with these rates out of blood.
 */
+const INSTANT = 1e7; // d-1 out of blood where a model has no time there
 function icrp30Models(systemic) {
   const L = Math.LN2 / 0.25;
   const r = (half) => Math.LN2 / half;
@@ -297,9 +310,19 @@ function icrp30Models(systemic) {
   const model = (title, transfers) => ({ title, text: ['ICRP Publication 30 Part 3, as used in ICRP Publication 72'], ages: [100], ageNames: ['All ages'], transfers, notes: '' });
   const au = systemic.AU.transfers.filter(([from, to]) => !(from === 'Blood' && to === 'UB_Cont'));
   if (au.length !== systemic.AU.transfers.length - 1) throw new Error('Au.DEF: no single way from blood to the bladder contents');
+  // A file's transfers with the rates out of blood adding up to `total`, in their proportions.
+  const fromBlood = (transfers, total) => {
+    const sum = transfers.reduce((a, [from, , r]) => (from === 'Blood' ? a + r[0] : a), 0);
+    if (Math.abs(sum - 1000) > 1e-9) throw new Error(`blood is not cleared at 1000 d-1 (${sum})`);
+    return transfers.map(([from, to, r]) => (from === 'Blood' ? [from, to, r.map((x) => x * total / sum)] : [from, to, r]));
+  };
+  const part = (title, transfers, n) => ({ ...model(title, transfers), text: [`ICRP Publication 30 Part ${n}, as used in ICRP Publication 72`] });
   return {
     AC_I30: model('Actinium, ICRP 30 Part 3', ac), PA_I30: model('Protactinium, ICRP 30 Part 3', pa),
-    AU_I30: { ...model('Gold, ICRP 30 Part 2', au), text: ['ICRP Publication 30 Part 2, as used in ICRP Publication 72'] },
+    AU_I30: part('Gold, ICRP 30 Part 2', fromBlood(au, INSTANT), 2),
+    K_I30: part('Potassium, ICRP 30 Part 2', fromBlood(systemic.K.transfers, L), 2),
+    F_I30: part('Fluorine, ICRP 30 Part 2', fromBlood(systemic.F.transfers, INSTANT), 2),
+    TL_I30: part('Thallium, ICRP 30 Part 3', fromBlood(systemic.TL.transfers, INSTANT), 3),
   };
 }
 

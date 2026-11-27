@@ -1172,19 +1172,71 @@ if (!SYSTEM || SYSTEM === '103') {
     Object.entries(want).every(([n, f]) => got[n] === f) && parentModelName(d60.models, d60.index, 'Nb-95', 'inhalation', null) === 'NB_SUR', JSON.stringify(got));
 }
 
-/* ---- gold all to the body tissues (ICRP 60; the AU_I30 model of gen-dose-icrp60.mjs) ----------- */
-// DCAL's Au.DEF without its way from blood straight to the bladder
-// contents, which the ICRP's coefficients do not have; taken for gold as a
-// parent, as the _I30 models of actinium and protactinium are.
+/* ---- ICRP 30's models as ICRP 72 has them (ICRP 60; the _I30 models of gen-dose-icrp60.mjs) ---- */
+// Gold: DCAL's Au.DEF without its way from blood straight to the bladder
+// contents, which the ICRP's coefficients do not have. And how blood is
+// left: at once by gold, fluorine and thallium (1e7 d-1, where DCAL's files
+// have 1000), with a half-time of 0.25 d by potassium. Taken for these
+// elements as parents, as the _I30 models of actinium and protactinium are.
 {
-  const au = d60.models.systemic.AU.transfers, i30 = d60.models.systemic.AU_I30.transfers;
+  const S = d60.models.systemic;
+  const au = S.AU.transfers, i30 = S.AU_I30.transfers;
   const straight = au.filter(([from, to]) => from === 'Blood' && to === 'UB_Cont');
-  await d60.prepare('Au-198');
-  const sys = assemble60(d60, { ...recipe60(d60.cases, 'inhalation', { nuclide: 'Au-198', type: 'F' }), intakeAge: 7300 });
-  const fromBlood = sys.transfers.filter((t) => sys.comps[t.from].name === 'Blood' && t.to >= 0).map((t) => sys.comps[t.to].name);
-  check('ICRP 60: gold leaves blood for the body tissues only (Au.DEF sends 2.78 % straight to the bladder contents; AU_I30 is Au.DEF without it)',
+  // the rates out of blood of a parent as the engine assembles it: [to, d-1]
+  const blood = async (nuclide) => {
+    await d60.prepare(nuclide);
+    const sys = assemble60(d60, { ...recipe60(d60.cases, 'ingestion', { nuclide }), intakeAge: 7300 });
+    return sys.transfers.filter((t) => sys.comps[t.from].name === 'Blood' && t.to >= 0).map((t) => [sys.comps[t.to].name, t.rates ? t.rates[t.rates.length - 1] : t.rate]);
+  };
+  const sum = (l) => l.reduce((a, [, r]) => a + r, 0);
+  const gold = await blood('Au-198');
+  check('ICRP 60: gold leaves blood for the body tissues only (Au.DEF sends 2.78 % straight to the bladder contents; AU_I30 is Au.DEF without it), and at once',
     straight.length === 1 && near(straight[0][2][0] / au.filter(([from]) => from === 'Blood').reduce((a, t) => a + t[2][0], 0), 0.0278, 2e-3)
-    && JSON.stringify(i30) === JSON.stringify(au.filter((t) => t !== straight[0])) && fromBlood.length > 0 && !fromBlood.some((n) => /UB_Cont/.test(n)), JSON.stringify({ i30, fromBlood }));
+    && JSON.stringify(i30) === JSON.stringify(au.filter((t) => t !== straight[0]).map(([a, b, r]) => (a === 'Blood' ? [a, b, [1e7]] : [a, b, r])))
+    && gold.length === 1 && gold[0][0] === 'Body_Tis' && gold[0][1] === 1e7, JSON.stringify({ i30, gold }));
+  const k = await blood('K-40'), f = await blood('F-18'), tl = await blood('Tl-201');
+  const sameButBlood = (a, b) => JSON.stringify(a.filter(([from]) => from !== 'Blood')) === JSON.stringify(b.filter(([from]) => from !== 'Blood'));
+  check('ICRP 60: potassium leaves blood with a half-time of 0.25 d, fluorine and thallium at once (1e7 d-1 in the proportions of their files), the models otherwise DCAL\'s',
+    near(sum(k), Math.LN2 / 0.25, 1e-12) && k.length === 1 && k[0][0] === 'Body_Tis'
+    && near(sum(f), 1e7, 1e-12) && f.length === 2 && near(f[0][1], f[1][1], 1e-12)
+    && near(sum(tl), 1e7, 1e-12) && near(tl.find(([n]) => n === 'Kidneys')[1] / sum(tl), 0.03, 1e-12)
+    && sameButBlood(S.K.transfers, S.K_I30.transfers) && sameButBlood(S.F.transfers, S.F_I30.transfers) && sameButBlood(S.TL.transfers, S.TL_I30.transfers),
+    JSON.stringify({ k, f, tl }));
+}
+
+/* ---- the mass of the body's tissues (ICRP 60; see60.js BODY_TISSUES_60) ------------------------ */
+// What a source spread through the whole body is spread over: the database's
+// masses, DCAL's with dcal. 3H in the body tissues of the adult: every
+// target gets the beta's energy over that mass.
+{
+  const { BODY_TISSUES_60, phantom60, TARGETS_60, MEV: MEV60, MEV_DCAL } = await import(path.join(JS, 'see60.js'));
+  await d60.prepare('H-3');
+  const em = d60.emissions('H-3');
+  const P = phantom60(d60.saf, 'AM');
+  const at = (opt) => P.see(em, 3, ['Body_Tis'], new Set(), TARGETS_60, opt);
+  const page = at({}), dcal = at({ dcal: true });
+  const i = TARGETS_60.indexOf('Muscle'), j = TARGETS_60.indexOf('Thyroid');
+  const dcalMass = d60.saf.phantoms.AM.masses.sources.Body_Tis;
+  check('ICRP 60: a source in the whole body is spread over 68.966 kg in the adult (DCAL: 68.831, the 135 g of the lower large intestine\'s contents less), and 3.5335 to 55.867 kg in the children\'s phantoms',
+    JSON.stringify(BODY_TISSUES_60) === '{"A00":3.5335,"A01":9.6155,"A05":19.4935,"A10":32.68,"A15":55.867,"AM":68.966}'
+    && near(dcalMass, 68.831, 1e-12) && near(BODY_TISSUES_60.AM - dcalMass, d60.saf.phantoms.AM.masses.sources.LLI_Cont, 1e-9)
+    && near(page[i][0] / dcal[i][0], (dcalMass / 68.966) * (MEV60 / MEV_DCAL), 1e-12) && near(page[i][0], page[j][0], 1e-12) && P.bodyTissues(false) === 68.966 && P.bodyTissues(true) === dcalMass,
+    JSON.stringify({ page: page[i][0], dcal: dcal[i][0] }));
+  // The rest of the body ("Other") of a model that names bone surfaces, the
+  // thyroid and the kidneys (tellurium's): without the 5 kg of mineral bone,
+  // or with boneInOther with it; the heart's contents never in it. 127mTe's
+  // electrons to the brain go by one over that mass.
+  const { BONE_IN_OTHER_60 } = await import(path.join(JS, 'model60.js'));
+  await d60.prepare('Te-127m');
+  const te = d60.emissions('Te-127m'), named = new Set(['C_Bone-S', 'T_Bone-S', 'Thyroid', 'Kidneys']), mS = d60.saf.phantoms.AM.masses.sources;
+  const brain = TARGETS_60.indexOf('Brain');
+  const rest = (opt) => P.see(te, 127, ['Other', 'Body_Tis'], named, TARGETS_60, opt)[brain];
+  const out = rest({}), kept = rest({ boneInOther: true });
+  const mOut = 68.966 - mS.Thyroid - mS.Kidneys - mS.Ht_Cont - mS['C_Bone-V'] - mS['T_Bone-V'], mIn = mOut + mS['C_Bone-V'] + mS['T_Bone-V'];
+  // the photons' part differs too, a little: compare the two by the electrons' mass ratio within 1 %
+  check('ICRP 60: tellurium\'s rest of the body takes in the mineral bone (BONE_IN_OTHER_60: TE alone); for other models that name bone it is 5 kg lighter in the adult',
+    [...BONE_IN_OTHER_60].join() === 'TE' && near(mIn - mOut, 5, 1e-9) && near(out[0] / kept[0], mIn / mOut, 0.01) && out[0] > kept[0] && near(out[1], kept[1], 1e-12),
+    JSON.stringify({ out: out[0], kept: kept[0], ratio: out[0] / kept[0], masses: mIn / mOut }));
 }
 
 /* ---- the remainder's bookkeeping (ICRP 60; dose60.js remainder60) ----------------------------- */
@@ -1570,6 +1622,42 @@ if (!SYSTEM || SYSTEM === '60') {
         for (const k of ['Liver', 'Kidneys', 'Muscle', 'Red marrow', 'Testes', 'Bladder']) { const v = c.H[k], q = r.H[k] / v[v.length - 1]; if (!(Math.abs(q - 1) <= 0.007)) offG.push(`${nuclide} ${age} d ${k} ${q.toFixed(4)}`); }
       }
       check('ICRP 60 vs the ICRP database, gold Type F: liver, kidneys, muscle, red marrow, testes and bladder wall within 0.7 % (198Au adult and 1 year, 195Au adult, 199Au 10 years)', !offG.length, offG.join('; '));
+    }
+    // The mass of the body's tissues. Nuclides that go to the whole body,
+    // swallowed: the muscle's dose over the first day within 1e-4 of the
+    // database's at every age (0.07-0.76 % above it with DCAL's masses). And
+    // nuclides that go to the rest of the body beside named organs: a tissue
+    // their models do not name within 0.06 % (0.2-0.8 % above).
+    {
+      const worstB = { whole: 0, dcal: Infinity, rest: 0 };
+      for (const nuclide of ['H-3', 'C-14', 'Cl-36', 'At-211', 'Cs-135']) for (const age of AGES_60) {
+        worstB.whole = Math.max(worstB.whole, Math.abs((await over(nuclide, age, 'Muscle'))[0] - 1));
+        if (nuclide === 'At-211') worstB.dcal = Math.min(worstB.dcal, (await over(nuclide, age, 'Muscle', { dcal: true }))[0] * (1.6e-13 / 1.602176634e-13) - 1);
+      }
+      for (const nuclide of ['P-33', 'Ca-45', 'Se-79', 'Po-210']) for (const age of AGES_60.slice(1)) worstB.rest = Math.max(worstB.rest, Math.abs((await over(nuclide, age, 'Brain'))[0] - 1));
+      check(`ICRP 60 vs the ICRP database, the mass of the body's tissues: 3H, 14C, 36Cl, 135Cs and 211At swallowed, the muscle over the first day within ${(1e5 * worstB.whole).toFixed(0)}e-5 at every age (with DCAL's masses at least ${(1e5 * worstB.dcal).toFixed(0)}e-5 above); 33P, 45Ca, 79Se and 210Po, the brain within ${(1e5 * worstB.rest).toFixed(0)}e-5 from 1 year on`,
+        worstB.whole < 1e-4 && worstB.dcal > 5e-4 && worstB.rest < 6e-4, JSON.stringify(worstB));
+    }
+    // Out of blood. 40K: with the quarter day in the transfer compartment the
+    // muscle and the bladder wall follow the database at every time (0.9967
+    // falling to 0.9934, and 1.07 at one day, without). 18F and 201Tl with no
+    // time in blood: soft tissues to 1e-4, the bone surface and the kidneys
+    // within 0.15 % (0.7 % off, and the bladder wall 1.5 %, at 1000 d-1).
+    {
+      const k = [...await over('K-40', 7300, 'Muscle'), ...await over('K-40', 7300, 'Bladder'), ...await over('K-42', 7300, 'Muscle')];
+      const f = [...await over('F-18', 7300, 'Muscle'), ...await over('F-18', 7300, 'Liver'), ...await over('F-18', 7300, 'Bladder')];
+      const fb = await over('F-18', 7300, 'Bone surface'), tl = await over('Tl-201', 7300, 'Kidneys');
+      const far = (l) => l.reduce((m, x) => Math.max(m, Math.abs(x - 1)), 0);
+      check(`ICRP 60 vs the ICRP database, out of blood: 40K and 42K, muscle and bladder wall at every time within ${(100 * far(k)).toFixed(2)} %; 18F muscle, liver and bladder wall within ${(1e5 * far(f)).toFixed(0)}e-5, its bone surface ${(100 * far(fb)).toFixed(2)} %; 201Tl kidneys ${(100 * far(tl)).toFixed(2)} %`,
+        far(k) < 0.0025 && far(f) < 1e-4 && far(fb) < 0.0015 && far(tl) < 0.0015, JSON.stringify({ k, f, fb, tl }));
+    }
+    // Tellurium's rest of the body with the mineral bone in it: the muscle and
+    // the brain at every time within 0.1 % (1.005 rising to 1.06 without).
+    {
+      const te = [];
+      for (const nuclide of ['Te-125m', 'Te-127m', 'Te-129m']) for (const tissue of ['Muscle', 'Brain']) te.push(...await over(nuclide, 7300, tissue));
+      const farT = te.reduce((m, x) => Math.max(m, Math.abs(x - 1)), 0);
+      check(`ICRP 60 vs the ICRP database, tellurium: 125mTe, 127mTe and 129mTe, muscle and brain at every time within ${(100 * farT).toFixed(2)} %`, farT < 0.001, JSON.stringify(te));
     }
   }
 }

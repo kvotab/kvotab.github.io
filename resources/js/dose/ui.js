@@ -893,8 +893,8 @@ function headline(r) {
    the whole); the remainder's tissues, and the testes and ovaries behind the
    gonads, the two halves of the colon and the prostate and uterus, are parts
    of a term (light bars). The remainder's tissues share it equally in the
-   ICRP 103 system, by mass in the ICRP 60 system (the engines' shares, which
-   follow the masses as a child grows and the splitting rule). In the ICRP 103
+   ICRP 103 system, by mass in the ICRP 60 system (the engines' shares, by
+   the masses at the age of the intake and the splitting rule). In the ICRP 103
    system's Male and Female views each bar is that sex's half of the term, as
    e averages the sexes. Rows outside e (eye lens, ureters, gallbladder,
    heart) and the gonad not taken in the ICRP 60 system get none. */

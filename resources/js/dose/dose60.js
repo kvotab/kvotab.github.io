@@ -37,7 +37,7 @@
   stores to two figures apart), its split for all of them, its effective dose
   to 1e-6 for 99.9 % (resources/tests/dose_coefficients/README.md).
 */
-import { assemble60 } from './model60.js';
+import { assemble60, BONE_IN_OTHER_60 } from './model60.js';
 import { phantom60, TARGETS_60 } from './see60.js';
 import { integrate } from './solve.js';
 import { Z as ATOMIC } from './catalog.js';
@@ -180,7 +180,7 @@ const isBone = (r) => /^[CT]_Bone-[SV]$/.test(r);
   bone in its Other, which goes to the bone volumes when any member names
   bone.
 */
-function otherTargets(j, members, common) {
+function otherTargets(j, members, common, boneInOther) {
   const own = new Set(members[j].explicit), parent = new Set(members[0].explicit);
   const out = [];
   for (const r of common) {
@@ -189,20 +189,21 @@ function otherTargets(j, members, common) {
     const first = members.findIndex((m) => m.explicit.includes(r));
     out.push([r, j >= first ? 'parent' : 'own']);
   }
-  if (![...own].some(isBone) && [...common].some(isBone)) for (const r of BONE_V) out.push([r, 'own']);
+  if (!boneInOther && ![...own].some(isBone) && [...common].some(isBone)) for (const r of BONE_V) out.push([r, 'own']);
   return out;
 }
 
-/* The mass of the Other of a model naming these regions. */
-function robMass(explicit, mS) {
+/* The mass of the Other of a model naming these regions; boneInOther: the
+   mineral bone stays in it (model60.js BONE_IN_OTHER_60). */
+function robMass(explicit, mS, boneInOther) {
   let rob = mS.Body_Tis - (mS.Ht_Cont || 0);
   for (const r of explicit) if (mS[r] && !isBone(r)) rob -= mS[r];
-  if (explicit.some(isBone)) rob -= mS['C_Bone-V'] + mS['T_Bone-V'];
+  if (!boneInOther && explicit.some(isBone)) rob -= mS['C_Bone-V'] + mS['T_Bone-V'];
   return rob;
 }
 
-function otherShares(j, members, targets, mS) {
-  const rob = { own: robMass(members[j].explicit, mS), parent: robMass(members[0].explicit, mS) };
+function otherShares(j, members, targets, mS, boneInOther) {
+  const rob = { own: robMass(members[j].explicit, mS, boneInOther), parent: robMass(members[0].explicit, mS, boneInOther) };
   const shares = targets.filter(([r]) => mS[r] > 0).map(([r, of]) => [r, mS[r] / rob[of]]);
   if (!shares.length) return [['Other', 1]];
   return [['Other', 1 - shares.reduce((a, [, f]) => a + f, 0)], ...shares];
@@ -214,8 +215,9 @@ function otherShares(j, members, targets, mS) {
  * @param {object} spec  {nuclide, route, type, lung, amad, bio, f1file, kinetics, last, adultAge}
  * @param {number[]} [ages]
  * @param {{outputs?: boolean, rtol?: number, dcal?: boolean}} [opt]  dcal: as DCAL computes, for
- *   comparing with it -- the SEE of its SEECAL (see60.js) and rates and SEE that follow the age
- *   continuously, not in PLEIADES's steps (HOLD_60)
+ *   comparing with it -- the SEE of its SEECAL (see60.js: its photon interpolation, joules per
+ *   MeV and mass of the body's tissues) and rates and SEE that follow the age continuously, not in
+ *   PLEIADES's steps (HOLD_60)
  */
 export function coefficients60(data, spec, ages = AGES_60, opt = {}) {
   const phantoms = PHANTOMS.map((p) => phantom60(data.saf, p));
@@ -227,7 +229,9 @@ export function coefficients60(data, spec, ages = AGES_60, opt = {}) {
        Other is the body tissues the parent's model does not name; with
        independent kinetics, see otherTargets. */
     const common = new Set(sys.members.flatMap((m) => (sys.spec.kinetics === 'S' ? sys.members[0].explicit : m.explicit)));
-    const targets = sys.members.map((m, j) => otherTargets(j, sys.members, common));
+    // Tellurium's Other takes in the mineral bone, and so does its chain's.
+    const boneInOther = !opt.dcal && BONE_IN_OTHER_60.has(sys.members[0].bio);
+    const targets = sys.members.map((m, j) => otherTargets(j, sys.members, common, boneInOther));
     const regionsOf = sys.members.map((m, j) => {
       const own = [...new Set(sys.comps.filter((c) => c.member === j).map((c) => c.region))];
       const extra = own.includes('Other') ? targets[j].map(([r]) => r) : [];
@@ -239,10 +243,10 @@ export function coefficients60(data, spec, ages = AGES_60, opt = {}) {
       // The atomic number, for spontaneous fission (see60.js); dcal for the
       // SEE as DCAL's SEECAL has them (its photon SAFs and joules per MeV).
       const Z = ATOMIC[/^([A-Z][a-z]?)-/.exec(m.name)[1]];
-      return phantoms.map((ph) => ph.see(em, A, regionsOf[j], common, TARGETS_60, { Z, dcal: opt.dcal }));
+      return phantoms.map((ph) => ph.see(em, A, regionsOf[j], common, TARGETS_60, { Z, dcal: opt.dcal, boneInOther }));
     });
     // Per member and phantom: how its Other activity divides among the regions.
-    const otherSplit = sys.members.map((m, j) => phantoms.map((ph) => otherShares(j, sys.members, targets[j], ph.masses.sources)));
+    const otherSplit = sys.members.map((m, j) => phantoms.map((ph) => otherShares(j, sys.members, targets[j], { ...ph.masses.sources, Body_Tis: ph.bodyTissues(!!opt.dcal) }, boneInOther)));
     const nT = TARGETS_60.length;
     // One column per member and source region, shared by its compartments
     // (solve.js integrates them as one group): the SEE of the region at a

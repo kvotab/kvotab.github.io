@@ -69,6 +69,22 @@ import { WALL_OF, BONE_SOURCES, LUNG_REGIONS, CONTENTS } from './regions.js';
    example of ORNL/TM-12351 to its four figures), MEV_DCAL. */
 export const MEV = 1.6e-13;
 export const MEV_DCAL = 1.602176634e-13;
+
+/* The mass of the body's tissues, kg, by phantom: what a source spread through
+   the whole body, or through the rest of it, is spread over. As the doses of
+   the ICRP's database of dose coefficients have it (README): after 3H, 14C,
+   36Cl, 135Cs and 211At, which go to the whole body, every tissue's dose over
+   the first day is DCAL's Body_Tis over this mass, at each age to 6e-5, and
+   after nuclides that go to the rest of the body beside named organs (33P,
+   45Ca, 79Se, 210Po, 239Pu ...) within 0.05 %. DCAL's REGMASS files have
+   3.5357, 9.5431, 19.458, 32.620, 55.825 and 68.831 kg, the body without the
+   contents of the gall bladder, the urinary bladder and the alimentary tract.
+   The adult's here is that with the 135 g of the lower large intestine's
+   contents left in; for the children's no such account was found (72, 36, 60
+   and 42 g more than DCAL's at 1, 5, 10 and 15 years). The newborn's is the
+   one that makes the 3-month-old's so, between it and the 1-year-old's by
+   DCAL's weights. */
+export const BODY_TISSUES_60 = { A00: 3.5335, A01: 9.6155, A05: 19.4935, A10: 32.680, A15: 55.867, AM: 68.966 };
 export const TARGETS_60 = ['Adrenals', 'UB_Wall', 'Bone_Sur', 'Brain', 'Breasts', 'St_Wall', 'SI_Wall', 'ULI_Wall',
   'LLI_Wall', 'Kidneys', 'Liver', 'ET1-bas', 'ET2-bas', 'LN-ET', 'BBi-bas', 'BBi-sec', 'bbe-sec', 'AI', 'LN-Th',
   'Muscle', 'Ovaries', 'Pancreas', 'R_Marrow', 'Skin', 'Spleen', 'Testes', 'Thymus', 'Thyroid', 'GB_Wall',
@@ -139,7 +155,10 @@ export function phantom60(saf, phantom) {
   const P = saf.phantoms[phantom];
   const E = saf.photonEnergies;
   const mT = P.masses.targets, mS = P.masses.sources;
-  const MWB = mS.Body_Tis;
+  /* The mass of the body's tissues: the database's (BODY_TISSUES_60), or with
+     dcal the phantom file's own; set by see() for the SEE it computes. */
+  const bodyTissues = (dcal) => (dcal ? mS.Body_Tis : BODY_TISSUES_60[phantom] ?? mS.Body_Tis);
+  let MWB = bodyTissues(false);
   const lungE = indexLungAF(saf.lungAF.electron), lungA = indexLungAF(saf.lungAF.alpha);
 
   const photonSaf = (t, s) => {
@@ -207,12 +226,16 @@ export function phantom60(saf, phantom) {
    * @param {string[]} sources  source regions (may include Other, Blood, Body_Tis, BT-Soft)
    * @param {Set<string>} explicit  the explicitly named systemic regions, for Other
    * @param {string[]} targets
-   * @param {{Z?: number, dcal?: boolean}} [opt]  the atomic number, for spontaneous
-   *   fission; dcal: as DCAL's SEECAL has it, the photon SAF itself linear in
-   *   energy (interpPhoton) and the exact joules per MeV (MEV_DCAL)
+   * @param {{Z?: number, dcal?: boolean, boneInOther?: boolean}} [opt]  the atomic number, for
+   *   spontaneous fission; dcal: as DCAL's SEECAL has it, the photon SAF itself linear in
+   *   energy (interpPhoton), the exact joules per MeV (MEV_DCAL) and the mass
+   *   of the body's tissues of its REGMASS file; boneInOther: the mineral bone
+   *   stays in Other although the model names bone regions (tellurium:
+   *   model60.js BONE_IN_OTHER_60)
    * @returns {Float64Array[]}  see[t][s], Sv per transformation
    */
   function see(em, A, sources, explicit, targets = TARGETS_60, opt = {}) {
+    MWB = bodyTissues(!!opt.dcal);
     const r = em.r || {};
     const photons = (r.p || []).filter(([e]) => e >= 0.01);
     const softPh = (r.p || []).filter(([e]) => e < 0.01).reduce((s, [e, y]) => s + e * y, 0);
@@ -247,8 +270,9 @@ export function phantom60(saf, phantom) {
     };
 
     // Other: equation (9) with the explicit regions; mineral bone left out of
-    // Other as a whole when any bone region is named; heart contents never in it.
-    const boneNamed = [...explicit].some((x) => BONE_SOURCES.has(x));
+    // Other as a whole when any bone region is named (but with boneInOther);
+    // heart contents never in it.
+    const boneNamed = !opt.boneInOther && [...explicit].some((x) => BONE_SOURCES.has(x));
     const otherParts = [];
     for (const x of explicit) {
       if (BONE_SOURCES.has(x) || CONTENTS.has(x) || LUNG_REGIONS.has(x)) continue;
@@ -335,7 +359,7 @@ export function phantom60(saf, phantom) {
     return out;
   }
 
-  return { see, masses: P.masses, phantom, targets: TARGETS_60 };
+  return { see, masses: P.masses, bodyTissues, phantom, targets: TARGETS_60 };
 }
 
 /* The photon SAF of a 12-point row at energy e: the energy the photon leaves
