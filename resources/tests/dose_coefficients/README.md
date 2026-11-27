@@ -2539,3 +2539,82 @@ and 11 kg. Short- and long-lived nuclides give the same masses, so they are
 those at intake. Refitted this way, ICRP 72's own Remainder, rebuilt from its
 own tissue values, rounds back 63-72 % instead of 42-53 %. The effect on e is
 a few hundredths of a percent; no source for these masses was found.
+
+## 1 MeV = 1.6e-13 J in the ICRP 60 system; whose numbers ICRP 72's are (2026-11-28)
+
+**A uniform 0.19 %.** With the photons as above, the page's adult doses sat
+above ICRP 72's by one factor everywhere. Scaling the page's values and
+counting how many round to ICRP 72's two figures, the count peaks at 0.9981
+(flat within 0.15 points from 0.9979 to 0.9985; 63,174 adult values), and
+at the same place for every part of them: alpha emitters 0.9980, the others
+0.9981, half-lives under a day 0.9980, over 10 years 0.9981, swallowed
+0.9981, Types F, M and S 0.9977, 0.9982 and 0.9986. Short-lived nuclides
+are there at every age at intake. A factor that is the same for an alpha
+particle absorbed where it is emitted and for a photon from another organ
+is a constant of the calculation: 1.6 / 1.602176634 = 0.99864, the rounded
+joules per MeV of Publication 30's formula (H = 1.6e-10 U SEE), which the
+ICRP 103 system already has for the same reason (see103.js: the annex of
+Publication 158 to six figures). see60.js MEV is now 1.6e-13.
+
+**Not SEECAL's numbers.** The SEECAL manual of 1993 (ORNL/TM-12351, Figure
+6) prints the SEE of 224Ra for the six phantoms. With `dcal` (the SAF itself
+linear in energy, 1 MeV = 1.602176634e-13 J) the engine gives 45 of its
+values to their four figures (within 0.04 %): alpha self-doses, walls from
+contents, and photons from organ to organ. With E × SAF linear the photon
+pairs are off by up to 3 % (rms 1 %), with 1.6e-13 the self-doses by
+0.136 %. So ORNL's program of the time computed as DCAL 8.4 does, and ICRP
+72's printed numbers, which follow E × SAF and 1.6e-13, are another
+program's. The ICRP's Task Group on Dose Calculations worked with four
+independently written programs for Publication 68 (IMIE, DCAL, DOSAGE and
+NRPB's PLEIADES; ORAUT-OTIB-0028), and DCAL's own mass file notes values
+"used by Phipps" (REGMASS.A00, 1995). Help said the ICRP calculated
+Publication 72 with DCAL; it now says what is known.
+
+Against ICRP 72's database: e rounding 82.2 → 83.5 %, organ doses 85.3 →
+86.2 %; against Publication 119's e 87.1 → 88.8 % swallowed, 79.9 → 81.0 %
+breathed in. By age at intake (e; organ doses without the remainder):
+
+| | 3 months | 1 y | 5 y | 10 y | 15 y | adult |
+| --- | --- | --- | --- | --- | --- | --- |
+| e, 1.602e-13 | 79.2 | 80.9 | 82.7 | 82.2 | 82.0 | 83.4 |
+| e, 1.6e-13 | 78.6 | 82.2 | 84.2 | 83.7 | 83.0 | 86.4 |
+| organs, 1.602e-13 | 83.1 | 83.3 | 87.6 | 87.6 | 86.5 | 87.7 |
+| organs, 1.6e-13 | 82.2 | 84.2 | 88.3 | 88.4 | 87.2 | 90.7 |
+
+The `dcal` option (see, coefficients60) keeps both of DCAL's choices for
+comparing with it; it replaces `photons: 'saf'`. New test: the 224Ra
+example of the SEECAL manual, 22 values to four figures with `dcal`. Help's
+"Checking it" table has its ICRP 60 rows from this run (99.0 and 98.9 %
+within 5 %; 125Cs, 149Gd and 171Lu have left the list of intakes more than
+10 % off at two ages).
+
+**Children with longer-lived nuclides: open.** What is left after the
+constant is with children. Doses delivered more than about ten days after
+an intake at 3 months to 15 years are 0.4-0.7 % below ICRP 72's (soft
+tissues, medians; half-lives under a day none, 1-10 d 0.05 % but 0.4 % at
+3 months, 10-100 d 0.2-0.65 %, longer 0.35-0.7 %), alike for elements
+whose models change with age and for those whose models do not, so it is in
+how the dose per transformation follows the growing body. The page follows
+DCAL 8.4 there to 0.1-0.3 % (90Sr, 60Co, 65Zn, 134Cs, 239Pu, 226Ra at six
+ages). Fitted against the age at which the dose is delivered, ICRP 72 is
+level with the page at each phantom age and above it between them (about
+0.9 % at a third of the way from 5 to 10 and from 10 to 15 years, 1.7 %
+from 1 to 5 and from 15 to 20). That is what a calculation in steps gives
+that takes the SEE as at the start of each step, as the ICRP's later program
+does (solve.js, the ICRP 103 system). Tried, none of them a rule:
+
+- the SEE held from the start of each interval of DCAL's output times
+  (WRITIM.DAT): children worse (organ doses at 3 months 83.1 → 79.7 %
+  rounding, at 1 year 83.3 → 79.6), 15 years a little better;
+- steps of one length from the intake: 60Co swallowed wants 13 d at 3
+  months, 22 d at 1 year, 46-48 d at 5 and 10 years and 125 d at 15;
+- EPACAL's dose rates summed by the trapezoid: 0.32 % more at every
+  half-life and age, adults too, which ICRP 72 does not show.
+
+The weight of the 1-year phantom at 100 days, 0.6536, is in DCAL's files
+since 1994 (REGMASS.A00: "SF = 0.6536") and ICRP 72's 3-month-olds agree
+with it for short-lived nuclides. Left as it is.
+
+Smaller, also open: the walls of the large intestine 0.1 % further above
+ICRP 72 than other organs at every route; ET after inhalation 0.4 %, with
+a wide spread (78-80 % rounding).

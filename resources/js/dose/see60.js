@@ -10,8 +10,9 @@
   Cristy-Eckerman phantoms, tabulated at 12 energies; between them the energy
   a photon leaves per kilogram, E SAF(E), is linear in energy. That is how
   Publication 72's coefficients have it: with the SAF itself linear in energy,
-  as DCAL's SEECAL 8.4 interpolates (and as FGR 13 and the SEECAL manual put
-  it, "linearly between energies"), 72 % of ICRP 72's organ doses round to
+  as DCAL's SEECAL interpolates (8.4, and that of 1993, whose printed example
+  of 224Ra comes out to its four figures that way; FGR 13 and the manual say
+  "linearly between energies"), 72 % of ICRP 72's organ doses round to
   its two figures; with E SAF 85 %, and the emitters of X-rays between the
   tabulated energies (145Pm's 37-43 keV, 165Er's 47-55 keV) from 3-7 % off
   to within them (README). Electrons
@@ -59,7 +60,15 @@
 */
 import { WALL_OF, BONE_SOURCES, LUNG_REGIONS, CONTENTS } from './regions.js';
 
-export const MEV = 1.602176634e-13; // J
+/* J per MeV as the ICRP's coefficients have it: 1.6e-13, the rounded factor
+   of Publication 30 (H = 1.6e-10 U SEE), as in the ICRP 103 system
+   (see103.js). With the exact value the page's adult doses were 1.0019 times
+   ICRP 72's, alike for alpha emitters and the others, short-lived and
+   long-lived, swallowed and breathed in (README); 1.602176634 / 1.6 =
+   1.00136. DCAL's SEECAL has the exact value (8.4, and that of 1993: the
+   example of ORNL/TM-12351 to its four figures), MEV_DCAL. */
+export const MEV = 1.6e-13;
+export const MEV_DCAL = 1.602176634e-13;
 export const TARGETS_60 = ['Adrenals', 'UB_Wall', 'Bone_Sur', 'Brain', 'Breasts', 'St_Wall', 'SI_Wall', 'ULI_Wall',
   'LLI_Wall', 'Kidneys', 'Liver', 'ET1-bas', 'ET2-bas', 'LN-ET', 'BBi-bas', 'BBi-sec', 'bbe-sec', 'AI', 'LN-Th',
   'Muscle', 'Ovaries', 'Pancreas', 'R_Marrow', 'Skin', 'Spleen', 'Testes', 'Thymus', 'Thyroid', 'GB_Wall',
@@ -198,8 +207,9 @@ export function phantom60(saf, phantom) {
    * @param {string[]} sources  source regions (may include Other, Blood, Body_Tis, BT-Soft)
    * @param {Set<string>} explicit  the explicitly named systemic regions, for Other
    * @param {string[]} targets
-   * @param {{Z?: number, photons?: 'saf'}} [opt]  the atomic number, for spontaneous
-   *   fission; photons: 'saf' interpolates the photon SAFs as DCAL does (interpPhoton)
+   * @param {{Z?: number, dcal?: boolean}} [opt]  the atomic number, for spontaneous
+   *   fission; dcal: as DCAL's SEECAL has it, the photon SAF itself linear in
+   *   energy (interpPhoton) and the exact joules per MeV (MEV_DCAL)
    * @returns {Float64Array[]}  see[t][s], Sv per transformation
    */
   function see(em, A, sources, explicit, targets = TARGETS_60, opt = {}) {
@@ -207,7 +217,7 @@ export function phantom60(saf, phantom) {
     const photons = (r.p || []).filter(([e]) => e >= 0.01);
     const softPh = (r.p || []).filter(([e]) => e < 0.01).reduce((s, [e, y]) => s + e * y, 0);
     const betas = r.b || [], elec = r.e || [], alphas = r.a || [];
-    const safLinear = opt.photons === 'saf';
+    const safLinear = !!opt.dcal, mev = opt.dcal ? MEV_DCAL : MEV;
     const recoilE = alphas.reduce((s, [e, y]) => s + y * e * 4.0026 / (A - 4), 0);
     const alphaE = alphas.reduce((s, [e, y]) => s + y * e, 0);
     // Electron energy by class: under / over 0.2 MeV, with soft photons in the
@@ -319,7 +329,7 @@ export function phantom60(saf, phantom) {
           al += sf[0] * fis.fragment * ffAf;
           np += sf[0] * fis.beta[0] * fis.beta[1] * fbAf;
         }
-        out[i][k] = MEV * (ph + np + 20 * al);
+        out[i][k] = mev * (ph + np + 20 * al);
       });
     });
     return out;
@@ -331,8 +341,8 @@ export function phantom60(saf, phantom) {
 /* The photon SAF of a 12-point row at energy e: the energy the photon leaves
    per kilogram, E SAF(E), linear in energy between the tabulated energies
    (Publication 72's coefficients have it so), or with `saf` the SAF itself
-   linear in energy (DCAL's SEECAL 8.4); held at the end values outside
-   10 keV - 4 MeV. */
+   linear in energy (DCAL's SEECAL, 8.4 and that of 1993); held at the end
+   values outside 10 keV - 4 MeV. */
 function interpPhoton(E, v, e, saf = false) {
   if (saf) return lerp(E, v, e);
   const n = E.length;

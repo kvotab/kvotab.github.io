@@ -1094,7 +1094,7 @@ if (!SYSTEM || SYSTEM === '103') {
 // photon slip (README): the liver's kidneys and brain take nothing but
 // fission's photons and neutrons and 244Pu's own. Red marrow to bone surface
 // counts the alpha recoil, as SEECAL does (FGR 13 leaves recoils out from bone
-// only). Photon SAFs interpolated as SEECAL does (photons: 'saf').
+// only). The SEE as SEECAL has them (dcal: its photon SAFs and joules per MeV).
 {
   const { phantom60, TARGETS_60, fission60 } = await import(path.join(JS, 'see60.js'));
   const f = fission60(3.89, 98, 254);
@@ -1103,7 +1103,7 @@ if (!SYSTEM || SYSTEM === '103') {
   await d60.prepare('Pu-244');
   const srcs = ['St_Cont', 'Liver', 'C_Bone-S', 'R_Marrow'];
   const explicit = new Set(['Liver', 'C_Bone-S', 'T_Bone-S', 'Kidneys', 'Testes', 'Ovaries', 'C_Bone-V', 'R_Marrow', 'T_Bone-V']);
-  const see = phantom60(d60.saf, 'AM').see(d60.emissions('Pu-244'), 244, srcs, explicit, TARGETS_60, { Z: 94, photons: 'saf' });
+  const see = phantom60(d60.saf, 'AM').see(d60.emissions('Pu-244'), 244, srcs, explicit, TARGETS_60, { Z: 94, dcal: true });
   const at = (s, t) => see[TARGETS_60.indexOf(t)][srcs.indexOf(s)];
   const dcal = [['Liver', 'Liver', 8.674e-12], ['Liver', 'Kidneys', 3.048e-16], ['Liver', 'Brain', 3.089e-18], ['C_Bone-S', 'Bone_Sur', 3.201e-11],
     ['R_Marrow', 'Bone_Sur', 5.208e-12], ['St_Cont', 'St_Wall', 3.188e-13]];
@@ -1112,20 +1112,50 @@ if (!SYSTEM || SYSTEM === '103') {
     !off.length, off.join('; '));
 }
 
-/* ---- photon SAFs between the tabulated energies (ICRP 60, see60.js interpPhoton) -------- */
+/* ---- photon SAFs between the tabulated energies, joules per MeV (ICRP 60, see60.js) ------ */
 // A 40 keV photon (between 30 and 50 keV) in the adult liver: by default the
-// energy it leaves per kilogram, E SAF(E), is linear in energy; with photons:
-// 'saf' the SAF itself is (DCAL's SEECAL 8.4).
+// energy it leaves per kilogram, E SAF(E), is linear in energy and 1 MeV is
+// 1.6e-13 J (Publication 30's rounded factor, as ICRP 72's coefficients have
+// it); with dcal the SAF itself is linear and the joule exact (DCAL's SEECAL).
 {
-  const { phantom60, TARGETS_60, MEV } = await import(path.join(JS, 'see60.js'));
+  const { phantom60, TARGETS_60, MEV, MEV_DCAL } = await import(path.join(JS, 'see60.js'));
   const row = d60.saf.phantoms.AM.saf['Liver<-Liver'], E = d60.saf.photonEnergies;
   const i30 = E.indexOf(0.03), i50 = E.indexOf(0.05);
   const em = { r: { p: [[0.04, 1]] } };
   const at = (opt) => phantom60(d60.saf, 'AM').see(em, 100, ['Liver'], new Set(['Liver']), TARGETS_60, opt)[TARGETS_60.indexOf('Liver')][0];
   const wantE = MEV * 0.04 * (0.5 * (0.03 * row[i30] + 0.05 * row[i50]) / 0.04);
-  const wantS = MEV * 0.04 * 0.5 * (row[i30] + row[i50]);
-  check('ICRP 60 photon SAFs: E SAF linear in energy between the tabulated energies (a 40 keV photon in the adult liver), the SAF itself with photons: saf (DCAL)',
-    near(at({}), wantE, 1e-12) && near(at({ photons: 'saf' }), wantS, 1e-12) && !near(wantE, wantS, 1e-3), `${at({})} vs ${wantE}; ${at({ photons: 'saf' })} vs ${wantS}`);
+  const wantS = MEV_DCAL * 0.04 * 0.5 * (row[i30] + row[i50]);
+  check('ICRP 60 photon SAFs: E SAF linear in energy between the tabulated energies and 1 MeV = 1.6e-13 J (a 40 keV photon in the adult liver); with dcal the SAF itself and 1.602176634e-13',
+    MEV === 1.6e-13 && MEV_DCAL === 1.602176634e-13 && near(at({}), wantE, 1e-12) && near(at({ dcal: true }), wantS, 1e-12) && !near(wantE, wantS, 1e-3), `${at({})} vs ${wantE}; ${at({ dcal: true })} vs ${wantS}`);
+}
+
+/* ---- SEECAL's own example of 1993 (ORNL/TM-12351, Figure 6: 224Ra) ---------------------- */
+// The SEE the SEECAL manual prints for 224Ra (equivalent dose, Sv per
+// transformation; newborn, 1 and 5 years), to its four figures with dcal:
+// self-doses of alpha emitters (the joule per MeV), walls from contents, and
+// photons from organ to organ (the 241 keV line between 200 and 500 keV: the
+// SAF itself linear in energy; with E SAF linear these are up to 3 % off).
+{
+  const { phantom60, TARGETS_60 } = await import(path.join(JS, 'see60.js'));
+  await d60.prepare('Ra-224');
+  const srcs = ['LLI_Cont', 'SI_Cont', 'St_Cont', 'ULI_Cont', 'Kidneys', 'Liver', 'R_Marrow', 'C_Bone-S', 'C_Bone-V', 'T_Bone-S', 'T_Bone-V', 'Other'];
+  const explicit = new Set(['Kidneys', 'Liver', 'R_Marrow', 'C_Bone-S', 'C_Bone-V', 'T_Bone-S', 'T_Bone-V']);
+  const printed = [
+    ['A00', 'Kidneys', 'Kidneys', 8.083e-10], ['A00', 'Liver', 'Liver', 1.530e-10], ['A00', 'St_Wall', 'St_Cont', 8.594e-12], ['A00', 'LLI_Wall', 'LLI_Cont', 1.305e-11],
+    ['A00', 'Breasts', 'Liver', 7.435e-17], ['A00', 'Liver', 'Kidneys', 1.557e-16], ['A00', 'Thyroid', 'Liver', 2.011e-17], ['A00', 'Liver', 'LLI_Cont', 4.227e-17],
+    ['A00', 'SI_Wall', 'Kidneys', 1.463e-16], ['A00', 'Testes', 'LLI_Cont', 1.576e-16], ['A00', 'R_Marrow', 'Liver', 3.867e-17], ['A00', 'Bone_Sur', 'Liver', 7.038e-17],
+    ['A01', 'Kidneys', 'Kidneys', 2.943e-10], ['A01', 'Liver', 'Kidneys', 8.116e-17], ['A01', 'Breasts', 'Liver', 3.611e-17], ['A01', 'Kidneys', 'St_Cont', 5.753e-17], ['A01', 'Testes', 'LLI_Cont', 7.222e-17],
+    ['A05', 'Liver', 'Liver', 3.170e-11], ['A05', 'Liver', 'Kidneys', 5.549e-17], ['A05', 'Breasts', 'Kidneys', 7.235e-18], ['A05', 'St_Wall', 'Liver', 4.763e-17], ['A05', 'ULI_Wall', 'SI_Cont', 2.624e-16],
+  ];
+  const off = [], far = [];
+  for (const [phantom, t, src, v] of printed) {
+    const P = phantom60(d60.saf, phantom), em = d60.emissions('Ra-224');
+    const got = P.see(em, 224, srcs, explicit, TARGETS_60, { dcal: true })[TARGETS_60.indexOf(t)][srcs.indexOf(src)];
+    if (!near(got, v, 5e-4)) off.push(`${phantom} ${t}<-${src} ${got.toExponential(4)} vs ${v}`);
+    far.push(Math.abs(P.see(em, 224, srcs, explicit, TARGETS_60, {})[TARGETS_60.indexOf(t)][srcs.indexOf(src)] / v - 1));
+  }
+  check(`ICRP 60, dcal: the SEE of 224Ra as SEECAL's manual of 1993 prints them, ${printed.length} values to four figures (as the page computes for ICRP 72, up to ${(100 * Math.max(...far)).toFixed(1)} % off them)`,
+    !off.length && Math.max(...far) > 0.02, off.join('; '));
 }
 
 /* ---- Other and BT-Soft to the bone surface and red marrow (ICRP 60, see60.js) ---------- */
@@ -1134,7 +1164,7 @@ if (!SYSTEM || SYSTEM === '103') {
 // the bone targets too; from BT-Soft the red marrow 1/M and the bone surface
 // the share of it in the marrow. Equation (9) taken to the bone targets gave
 // 90Sr's adult bone surface under a third of this and 241Am's red marrow
-// below zero. Photon SAFs interpolated as SEECAL does (photons: 'saf').
+// below zero. The SEE as SEECAL has them (dcal).
 {
   const { phantom60, TARGETS_60 } = await import(path.join(JS, 'see60.js'));
   const cases = [
@@ -1145,7 +1175,7 @@ if (!SYSTEM || SYSTEM === '103') {
   const off = [];
   for (const [nuclide, phantom, s, named, want] of cases) {
     await d60.prepare(nuclide);
-    const see = phantom60(d60.saf, phantom).see(d60.emissions(nuclide), Number(nuclide.split('-')[1]), [s], new Set(named), TARGETS_60, { photons: 'saf' });
+    const see = phantom60(d60.saf, phantom).see(d60.emissions(nuclide), Number(nuclide.split('-')[1]), [s], new Set(named), TARGETS_60, { dcal: true });
     for (const [t, v] of want) { const got = see[TARGETS_60.indexOf(t)][0]; if (!near(got, v, 6e-4)) off.push(`${nuclide} ${s}->${t} ${got.toExponential(4)} vs ${v}`); }
   }
   check('ICRP 60: Other and BT-Soft to the bone surface and red marrow as DCAL\'s SEE to its four figures (90Sr, 241Am adult; 55Fe at 5 years)', !off.length, off.join('; '));

@@ -162,8 +162,8 @@ function remainderMasses(age) {
  * @param {object} data  {index, models, saf, emissions: (nuclide) => {r, bs}}
  * @param {object} spec  {nuclide, route, type, lung, amad, bio, f1file, kinetics, last, adultAge}
  * @param {number[]} [ages]
- * @param {{outputs?: boolean, rtol?: number, photons?: 'saf'}} [opt]  photons: 'saf' interpolates
- *   the photon SAFs as DCAL does, for comparing with it
+ * @param {{outputs?: boolean, rtol?: number, dcal?: boolean}} [opt]  dcal: the SEE as DCAL's SEECAL
+ *   has them (see60.js), for comparing with it
  */
 export function coefficients60(data, spec, ages = AGES_60, opt = {}) {
   const phantoms = PHANTOMS.map((p) => phantom60(data.saf, p));
@@ -184,10 +184,10 @@ export function coefficients60(data, spec, ages = AGES_60, opt = {}) {
     const seeOf = sys.members.map((m, j) => {
       const em = data.emissions(m.name);
       const A = Number(/-(\d+)/.exec(m.name)[1]);
-      // The atomic number, for spontaneous fission (see60.js); photons: 'saf'
-      // for DCAL's interpolation of the photon SAFs (see60.js interpPhoton).
+      // The atomic number, for spontaneous fission (see60.js); dcal for the
+      // SEE as DCAL's SEECAL has them (its photon SAFs and joules per MeV).
       const Z = ATOMIC[/^([A-Z][a-z]?)-/.exec(m.name)[1]];
-      return phantoms.map((ph) => ph.see(em, A, regionsOf[j], common, TARGETS_60, { Z, photons: opt.photons }));
+      return phantoms.map((ph) => ph.see(em, A, regionsOf[j], common, TARGETS_60, { Z, dcal: opt.dcal }));
     });
     // Per member and phantom: how its Other activity divides among the regions.
     const otherSplit = sys.members.map((m, j) => phantoms.map((ph) => otherShares(j, sys.members, targets[j], ph.masses.sources)));
