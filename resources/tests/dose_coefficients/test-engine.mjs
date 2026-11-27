@@ -1204,6 +1204,44 @@ if (!SYSTEM || SYSTEM === '103') {
     JSON.stringify({ k, f, tl }));
 }
 
+/* ---- nickel's "all organs (including kidneys)" (ICRP 60; the NI_I72 model of gen-dose-icrp60.mjs) */
+// ICRP 67's 30 % with 1200 d: DCAL's Ni.DEF has it in the whole body; the
+// ICRP's coefficients have the kidneys' share of it, their mass over the
+// body's, in a second kidney compartment and the rest in the other tissues.
+{
+  const S = d60.models.systemic, ni = S.NI.transfers, n72 = S.NI_I72;
+  const rate = (from, to) => n72.transfers.find(([a, b]) => a === from && b === to)[2];
+  const whole = ni.find(([a, b]) => a === 'Blood' && b === 'Body_Tis')[2][0];
+  const share = [22.9 / 3535.7, 62.9 / 9543.1, 116 / 19458, 173 / 32620, 248 / 55825, 0.00451];
+  const outOfBlood = (t) => t.filter(([a]) => a === 'Blood').reduce((u, [, , r]) => u + r[r.length - 1], 0);
+  await d60.prepare('Ni-63');
+  const sysOf = (opt) => assemble60(d60, { ...recipe60(d60.cases, 'ingestion', { nuclide: 'Ni-63' }), intakeAge: 3650, ...opt });
+  const names = (sys) => sys.comps.filter((c) => c.member === 0 && !/Cont$/.test(c.name)).map((c) => c.name).join(' ');
+  const as72 = sysOf({}), asDcal = sysOf({ icrp72: false });
+  check('ICRP 60: nickel\'s 30 % to all organs goes to a second kidney compartment by the kidneys\' share of the body (0.0065 at 3 months to 0.0045 in the adult) and to Other, with Ni.DEF\'s rates otherwise',
+    JSON.stringify(n72.ages) === '[100,365,1825,3650,5475,7300]' && share.every((k, i) => near(rate('Blood', 'Kidneys_b')[i], whole * k, 1e-12) && near(rate('Blood', 'Other')[i], whole * (1 - k), 1e-12))
+    && near(outOfBlood(n72.transfers), outOfBlood(ni), 1e-12) && rate('Other', 'UB_Cont')[5] === ni.find(([a, b]) => a === 'Body_Tis' && b === 'UB_Cont')[2][0]
+    && rate('Kidneys_b', 'UB_Cont')[0] === rate('Other', 'UB_Cont')[0] && rate('Kidneys_a', 'UB_Cont')[2] === ni.find(([a, b]) => a === 'Kidneys' && b === 'UB_Cont')[2][0]
+    && /Kidneys_a/.test(names(as72)) && /Kidneys_b/.test(names(as72)) && /Other/.test(names(as72)) && !/Body_Tis/.test(names(as72)) && /Body_Tis/.test(names(asDcal)) && !/Kidneys_b/.test(names(asDcal)),
+    JSON.stringify({ as72: names(as72), asDcal: names(asDcal) }));
+}
+
+/* ---- iron's other soft tissues (ICRP 60; the FE_I72 model of gen-dose-icrp60.mjs) -------------- */
+// DCAL's Fe.DEF has them in BT-Soft, the body's tissues without the mineral
+// bone, which irradiate the liver, spleen and red marrow that the model
+// names too; the ICRP's coefficients have them in the rest of the body.
+{
+  const S = d60.models.systemic;
+  const renamed = S.FE.transfers.map(([a, b, r]) => [a.replace(/^BT-Soft/, 'Other'), b.replace(/^BT-Soft/, 'Other'), r]);
+  await d60.prepare('Fe-59');
+  const regions = (opt) => [...new Set(assemble60(d60, { ...recipe60(d60.cases, 'ingestion', { nuclide: 'Fe-59' }), intakeAge: 7300, ...opt }).comps.filter((c) => c.member === 0).map((c) => c.region))];
+  const as72 = regions({}), asDcal = regions({ icrp72: false });
+  check('ICRP 60: iron\'s other soft tissues are the rest of the body (FE_I72: Fe.DEF with BT-Soft read as Other), which gives nothing to the liver, spleen and red marrow',
+    JSON.stringify(S.FE_I72.transfers) === JSON.stringify(renamed) && S.FE.transfers.filter(([a, b]) => /^BT-Soft/.test(a) || /^BT-Soft/.test(b)).length === 5
+    && JSON.stringify(S.FE_I72.ages) === JSON.stringify(S.FE.ages) && as72.includes('Other') && !as72.includes('BT-Soft') && asDcal.includes('BT-Soft') && !asDcal.includes('Other'),
+    JSON.stringify({ as72, asDcal }));
+}
+
 /* ---- the mass of the body's tissues (ICRP 60; see60.js BODY_TISSUES_60) ------------------------ */
 // What a source spread through the whole body is spread over: the database's
 // masses, DCAL's with dcal. 3H in the body tissues of the adult: every
@@ -1658,6 +1696,32 @@ if (!SYSTEM || SYSTEM === '60') {
       for (const nuclide of ['Te-125m', 'Te-127m', 'Te-129m']) for (const tissue of ['Muscle', 'Brain']) te.push(...await over(nuclide, 7300, tissue));
       const farT = te.reduce((m, x) => Math.max(m, Math.abs(x - 1)), 0);
       check(`ICRP 60 vs the ICRP database, tellurium: 125mTe, 127mTe and 129mTe, muscle and brain at every time within ${(100 * farT).toFixed(2)} %`, farT < 0.001, JSON.stringify(te));
+    }
+    // Nickel: 63Ni's muscle at every age and every time within 1.5e-4 (0.9927
+    // to 0.9938 from a month on with Ni.DEF's whole body), its kidneys
+    // within 0.15 % (0.92 to 0.96 for intakes in childhood); 59Ni, whose
+    // X-rays and electrons give 0.03 % less here in every tissue, 0.05 %.
+    {
+      let farM = 0, farK = 0, far59 = 0;
+      for (const age of AGES_60) {
+        for (const x of await over('Ni-63', age, 'Muscle')) farM = Math.max(farM, Math.abs(x - 1));
+        for (const x of await over('Ni-63', age, 'Kidneys')) farK = Math.max(farK, Math.abs(x - 1));
+        for (const x of await over('Ni-59', age, 'Muscle')) far59 = Math.max(far59, Math.abs(x - 1));
+      }
+      check(`ICRP 60 vs the ICRP database, nickel at every age and time: 63Ni's muscle within ${(1e5 * farM).toFixed(0)}e-5 and kidneys within ${(100 * farK).toFixed(2)} %, 59Ni's muscle within ${(1e5 * far59).toFixed(0)}e-5`, farM < 1.5e-4 && farK < 0.0015 && far59 < 5e-4, JSON.stringify({ farM, farK, far59 }));
+    }
+    // Iron: with its other soft tissues in the rest of the body the muscle,
+    // liver, spleen and red marrow of the adult follow the database at every
+    // time within 0.15 % after 55Fe and 59Fe (the spleen 1.23 of it on the
+    // first day, the liver 1.03 in the long run, in BT-Soft), 0.3 % at 10
+    // years.
+    {
+      const fe = { adult: 0, ten: 0 };
+      for (const nuclide of ['Fe-55', 'Fe-59']) for (const tissue of ['Muscle', 'Liver', 'Spleen', 'Red marrow']) {
+        for (const x of await over(nuclide, 7300, tissue)) fe.adult = Math.max(fe.adult, Math.abs(x - 1));
+        for (const x of await over(nuclide, 3650, tissue)) fe.ten = Math.max(fe.ten, Math.abs(x - 1));
+      }
+      check(`ICRP 60 vs the ICRP database, iron: 55Fe and 59Fe, muscle, liver, spleen and red marrow at every time within ${(100 * fe.adult).toFixed(2)} % for the adult and ${(100 * fe.ten).toFixed(2)} % at 10 years`, fe.adult < 0.0015 && fe.ten < 0.003, JSON.stringify(fe));
     }
   }
 }

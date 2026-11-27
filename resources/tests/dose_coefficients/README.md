@@ -3208,3 +3208,89 @@ ICRP 60 section.
 - The database's Hg-203 Type F is not the page's (its brain has twelve
   times the dose): another chemical form under the name.
 
+## Nickel's "all organs (including kidneys)" (2026-11-27, late night)
+
+**What the doses say.** With the body's masses right, 63Ni's dose to every
+tissue but the kidneys is 0.9977 of the database's at 1 d, 0.9939 at 7 d
+and 0.9927 from a year on in the adult; 0.9938, 0.9934, 0.9932 and 0.9925
+at a year after intakes at 15, 10, 5 and 1 years. That is the heart's
+contents over the body's tissues at each age (500 g of 68.966 kg: 0.99275;
+347, 219, 134 and 72.7 g: 0.99379, 0.99330, 0.99313, 0.99244): the 30 %
+that ICRP 67 gives "to all organs (including kidneys)" with 1200 d is in
+the database spread over the body without the heart's contents, which is
+what the rest of the body is when a model names nothing. DCAL's Ni.DEF has
+it in Body_Tis.
+
+The kidneys say the rest. Theirs were 0.9967 of the database's in the
+adult but 0.92 to 0.96 after intakes in childhood, falling over ten years:
+the database's kidneys keep what they got at the intake, while a uniform
+source gives them less and less as they come to be a smaller part of the
+body (0.65 % of it at 1 year, 0.45 % in the adult). So: a second kidney
+compartment with a share k of the 30 %, the rest in Other, both with
+1200 d. Fitted age by age on the kidneys' committed dose over the muscle's
+(the private nik.mjs), the same from 63Ni swallowed, 63Ni breathed in as
+Type F and 59Ni:
+
+    intake at     3 months   1 year     5 years    10 years   15 years   adult
+    k             0.006477   0.006591   0.005961   0.005303   0.004444   0.004510
+    kidneys / k   --         9.544      19.460     32.622     55.808     68.741 kg
+    REGMASS       3.5357     9.5431     19.458     32.620     55.825     68.831 kg
+
+k is the kidneys' mass over the "Total body mass" of the database's help
+table (DCAL's Body_Tis) for the age group: 62.9 g/9.5431 kg = 0.006591, 116/
+19.458 = 0.005962, 173/32.620 = 0.005304, 248/55.825 = 0.004442, and for the
+3-month-old the newborn's 22.9/3.5357 = 0.006477. The adult's 310/68.831 =
+0.004504 is not what the doses have: they have 0.004510 +- 0.000001, as if
+the adult's mass were 68.74 kg; taken as 0.00451. With these, 63Ni:
+
+    muscle     1.00000-1.00002 of the database at every time, every age (0.99993 the lowest, at 1 year)
+    kidneys    0.9991 on the first day in the adult, 0.9996 at 3 months, otherwise 0.9999-1.0003
+    e          Type F 0.993 -> 1.000, 59Ni Type M 0.995 -> 1.000 (adult)
+
+gen-dose-icrp60.mjs writes it as NI_I72 (nickel67: Ni.DEF with the way to
+Body_Tis divided, six ages); assemble60 takes a parent's _I72 model as it
+takes an _I30 one. models.json got the one object. Tests: the model's
+rates and that the engine takes it (not with icrp72: false); with the
+database 63Ni's muscle within 1.5e-4 and kidneys within 0.15 % at every age
+and time, 59Ni's muscle within 5e-4 (its X-rays and Auger electrons give
+0.03 % less here in every tissue). 321 engine checks. Organ doses rounding
+to ICRP 72's two figures 92.1 -> 92.2 %; soft tissues within 0.1 % of the
+database 67.4 -> 67.9 %.
+
+## Iron's other soft tissues (2026-11-27, late night)
+
+After 55Fe every tissue that iron's model does not name was 0.45 % above
+the database in the long run, but not by one factor: 1.0045 on the first
+day, 1.0007 at 30 d, 1.0022 at a year, 1.0045 from 10 years on. And the
+named ones were off the other way: the spleen 1.232 on the first day and
+1.009 later, the liver 1.018 falling to 1.004 and rising to 1.031, the red
+marrow 1.003 to 1.020, the bone surface 0.997 to 0.983.
+
+ICRP 69's iron has plasma, red cells, marrow, liver, spleen and "other soft
+tissues" (two compartments). DCAL's Fe.DEF, alone among its files, puts the
+last in BT-Soft: the body's tissues without the mineral bone, which give
+E/M to every target, the named organs with the rest. On the first day and
+again in the long run those compartments hold much of the iron, and in
+between the blood does, which is the whole body's in both calculations:
+hence the pattern. With them in Other instead (the rest of the body: none
+to a named organ, and its mass without the liver, spleen, marrow and the
+heart's contents) -- the private variant.mjs, then the engine:
+
+    55Fe, adult     muscle 0.99993-1.00039   liver 0.99921-0.99969   spleen 0.99932-0.99978   red marrow 0.99948-1.00007   bone surface 1.0007-1.0014
+    59Fe, adult     all four tissues 1.0000-1.0004 at every time (the brain was 0.9954-0.9986)
+    59Fe, 10 years  muscle 1.0000-1.0004, liver 0.9996-0.9998, spleen 1.0001-1.0014
+    e, adult        55Fe swallowed 1.014 -> 1.000, Type M 1.013 -> 1.000
+
+gen-dose-icrp60.mjs writes FE_I72 (iron69: Fe.DEF with BT-Soft read as
+Other); models.json got the object. Tests: the model and that the engine
+takes it; with the database 55Fe and 59Fe in four tissues at every time,
+within 0.08 % for the adult and 0.22 % at 10 years. 323 engine checks.
+
+Left: after an intake at 3 months every tissue is 1.2-1.4 % below the
+database from a year on, with either reading (iron's rates in the first
+year of life).
+
+**Where it stands.** Against ICRP 72's two figures e 86.8 % and organ doses
+92.2 % round to the print; Publication 119's e 92.0 % swallowed and 84.5 %
+breathed in. Against the database (within 0.1, 0.2, 0.5, 1, 2 %): e 33.4
+52.1 77.2 90.0 96.2; soft tissues 68.2 85.4 92.7 95.1 96.8.

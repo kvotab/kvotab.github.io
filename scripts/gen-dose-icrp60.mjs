@@ -285,8 +285,58 @@ function readLng(file) {
   gave 0.7 % to the muscle and 1.5 % to the bladder wall; with INSTANT d-1
   every soft tissue is the database's to 1e-5. K_I30, F_I30, TL_I30 and
   AU_I30 are the files with these rates out of blood.
+
+  And nickel, by ICRP 67: of what leaves blood 0.02 to the kidneys (0.2 d),
+  0.30 "to all organs (including kidneys)" (1200 d), the rest excreted. DCAL's
+  Ni.DEF has the 0.30 in Body_Tis, the whole body as one source. The ICRP's
+  coefficients have it in two places: the kidneys' share of it, their mass
+  over the body's, in a second kidney compartment, and the rest in the other
+  tissues -- the rest of the body, which is without the heart's contents and
+  whose doses stay those of its own mass as a child grows, while the kidneys
+  keep what they got. With Ni.DEF 63Ni's dose to the tissues is 0.9927 of the
+  database's from a month on (0.9932-0.9938 for intakes in childhood) and to
+  the kidneys of a child 0.92-0.96; this way both follow it in time to 1e-4
+  at every age, with the shares KIDNEYS_OF_BODY, the kidneys' mass over the
+  mass of the body's tissues in REGMASS (the newborn's for the 3-month-old;
+  the adult's doses have 0.00451 where 310 g over 68.831 kg is 0.00450).
+  NI_I72.
+
+  And iron, by ICRP 69, whose "other soft tissues" DCAL's Fe.DEF puts in
+  BT-Soft, the body's tissues without the mineral bone, which irradiate
+  every target alike, the liver, spleen and red marrow that the model names
+  too. In the ICRP's coefficients they are the rest of the body, which gives
+  nothing to a named organ: with BT-Soft 55Fe's spleen got 1.23 of the
+  database's dose on the first day, the liver 1.03 and the red marrow 1.02
+  in the long run and the bone surface 0.98; this way all are within 0.15 %
+  for the adult. FE_I72 is Fe.DEF with BT-Soft read as Other.
 */
 const INSTANT = 1e7; // d-1 out of blood where a model has no time there
+// The kidneys' share of the body's tissues at 3 months (the newborn's), 1, 5, 10 and 15 years and in the adult.
+const KIDNEYS_OF_BODY = [22.9 / 3535.7, 62.9 / 9543.1, 116 / 19458, 173 / 32620, 248 / 55825, 0.00451];
+/* Ni.DEF with what it gives the whole body divided between a second kidney
+   compartment and the other tissues, by age. */
+function nickel67(ni) {
+  if (ni.ages.length !== 1) throw new Error('Ni.DEF: one set of rates expected');
+  const all = (v) => KIDNEYS_OF_BODY.map(() => v);
+  const transfers = [];
+  for (const [from, to, [rate]] of ni.transfers) {
+    if (from === 'Blood' && to === 'Body_Tis') transfers.push(['Blood', 'Kidneys_b', KIDNEYS_OF_BODY.map((k) => rate * k)], ['Blood', 'Other', KIDNEYS_OF_BODY.map((k) => rate * (1 - k))]);
+    else if (from === 'Body_Tis') transfers.push(['Kidneys_b', to, all(rate)], ['Other', to, all(rate)]);
+    else transfers.push([from === 'Kidneys' ? 'Kidneys_a' : from, to === 'Kidneys' ? 'Kidneys_a' : to, all(rate)]);
+  }
+  if (transfers.length !== ni.transfers.length + 3) throw new Error('Ni.DEF: not the whole body with a way in and two out');
+  return { title: 'Nickel, ICRP 67', text: ['ICRP Publication 67, as used in ICRP Publication 72'], ages: [100, 365, 1825, 3650, 5475, 7300],
+    ageNames: ['3 mo-old', '1 y-old', '5 y-old', '10 y-old', '15 y-old', 'Adult'], transfers, notes: '' };
+}
+
+/* Fe.DEF with its soft-tissue compartments in Other. */
+function iron69(fe) {
+  const other = (name) => name.replace(/^BT-Soft/, 'Other');
+  const transfers = fe.transfers.map(([from, to, rates]) => [other(from), other(to), rates]);
+  if (transfers.filter(([from, to]) => /^Other/.test(from) || /^Other/.test(to)).length !== 5) throw new Error('Fe.DEF: five ways into and out of BT-Soft expected');
+  return { title: 'Iron, ICRP 69', text: ['ICRP Publication 69, as used in ICRP Publication 72'], ages: fe.ages, ageNames: fe.ageNames, transfers, notes: '' };
+}
+
 function icrp30Models(systemic) {
   const L = Math.LN2 / 0.25;
   const r = (half) => Math.LN2 / half;
@@ -323,6 +373,8 @@ function icrp30Models(systemic) {
     K_I30: part('Potassium, ICRP 30 Part 2', fromBlood(systemic.K.transfers, L), 2),
     F_I30: part('Fluorine, ICRP 30 Part 2', fromBlood(systemic.F.transfers, INSTANT), 2),
     TL_I30: part('Thallium, ICRP 30 Part 3', fromBlood(systemic.TL.transfers, INSTANT), 3),
+    NI_I72: nickel67(systemic.NI),
+    FE_I72: iron69(systemic.FE),
   };
 }
 

@@ -188,7 +188,11 @@ export function assemble60(data, spec) {
   const notes = [];
 
   let parentBio = parentModelName(models, index, spec.nuclide, route, spec.bio);
-  if (spec.icrp72 !== false && !spec.bio && models.systemic[`${parentBio}_I30`]) parentBio = `${parentBio}_I30`;
+  // The parent's model as ICRP 72's coefficients have it, where DCAL's file is
+  // another: ICRP 30's (_I30) or the publication's own read otherwise (_I72;
+  // gen-dose-icrp60.mjs says of each what and why).
+  const as72 = [`${parentBio}_I30`, `${parentBio}_I72`].find((name) => models.systemic[name]);
+  if (spec.icrp72 !== false && !spec.bio && as72) parentBio = as72;
   if (!models.systemic[parentBio]) throw new Error(`no systemic model file ${parentBio}.DEF`);
   const lungName = route === 'inhalation' ? (spec.lung ? key(spec.lung) : `ICRP66${spec.type}`) : null;
   const lung = lungName ? models.lung[lungName] : null;
