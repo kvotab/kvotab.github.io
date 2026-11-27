@@ -2618,3 +2618,92 @@ with it for short-lived nuclides. Left as it is.
 Smaller, also open: the walls of the large intestine 0.1 % further above
 ICRP 72 than other organs at every route; ET after inhalation 0.4 %, with
 a wide spread (78-80 % rounding).
+
+## The ICRP 60 system in steps, as PLEIADES; the ICRP database to seven figures (2026-11-28, later)
+
+**Two sources that settle what was open above.**
+
+- Fell, Phipps and Smith, *The internal dosimetry code PLEIADES*, Radiat.
+  Prot. Dosim. 124(4), 327-338 (2007): the program of NRPB (later HPA) that
+  "delivered ... dose coefficients for a series of publications and CD's
+  from ICRP 67 onwards". For an intake before adulthood it "is advanced by a
+  time step dt small enough for the parameters to be regarded as constant.
+  At the end of this increment new rates are interpolated and the procedure
+  is repeated"; it "breaks up age-dependent calculations into intervals
+  within which the SEE is regarded as fixed", the SEE of "the age at the
+  start of the interval"; the steps range "from nine days in the first year
+  of life to half a year during adolescence", and from adulthood (20 or 25
+  years by the model) one step ends the calculation. "SEEs at intermediate
+  ages are determined by linear interpolation based on inverse body mass."
+- The ICRP Database of Dose Coefficients: Workers and Members of the Public
+  (the ICRPDOSE installer; `innoextract` unpacks it, it need not be run). Its
+  DATA folder has a file per nuclide, Fortran unformatted records: for each
+  age, route and form the dose of every tissue integrated to 1, 7 and 30
+  days, 1, 5, 10, 20, 30 and 45 years and 50 years or the age of 70, as
+  4-byte reals (the program shows two figures). A year is 365 days there.
+  `make-local-fixtures.py --icrpdose` writes local/icrpdose.json (15,174
+  cases for members of the public; layout in the script). The two-figure
+  local/icrp72.json (ORNL's Radiological Toolbox) holds the same numbers
+  rounded.
+
+**The steps.** Pure beta emitters spread through the body, with models that
+do not change with age (36Cl, 87Rb, 35S, 33P), give the muscle a dose that
+is the transformations in the body times one SEE, 1/mass of the body at the
+age it is taken at. The page over the database, relative to the first day
+and to the adult's same ratio (so that each nuclide's own constant drops
+out), is flat in time only when the SEE is taken as PLEIADES took it:
+
+| age at intake | step that fits | off with it, 1e-5 | without steps, 1e-5 |
+| --- | --- | --- | --- |
+| 3 months | 9 d (between 8 and 9) | 114 | 985 |
+| 1 year | 40 d | 21 | 923 |
+| 5 years | 50 d | 0 | 472 |
+| 10 years | 50 d | 8 | 487 |
+| 15 years | 180 d | 5 | 536 |
+
+At 5 years 45.6 d leaves 36, 52.1 d 18 and 50 d none (87Rb to a year); at
+15 years 150 d leaves 59 and 200 d 35 (35S). The first step is seen directly: the
+dose to 7 and to 30 days of an intake at 5 years is that of the 5-year-old's
+SEE throughout. The rates are held too: with the SEE alone in steps 137Cs
+at 10 years is 0.5 % high by a year, with both it follows the database to
+1e-5 at every time. So dose60.js HOLD_60: steps from the intake, 9 days
+long while one starts before 1 year of age, 40 days from 1 to 5 years, 50
+days from 5 to 15 and 180 days after that, until the last phantom's age and
+the last age of any rate table; solve.js dose.hold makes each step a stretch
+with the rates and the phantoms' weights of the age at its start. DCAL's
+weights of the phantoms (dcalWeight; linear from 5 years) stay: with the
+steps they are PLEIADES's to 1e-5 near 5 and 10 years. `dcal` keeps rates
+and SEE continuous, for comparing with DCAL.
+
+Against ICRP 72's two figures: e rounding 83.5 → 86.0 %, organ doses 86.2 →
+88.5 %; Publication 119's e 88.8 → 90.2 % swallowed, 81.0 → 84.0 % breathed
+in; by age e 84.6, 85.3, 85.4, 85.7, 85.4 and 86.4 % (3 months to adult;
+78.6 to 84.2 % for children before). Against the database (committed doses,
+14,046 case-ages matched by name): soft tissues within 0.2 % 58.2 → 71.1 %,
+within 0.5 % 80.3 → 88.2 %; e within 0.5 % 68.2 → 76.3 %. A full comparison
+takes 22 minutes instead of 9.
+
+Tests: the stepping itself (36Cl at 5 years: the muscle's dose per
+transformation the same to 30 and 50 days, and in the second step that of
+5 years and 50 days); with local/icrpdose.json the table above (limits 150,
+30, 5, 10, 10), 137Cs at 10 years level to 1e-4, and 60Co, 131I, 90Sr and
+239Pu at every age and time within 0.15 to 0.35 %. Help: the head of the
+ICRP 60 section names PLEIADES, a new item "Growing up", two references,
+and the ICRP 60 rows of "Checking it" (192nIr Type F joins the near-ties).
+
+**What the database shows next** (not changed here):
+
+- The remainder: 53 % of its values within 1 % of the database (soft
+  tissues 94 %); its masses or its formulation differ, and e carries a
+  twentieth of it.
+- The mass of the whole body: doses from the body tissues and from Other
+  are 0.19 % high for adults for every pure beta emitter (3H, 14C, 36Cl,
+  the muscle after 90Sr or 241Pu), 0.75 % at 1 year, 0.18 % at 5 and 10,
+  0.07 % at 15 -- PLEIADES's body would weigh 68.96, 9.615, 19.49, 32.68
+  and 55.86 kg against DCAL's 68.831, 9.5431, 19.458, 32.620 and 55.825.
+- Lungs and ET after inhalation (two thirds within 0.5 %); the walls of the
+  large intestine 0.1 % high; 40K 0.3-0.7 % low; strontium and barium in
+  infancy 0.05-0.6 % and caesium between 1 and 5 years 0.17 % off with the
+  steps; the first year's step (8.85 d fits a month, 8.1 d a year).
+- The names of some isomers and chemical forms differ between the database
+  and the page and are not matched yet (2,341 of 2,999 cases per age are).

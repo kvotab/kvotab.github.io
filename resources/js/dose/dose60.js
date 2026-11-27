@@ -39,6 +39,16 @@ export const W_60 = {
   Gonads: 0.20, 'Red marrow': 0.12, Colon: 0.12, Lung: 0.12, Stomach: 0.12, Bladder: 0.05, Breast: 0.05,
   Liver: 0.05, Oesophagus: 0.05, Thyroid: 0.05, Skin: 0.01, 'Bone surface': 0.01,
 };
+/* The steps of an age-dependent calculation, as PLEIADES took them for
+   Publications 67 to 72 (solve.js, dose.hold): [age below which a step
+   starting there has this length, the length], days. Read off the ICRP's
+   database of dose coefficients (README): with steps of these lengths, and
+   the SEE and the rates as at each step's start, the doses of 36Cl, 87Rb,
+   35S and 33P to 7 and 30 days and 1 year follow the adult's in time to
+   1e-5 at 5 and 10 years (50 d), 2e-5 at 15 years (180 d), 2e-4 at 1 year
+   (40 d) and 1e-3 at 3 months (9 d). */
+export const HOLD_60 = [[365, 9], [1825, 40], [5475, 50], [Infinity, 180]];
+
 /* Remainder tissues and their masses in grams at the reference ages (ICRP 72's
    organ masses: the phantoms', ICRP 23's for the adult, and the ET airways). */
 export const REMAINDER_60 = {
@@ -162,8 +172,9 @@ function remainderMasses(age) {
  * @param {object} data  {index, models, saf, emissions: (nuclide) => {r, bs}}
  * @param {object} spec  {nuclide, route, type, lung, amad, bio, f1file, kinetics, last, adultAge}
  * @param {number[]} [ages]
- * @param {{outputs?: boolean, rtol?: number, dcal?: boolean}} [opt]  dcal: the SEE as DCAL's SEECAL
- *   has them (see60.js), for comparing with it
+ * @param {{outputs?: boolean, rtol?: number, dcal?: boolean}} [opt]  dcal: as DCAL computes, for
+ *   comparing with it -- the SEE of its SEECAL (see60.js) and rates and SEE that follow the age
+ *   continuously, not in PLEIADES's steps (HOLD_60)
  */
 export function coefficients60(data, spec, ages = AGES_60, opt = {}) {
   const phantoms = PHANTOMS.map((p) => phantom60(data.saf, p));
@@ -251,7 +262,7 @@ export function coefficients60(data, spec, ages = AGES_60, opt = {}) {
     // effective dose is made of (effectivePieces60), put together below; a
     // group for each compartment (the Model tab's boxes).
     const pieces = opt.outputs ? effectivePieces60(nT) : null;
-    const res = integrate(sys, { phantomAges: PHANTOM_AGES_60, columns, nTargets: nT + N_VIRTUAL, groups, interp: 'linear', weights: 'dcal', cross: cross || undefined, functionals: pieces || undefined, byCompartment: !!opt.outputs },
+    const res = integrate(sys, { phantomAges: PHANTOM_AGES_60, columns, nTargets: nT + N_VIRTUAL, groups, interp: 'linear', weights: 'dcal', hold: opt.dcal ? undefined : HOLD_60, cross: cross || undefined, functionals: pieces || undefined, byCompartment: !!opt.outputs },
       { intakeAge, period, outputs: opt.outputs, rtol: opt.rtol });
     const Ht = Object.fromEntries(TARGETS_60.map((t, i) => [t, res.H[i]]));
     const H = {};

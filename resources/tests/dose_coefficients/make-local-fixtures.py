@@ -7,12 +7,21 @@ when they are missing.
 
     python3 resources/tests/dose_coefficients/make-local-fixtures.py \
         [--mdb PATH/icrp72.mdb] [--elements PATH/elements] [--inmop PATH/InMoPdata]
-        [--icrp119 PATH/icrp-119.pdf]
+        [--icrp119 PATH/icrp-119.pdf] [--icrpdose PATH/app/DATA]
 
   --mdb       icrp72.mdb from ORNL's Radiological Toolbox (app/data), the
-              ICRP 72 dose coefficients with every organ dose, as DCAL
-              calculated them; read with mdb-export (brew install mdbtools).
-              Writes local/icrp72.json.
+              ICRP 72 dose coefficients with every organ dose to two
+              figures (those of the ICRP's database, below); read with
+              mdb-export (brew install mdbtools). Writes local/icrp72.json.
+  --icrpdose  the DATA folder of the ICRP Database of Dose Coefficients:
+              Workers and Members of the Public (the ICRPDOSE installer,
+              unpacked with innoextract; it need not be run): a file per
+              nuclide with, for each age, route and form, the dose of every
+              tissue integrated to 1, 7 and 30 days, 1, 5, 10, 20, 30 and 45
+              years and 50 years or the age of 70, as the program PLEIADES
+              calculated them for Publications 67 to 72, to the seven figures
+              of a 4-byte real. Writes local/icrpdose.json (members of the
+              public: ingestion, inhalation at 1 um, gases).
   --elements  the folder of transcribed element files for the ICRP 103
               system (one <El>.json per element, with the "doses" tables of
               Publication 158 and the Part 2 and 3 drafts). Writes
@@ -61,6 +70,7 @@ DEFAULT_INMOP = os.path.join(HOME, 'Downloads/ICRP/InMoP Electronic Annex 2025.0
 DEFAULT_119 = os.path.join(HOME, 'Downloads/ICRP/eckerman-et-al-2013-icrp-publication-119-compendium-of-dose-coefficients-based-on-icrp-publication-60.pdf')
 DEFAULT_FGR15 = os.path.join(HOME, 'Downloads/fgr/fgr15_data_2025_05_28.zip')
 DEFAULT_FGR12 = os.path.join(HOME, 'Downloads/icrp-dc/ornl/x/DCAL01_setup/out/app/DAT/EXT')
+DEFAULT_ICRPDOSE = os.path.join(HOME, 'Downloads/icrp-dc/icrpcd/DATA')
 
 AGES = {'Newborn': 100, '1 yr-old': 365, '5 yr-old': 1825, '10 yr-old': 3650, '15 yr-old': 5475, 'Adult': 7300}
 # The database's column names, as the tests name the tissues. Some of its
@@ -342,6 +352,59 @@ def fgr12(folder):
     return out
 
 
+# The ICRP database's nuclide files: Fortran unformatted records, little-endian
+# (a length before and after each). A header record per class of person, then a
+# record per intake form: name (12 characters: nuclide, class, form), an
+# integer k, f1 (4-byte real; 0.99 for 1), the number of series, a count per
+# series, their total, and the values. 36 series make a block: one block for
+# ingestion and for gases, ten for inhalation (the AMADs 0.001 to 10 um; 1 um
+# is the seventh). A series is a tissue's dose integrated to the times of
+# ICRPDOSE_TIMES, left off where later values no longer differ.
+ICRPDOSE_CLASS = {'E1': 7300, 'E2': 100, 'E3': 365, 'E4': 1825, 'E5': 3650, 'E6': 5475}  # members of the public, by age (days)
+ICRPDOSE_SERIES = {0: 'Ovaries', 1: 'Testes', 2: 'Breast', 3: 'Red marrow', 4: 'Thyroid', 5: 'Bone surface', 6: 'Stomach', 7: 'Small intestine',
+                   8: 'Upper large intestine', 9: 'Lower large intestine', 10: 'Liver', 11: 'Kidneys', 12: 'Spleen', 13: 'Pancreas', 14: 'Adrenals',
+                   15: 'Skin', 16: 'Bladder', 17: 'Thymus', 18: 'Uterus', 19: 'Remainder', 20: 'Brain', 23: 'Muscle', 32: 'ET', 33: 'Lung', 34: 'Colon', 35: 'E'}
+ICRPDOSE_TIMES = ['1 d', '7 d', '30 d', '1 y', '5 y', '10 y', '20 y', '30 y', '45 y', '50 y or to the age of 70']
+
+
+def icrpdose(folder):
+    import re
+    rows = []
+    for fn in sorted(os.listdir(folder)):
+        m = re.match(r'^([A-Z]+)-(\d+)(M?)([LS]?)$', fn)
+        if not m:
+            continue
+        el, mass, meta, pair = m.groups()
+        name = el[0] + el[1:].lower() + '-' + mass + meta.lower() + pair  # an isomer pair's files keep L or S (long, short lived)
+        with open(os.path.join(folder, fn), 'rb') as f:
+            b = f.read()
+        off = 0
+        while off + 4 <= len(b):
+            n = struct.unpack_from('<i', b, off)[0]
+            rec = b[off + 4: off + 4 + n]
+            off += 8 + n
+            cls, form = rec[8:10].decode('latin-1'), rec[10:12].decode('latin-1').strip()
+            if not form or cls not in ICRPDOSE_CLASS:
+                continue
+            k, f1, count = struct.unpack_from('<ifi', rec, 12)
+            lengths = struct.unpack_from(f'<{count}i', rec, 24)
+            total = struct.unpack_from('<i', rec, 24 + 4 * count)[0]
+            values = struct.unpack_from(f'<{total}f', rec, 28 + 4 * count)
+            if total != sum(lengths) or 28 + 4 * count + 4 * total != len(rec) or count % 36:
+                raise ValueError(f'{fn}: a record of {cls} {form} does not parse')
+            block = 6 if k in (1, 2, 3) else 0  # 1 um
+            start = sum(lengths[:36 * block])
+            H = {}
+            for i in range(36):
+                series = values[start: start + lengths[36 * block + i]]
+                start += lengths[36 * block + i]
+                if i in ICRPDOSE_SERIES:
+                    H[ICRPDOSE_SERIES[i]] = [float(f'{v:.7g}') for v in series]
+            rows.append({'nuclide': name, 'age': ICRPDOSE_CLASS[cls], 'route': 'ingestion' if k == 0 else 'inhalation' if k in (1, 2, 3) else 'gas',
+                         'type': 'FMS'[k - 1] if k in (1, 2, 3) else None, 'f1': round(float(f1), 7), 'H': H})
+    return rows
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--mdb', default=DEFAULT_MDB)
@@ -350,6 +413,7 @@ def main():
     ap.add_argument('--icrp119', default=DEFAULT_119)
     ap.add_argument('--fgr15', default=DEFAULT_FGR15)
     ap.add_argument('--fgr12', default=DEFAULT_FGR12)
+    ap.add_argument('--icrpdose', default=DEFAULT_ICRPDOSE)
     a = ap.parse_args()
     os.makedirs(LOCAL, exist_ok=True)
     wrote = 0
@@ -407,6 +471,15 @@ def main():
         wrote += 1
     else:
         print(f'no {a.fgr12}: local/fgr12.json not written', file=sys.stderr)
+    if a.icrpdose and os.path.isdir(a.icrpdose):
+        rows = icrpdose(a.icrpdose)
+        with open(os.path.join(LOCAL, 'icrpdose.json'), 'w', encoding='utf-8') as f:
+            json.dump({'source': 'ICRP Database of Dose Coefficients: Workers and Members of the Public (ICRPDOSE), DATA files',
+                       'units': 'Sv per Bq, integrated to each time', 'times': ICRPDOSE_TIMES, 'rows': rows}, f)
+        print(f'local/icrpdose.json: {len(rows)} cases of {len({r["nuclide"] for r in rows})} nuclides from {a.icrpdose}')
+        wrote += 1
+    else:
+        print(f'no {a.icrpdose}: local/icrpdose.json not written', file=sys.stderr)
     return 0 if wrote else 1
 
 

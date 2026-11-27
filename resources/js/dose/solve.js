@@ -72,6 +72,23 @@
   41Ca at 3 months was 0.1 % below the annex; switched at 1 year of age, the
   long-lived calcium, polonium and zinc agree with it too.
 
+  The ICRP 60 system in steps (dose.hold). The coefficients of Publications
+  67 to 72 are those of NRPB's program PLEIADES (Fell, Phipps and Smith,
+  Radiat. Prot. Dosim. 124, 327-338, 2007), which "breaks up age-dependent
+  calculations into intervals within which the SEE is regarded as fixed", at
+  "the age at the start of the interval", interpolates the transfer rates
+  anew at each step, and takes steps "ranging from nine days in the first
+  year of life to half a year during adolescence"; from adulthood on (20 or
+  25 years by the model) nothing changes. The lengths are read off the ICRP's
+  database of dose coefficients, whose doses to 1, 7 and 30 days, 1 year, 5
+  years ... have seven figures: steps from the intake, 9 days long while one
+  starts before 1 year of age, 40 days from 1 to 5 years, 50 days from 5 to
+  15 years and 180 days after that (dose60.js HOLD_60; README). Here each
+  step is a stretch of its own: the rates and the weights of the phantoms
+  are those of the age at its start, so the integrals above are exact for
+  what PLEIADES does. Without dose.hold (DCAL's way) rates and SEE follow
+  the age continuously.
+
   With a step, each dose group carries one integral, its transformations,
   and a dose grows over a step by the step's own S times the transformations
   in it -- exact for the held S, whatever the activity does within the step.
@@ -206,6 +223,29 @@ export function integrate(sys, dose, opt) {
   const decays = sys.decays.map((d) => ({ from: d.from, to: d.to, k: lambda[sys.comps[d.to].member] * d.b }));
   const rateAt = (x, age) => (x.ages ? lerp(x.ages, x.rates, age) : x.rates[0]);
 
+  /* dose.hold (ICRP 60): [[age bound, step], ...], days -- the step that
+     starts at an age below the bound has that length, the last entry's from
+     its bound on. The starts of the steps, days after the intake, until
+     nothing changes with age any more: the last phantom's age and the last
+     age of any rate table. */
+  let holdStarts = null;
+  if (!icrp103 && dose.hold && pa.length > 1) {
+    const lastAge = Math.max(pa[pa.length - 1], ...tr.map((x) => (x.ages ? x.ages[x.ages.length - 1] : 0)));
+    const lengthAt = (age) => (dose.hold.find(([bound]) => age < bound) || dose.hold[dose.hold.length - 1])[1];
+    if (a0 < lastAge) {
+      holdStarts = [0];
+      for (let t = 0; a0 + t < lastAge;) { t += lengthAt(a0 + t); holdStarts.push(t); }
+    }
+  }
+  // The age held at a time: that of the start of its step (the last start, once all is constant).
+  const heldAgeAt = (t) => {
+    let lo = 0, hi = holdStarts.length - 1;
+    if (t >= holdStarts[hi]) return a0 + holdStarts[hi];
+    while (hi - lo > 1) { const m = (lo + hi) >> 1; if (holdStarts[m] <= t) lo = m; else hi = m; }
+    return a0 + holdStarts[lo];
+  };
+  let heldNow = NaN; // dose.hold: the age the current stretch holds
+
   /* --- the dose groups ------------------------------------------------------ */
   // The compartments of a reported group that share their SEE: by the column
   // array itself, so a caller that gives each compartment its own copy gets
@@ -320,6 +360,7 @@ export function integrate(sys, dose, opt) {
       B[0] = v * v * v; B[1] = 3 * u * v * v; B[2] = 3 * u * u * v; B[3] = u * u * u;
       return;
     }
+    if (heldNow === heldNow) age = heldNow;
     let w = stretch.mode === 'first' ? (dcal ? dcalWeight(age, 0) : firstYearWeight(age))
       : stretch.mode === 'dcal' ? dcalWeight(age, 1)
       : stretch.h > 0 ? (age - pa[stretch.kp]) / stretch.h : 0;
@@ -471,7 +512,7 @@ export function integrate(sys, dose, opt) {
     cachedT = t;
     vals.fill(0);
     const age = a0 + t;
-    const rateAge = !stepped ? age : heldAge === heldAge ? heldAge : Math.max(a0, age - lagAt(t));
+    const rateAge = heldNow === heldNow ? heldNow : !stepped ? age : heldAge === heldAge ? heldAge : Math.max(a0, age - lagAt(t));
     for (let c = 0; c < n; c++) vals[c] = -lambda[sys.comps[c].member]; // diagonal slots come first
     for (let k = 0; k < tr.length; k++) {
       const r = rateAt(tr[k], rateAge);
@@ -520,6 +561,7 @@ export function integrate(sys, dose, opt) {
     if (last > 0 && a0 < pa[last]) kLast = stepCeil(pa[last] - a0);
   } else {
     for (const x of tr) if (x.ages) x.ages.forEach(addKink);
+    if (holdStarts) for (const t of holdStarts) if (t > 0 && t < tEnd) kinks.add(t);
     pa.forEach(addKink);
   }
   const breaks = [...kinks].sort((p, q) => p - q);
@@ -595,7 +637,7 @@ export function integrate(sys, dose, opt) {
       stats.segments++;
       continue;
     }
-    setStretch(a0 + (t0 + t1) / 2);
+    if (holdStarts) { heldNow = heldAgeAt(t0 + 1e-9 * (t1 - t0)); setStretch(heldNow); } else setStretch(a0 + (t0 + t1) / 2);
     if (K) setShares();
     if (K && s === 0) ratesAt(0, y, series[0].rates);
     cachedT = NaN; // the same time in a new stretch is another matrix

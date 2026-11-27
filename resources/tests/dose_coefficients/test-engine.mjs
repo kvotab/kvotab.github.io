@@ -38,7 +38,8 @@ const SYSTEM = args.includes('--system') ? args[args.indexOf('--system') + 1] : 
 const ONLY = args.includes('--only') ? new RegExp(args[args.indexOf('--only') + 1]) : null;
 
 const { loadSystem } = await import(path.join(JS, 'data.js'));
-const { coefficients60, AGES_60 } = await import(path.join(JS, 'dose60.js'));
+const { coefficients60, AGES_60, TISSUES_60 } = await import(path.join(JS, 'dose60.js'));
+const { TARGETS_60: TARGETS_60_ALL } = await import(path.join(JS, 'see60.js'));
 const { parentModelName, f1FileName, recipe60, assemble60 } = await import(path.join(JS, 'model60.js'));
 const { coefficients103, AGES_103 } = await import(path.join(JS, 'dose103.js'));
 const { emissionWeights, sAllRows, pchipSlopes, pchipEval, pchipIntegral, spectrumLines, MEV } = await import(path.join(JS, 'see103.js'));
@@ -1158,6 +1159,33 @@ if (!SYSTEM || SYSTEM === '103') {
     !off.length && Math.max(...far) > 0.02, off.join('; '));
 }
 
+/* ---- the steps of an age-dependent calculation (ICRP 60; solve.js dose.hold, dose60.js HOLD_60) ---- */
+// 36Cl swallowed at 5 years: all of it that reaches a soft tissue is in blood
+// or the body tissues, so the muscle's dose per transformation there is the
+// SEE of the whole body. Within the first step of 50 days it is that of the
+// 5-year-old; in the second that of 5 years and 50 days, 50/1825 of the way
+// to the 10-year-old's (the SEE of a pure beta emitter from the whole body
+// goes as 1 over its mass). With dcal the SEE follows the age all the time.
+{
+  const { HOLD_60 } = await import(path.join(JS, 'dose60.js'));
+  await d60.prepare('Cl-36');
+  const spec = recipe60(d60.cases, 'ingestion', { nuclide: 'Cl-36' });
+  const per = (opt) => {
+    const r = coefficients60(d60, spec, [1825], { outputs: [30, 50, 100], ...opt })[0];
+    const n = r.system.comps.length, nU = r.transformations.length, mu = n + TARGETS_60_ALL.indexOf('Muscle');
+    const sys = r.transformations.map((x, g) => (x.region === 'Blood' || x.region === 'Body_Tis' ? g : -1)).filter((g) => g >= 0);
+    const at = (t) => { const y = r.series.find((p) => Math.abs(p.t - t) < 1e-9).y; const u0 = y.length - nU; return [y[mu], sys.reduce((a, g) => a + y[u0 + g], 0)]; };
+    const [d30, u30] = at(30), [d50, u50] = at(50), [d100, u100] = at(100);
+    return [d30 / u30, d50 / u50, (d100 - d50) / (u100 - u50)];
+  };
+  const m5 = d60.saf.phantoms.A05.masses.sources.Body_Tis, m10 = d60.saf.phantoms.A10.masses.sources.Body_Tis;
+  const want = ((1 - 50 / 1825) / m5 + (50 / 1825) / m10) * m5;
+  const held = per({}), cont = per({ dcal: true });
+  check('ICRP 60 in steps: 36Cl at 5 years, the muscle\'s dose per transformation in the body the same to 30 and to 50 days, and in the second step that of 5 years and 50 days; with dcal it falls all the time',
+    JSON.stringify(HOLD_60) === JSON.stringify([[365, 9], [1825, 40], [5475, 50], [Infinity, 180]]) && near(held[0], held[1], 1e-7) && near(held[2] / held[1], want, 1e-6)
+    && cont[1] < cont[0] * (1 - 1e-4) && cont[2] / cont[1] < want, `${held.join(' ')} want ${want}; dcal ${cont.join(' ')}`);
+}
+
 /* ---- Other and BT-Soft to the bone surface and red marrow (ICRP 60, see60.js) ---------- */
 // As DCAL's SEECAL has it (SR90HT.SEE, AM241HT.SEE, FE55HT.SEE): from Other
 // a named region gets no electrons or alphas and every other target 1/M_Other,
@@ -1364,6 +1392,50 @@ if (!SYSTEM || SYSTEM === '60') {
       }
     }
     check(`ICRP 60 photons between the tabulated energies: ${xr.map(([r, n, t]) => `${n}${t ? ` ${t}` : ' ingested'}`).join(', ')} -- e and the organ that hangs on them within 3.5 % of ICRP 72 at every age`, !offX.length, offX.join('; '));
+  }
+  // The ICRP's database of dose coefficients (local/icrpdose.json): each
+  // tissue's dose integrated to 1, 7 and 30 days, 1, 5, 10 ... years, to the
+  // seven figures of a 4-byte real.
+  const cd = local('icrpdose.json');
+  if (!cd) console.log('skip  ICRP 60 vs the ICRP database: no local/icrpdose.json (make-local-fixtures.py --icrpdose)');
+  else {
+    const TIMES = [1, 7, 30, 365, 1825, 3650, 7300, 10950, 16425];
+    // this page over the database at each stored time, for a tissue of an intake by ingestion
+    const over = async (nuclide, age, tissue, opt = {}) => {
+      const c = cd.rows.find((x) => x.nuclide === nuclide && x.route === 'ingestion' && x.age === age);
+      await d60.prepare(nuclide);
+      const r = coefficients60(d60, recipe60(d60.cases, 'ingestion', { nuclide }), [age], { outputs: TIMES, ...opt })[0];
+      const n = r.system.comps.length;
+      return c.H[tissue].map((v, i) => { const p = r.series.find((x) => Math.abs(x.t - TIMES[i]) < 1e-6);
+        return (p ? TISSUES_60[tissue].reduce((u, [t, w]) => u + w * p.y[n + TARGETS_60_ALL.indexOf(t)], 0) : r.H[tissue]) / v; });
+    };
+    // The steps (HOLD_60). Pure beta emitters spread through the body, with
+    // models that do not change with age: the muscle's dose over the
+    // database's, relative to the first day, follows the adult's in time when
+    // the steps are right, whatever constant the nuclide carries. In 1e-5.
+    const tol = { 100: 150, 365: 30, 1825: 5, 3650: 10, 5475: 10 };
+    const worst = {}, worstDcal = {};
+    for (const nuclide of ['Cl-36', 'Rb-87', 'S-35', 'P-33']) {
+      const adult = await over(nuclide, 7300, 'Muscle');
+      for (const age of [100, 365, 1825, 3650, 5475]) for (const [opt, into] of [[{}, worst], [{ dcal: true }, worstDcal]]) {
+        const r = await over(nuclide, age, 'Muscle', opt);
+        for (let i = 1; i < Math.min(r.length, adult.length); i++) into[age] = Math.max(into[age] || 0, Math.abs(1e5 * Math.log((r[i] / r[0]) / (adult[i] / adult[0]))));
+      }
+    }
+    check(`ICRP 60 in steps vs the ICRP database: 36Cl, 87Rb, 35S and 33P swallowed, the muscle's dose in time as the adult's -- off by at most ${[100, 365, 1825, 3650, 5475].map((a) => `${worst[a].toFixed(0)}`).join(', ')} in 1e-5 at 3 months, 1, 5, 10 and 15 years (${[100, 365, 1825, 3650, 5475].map((a) => worstDcal[a].toFixed(0)).join(', ')} without steps)`,
+      Object.entries(tol).every(([a, t]) => worst[a] <= t && worstDcal[a] > 150), JSON.stringify({ worst, worstDcal }));
+    // The rates held too: caesium's change with age, and at 10 years the
+    // muscle's dose follows the database to 1e-4 at every time (0.5 % off by
+    // a year with the rates following the age and the SEE alone in steps).
+    const cs = await over('Cs-137', 3650, 'Muscle');
+    check(`ICRP 60 in steps vs the ICRP database: 137Cs at 10 years, the muscle to 1 d, 7 d, 30 d and 1 y level within 1e-4 (${cs.map((x) => (x / cs[0]).toFixed(5)).join(', ')})`,
+      cs.every((x) => Math.abs(x / cs[0] - 1) < 1e-4), cs.join(' '));
+    // And the doses themselves, at every age and time.
+    const offD = [];
+    for (const [nuclide, tissue, lim] of [['Co-60', 'Liver', 1.5e-3], ['Co-60', 'Muscle', 1.5e-3], ['I-131', 'Thyroid', 1.5e-3], ['Sr-90', 'Red marrow', 3.5e-3], ['Pu-239', 'Bone surface', 2.5e-3]]) {
+      for (const age of AGES_60) { const r = await over(nuclide, age, tissue); const far = r.reduce((m, x) => (Math.abs(x - 1) > Math.abs(m - 1) ? x : m), 1); if (Math.abs(far - 1) > lim) offD.push(`${nuclide} ${tissue} ${age} d ${far.toFixed(4)}`); }
+    }
+    check('ICRP 60 vs the ICRP database, every age and every time to which it integrates: 60Co liver and muscle and 131I thyroid within 0.15 %, 239Pu bone surface 0.25 %, 90Sr red marrow 0.35 %', !offD.length, offD.join('; '));
   }
 }
 
