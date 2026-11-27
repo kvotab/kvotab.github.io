@@ -28,6 +28,7 @@
 import { assemble60 } from './model60.js';
 import { phantom60, TARGETS_60 } from './see60.js';
 import { integrate } from './solve.js';
+import { Z as ATOMIC } from './catalog.js';
 
 export const AGES_60 = [100, 365, 1825, 3650, 5475, 7300];
 export const AGE_LABELS = { 100: '3 months', 365: '1 year', 1825: '5 years', 3650: '10 years', 5475: '15 years', 7300: 'Adult', 9125: 'Adult' };
@@ -181,7 +182,9 @@ export function coefficients60(data, spec, ages = AGES_60, opt = {}) {
     const seeOf = sys.members.map((m, j) => {
       const em = data.emissions(m.name);
       const A = Number(/-(\d+)/.exec(m.name)[1]);
-      return phantoms.map((ph) => ph.see(em, A, regionsOf[j], common));
+      // The atomic number, for spontaneous fission (see60.js).
+      const Z = ATOMIC[/^([A-Z][a-z]?)-/.exec(m.name)[1]];
+      return phantoms.map((ph) => ph.see(em, A, regionsOf[j], common, TARGETS_60, { Z }));
     });
     // Per member and phantom: how its Other activity divides among the regions.
     const otherSplit = sys.members.map((m, j) => phantoms.map((ph) => otherShares(j, sys.members, targets[j], ph.masses.sources)));

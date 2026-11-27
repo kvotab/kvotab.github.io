@@ -2294,3 +2294,84 @@ Still open: 228Ra and 224Ra, 223Ra, radon, 85Y, 85mY and 87Y swallowed,
 
 Still open: 228Ra, 224Ra and 223Ra, radon, 85Y, 85mY and 87Y swallowed,
 81Sr, 133Ba at 1 year, the inhaled offsets by age, the pelvic organs above.
+
+## Spontaneous fission in the ICRP 60 system (2026-11-27)
+
+The ICRP 60 system had no spontaneous fission; SEECAL's manual of 1993 says
+SEECAL leaves it out. SEECAL 8.4, DCAL's of 2006, counts it: its routine
+SponFiss and the SEE routine after it, read from the program and checked
+against SEECAL's own tables ("full table" splits the SEE by radiation, "low-hi
+let" by LET), with the fission records of a copy of DCAL's decay data set to
+0 and 1 neutrons to part the neutrons from the rest. Per fission, with Z and
+A the nuclide's, nu the record's and X = 92 A/236 + 5.98 - Z:
+
+- fragments: 2 x (0.0698 Z^2/A^(1/3) - 10.988) MeV, absorbed as alphas are,
+  wR 20 (168.70 MeV for 238U to 191.39 for 248Cf in SEECAL's tables, all
+  within 0.04 MeV of the formula);
+- neutrons: nu x (0.75 + 0.65 sqrt(1 + nu)) MeV, Terrell's mean energy, wR
+  10, spread as photons of 0.03, 0.05 and 1 MeV in the proportions 5.37 :
+  6.94 : 1.81 (the SEE is nu x E x sum c E_k SAF(E_k));
+- prompt gammas: SEECAL's 42 lines, 8.636 photons, 7.65 MeV; delayed gammas:
+  its 28 lines, 7.22 MeV, times 0.02796 X^2 (1 at X = 5.98);
+- betas: X of 0.2058 X MeV, absorbed as electrons (over 0.2 MeV in bone);
+- the photon SAF of these lines linear in energy, above 4 MeV the line
+  through the 2 and 4 MeV values, none under 10 keV or below zero, at most
+  1/mass of the target;
+- from the red marrow, Other and BT-Soft into the marrow and bone surface
+  the fragments go through SEECAL's alpha routine, which adds a recoil:
+  4.0026/(A - 4) more.
+
+The page's SEE is then SEECAL's to its four figures in every pair of seven
+fissioners' ingestion sources (2,000-3,000 pairs each), but where SEECAL
+slips, and the doses of DCAL's runs to 0.5 % in every organ when the slip is
+copied.
+
+**SEECAL 8.4 slips twice, ICRP 72 does neither.**
+
+- SEECAL's routine for alpha and electron fractions takes its yield from the
+  variable that holds the yield of fissions, and the fission routine, for a
+  bone region, the red marrow, Other or BT-Soft as source and the red marrow
+  or bone surface as target, puts the yield of betas there. From that first
+  pair on -- sources in the order of the request file, which is the order
+  the model lists them, targets in SEECAL's -- the fission photons count X
+  times (4.7-7.4). Californium's model lists the liver after the bone
+  surfaces, plutonium's before them: DCAL's doses to organs holding little
+  250Cf, 252Cf or 254Cf come out 18-36 % above ICRP 72's, 244Pu's within 4 %.
+  Without the slip, 250Cf's kidneys, muscle, brain, thyroid and lungs are
+  0.97-1.03 of ICRP 72; with it 1.07-1.25.
+- From the airway layers (ET, BB and bb to their basal and secretory cells)
+  SEECAL gives the fragments the electron fraction, at the beta energy, of
+  the pair whose fraction it looked up before (DCAL's AF_ELEC.LNG filled with
+  0.5, E/10 and (E/10)^2 gives 0.5, Eb/10 and about Eb^2/100; zeroing
+  AF_ALPHA.LNG changes nothing). ICRP 72's lungs and ET for the strong
+  fissioners are those of the alpha fractions of 2.5 MeV: of their e, lung
+  and ET values 114 of 126 round to ICRP 72's two figures at 2.5 MeV, 50 at
+  2.4, 58 at 2.6; DCAL's own 252Cf Type M has lungs 0.92-0.94 and
+  ET 0.82-0.84 of ICRP 72. 2.5 MeV is a point of ICRP 66's table.
+
+Against ICRP 72's database, all of DCAL's batch: e rounding to its two
+figures 73.0 → 73.4 %, organ doses 71.1 → 71.5 %. 48 cases move, 244Pu most
+(e 0-2 → 5-6 of 6 by every route, organ doses 5-31 → 133-144 of 156), then
+250Cf (organ doses 8-22 → 135-139) and the chains through a fissioner (246Cm,
+254Es, 248Cf, 258Md, 250Bk, 254Fm, 238U); seven values at rounding edges go
+the other way (moves of 0.1-0.8 %). The four ICRP 72 lists that DCAL's
+batch files leave out (FGR 13 names 248Cm, 250Cm, 252Cf and 254Cf, with
+244Pu, as not addressed), run with their element's cases (246Cm's, 250Cf's):
+e, lungs, ET, bone surface, liver, kidneys, brain and muscle within 5 % of
+ICRP 72 by ingestion and every type it gives, 196 of 216 of their e, lung
+and ET values rounding. They are not in
+the page's list.
+
+**Red marrow to bone surface: the alpha recoil counts** (see60.js). FGR 13
+(appendix B) leaves recoils out for sources in bone surface or volume only;
+SEECAL counts them from the red marrow: 244Pu's SEE there 1.016 times what
+it was.
+
+Tests: SponFiss's numbers for 254Cf; 244Pu's SEE against DCAL's four
+figures in six pairs; with local/icrp72.json, 244Pu swallowed and 250Cf
+Type M within 5 % in organs that hold little of them, 254Cf and 252Cf Type M
+and 248Cm Type S (with their element's cases) within 5 % in e, lungs and ET.
+
+Left open: Other to bone surface and red marrow where the red marrow is
+named (the page's equation (9) gives below zero for alphas, SEECAL about the
+soft tissue's; four thousandths of the bone surfaces' own and less).

@@ -1071,6 +1071,29 @@ if (!SYSTEM || SYSTEM === '103') {
     bi.f1 === 'BI' && bi.f1cap === 'PB$S' && po.f1 === 'PO$S' && !po.f1cap, `Bi ${bi.f1}/${bi.f1cap} Po ${po.f1}/${po.f1cap}`);
 }
 
+/* ---- spontaneous fission (ICRP 60; SEECAL 8.4's SponFiss, see60.js) ---------------------- */
+// What a fission gives off, and the SEE of 244Pu against DCAL's own
+// (Pu244HT.SEE, adult male, Sv per transformation) for pairs before SEECAL's
+// photon slip (README): the liver's kidneys and brain take nothing but
+// fission's photons and neutrons. Red marrow to bone surface counts the
+// alpha recoil, as SEECAL does (FGR 13 leaves recoils out from bone only).
+{
+  const { phantom60, TARGETS_60, fission60 } = await import(path.join(JS, 'see60.js'));
+  const f = fission60(3.89, 98, 254);
+  check('ICRP 60 fission as SponFiss has it: 254Cf gives 2 fragments of 94.86 MeV, 3.89 neutrons of 2.187 MeV, 7.00 beta decays of 1.440 MeV and 1.369 times the delayed gammas',
+    near(f.fragment, 189.7267, 1e-5) && near(f.neutron, 8.50886, 1e-5) && near(f.X, 6.99695, 1e-5) && near(f.beta[0], 1.43997, 1e-5) && near(f.delayed, 1.36885, 1e-5), JSON.stringify(f));
+  await d60.prepare('Pu-244');
+  const srcs = ['St_Cont', 'Liver', 'C_Bone-S', 'R_Marrow'];
+  const explicit = new Set(['Liver', 'C_Bone-S', 'T_Bone-S', 'Kidneys', 'Testes', 'Ovaries', 'C_Bone-V', 'R_Marrow', 'T_Bone-V']);
+  const see = phantom60(d60.saf, 'AM').see(d60.emissions('Pu-244'), 244, srcs, explicit, TARGETS_60, { Z: 94 });
+  const at = (s, t) => see[TARGETS_60.indexOf(t)][srcs.indexOf(s)];
+  const dcal = [['Liver', 'Liver', 8.674e-12], ['Liver', 'Kidneys', 3.048e-16], ['Liver', 'Brain', 3.089e-18], ['C_Bone-S', 'Bone_Sur', 3.201e-11],
+    ['R_Marrow', 'Bone_Sur', 5.208e-12], ['St_Cont', 'St_Wall', 3.188e-13]];
+  const off = dcal.filter(([s, t, v]) => !near(at(s, t), v, 6e-4)).map(([s, t, v]) => `${s}->${t} ${at(s, t).toExponential(4)} vs ${v}`);
+  check('ICRP 60 244Pu: SEE as DCAL\'s to its four figures -- liver to liver, kidneys and brain, bone surface from cortical bone and red marrow, stomach wall from contents',
+    !off.length, off.join('; '));
+}
+
 /* ---- the effective dose split by dose group (the Retention tab) ---------------------------- */
 // The shares of the dose groups add up to e at every output time; at the
 // end to the coefficient itself, radon's (a model per sex) included.
@@ -1197,6 +1220,36 @@ if (!SYSTEM || SYSTEM === '60') {
         for (const k of keys) if (R && Math.abs(r.H[k] / R.H[name72[k]] - 1) > 0.1) off.push(`${k} ${r.age} d ${(r.H[k] / R.H[name72[k]]).toFixed(2)}`);
       }
       check(`ICRP 60 ${nuclide} ${route}${type ? ` Type ${type}` : ''}: ${keys.join(', ')} within 10 % of ICRP 72 at every age${from ? ' from 1 year' : ''}`, !off.length, off.join('; '));
+    }
+    // Spontaneous fission (see60.js). Without it 244Pu's organs were 0.92-0.98
+    // of ICRP 72 and 250Cf's (Type M) kidneys 0.12-0.39, its brain 0.20-0.53.
+    // The strong fissioners ICRP 72 lists and DCAL's batch files leave out run
+    // here with their element's cases: their lungs and ET hang on the
+    // fragments taking the absorbed fractions of 2.5 MeV alphas in the
+    // respiratory tract (254Cf's lungs 0.65-0.75 of ICRP 72 at 2 MeV, about
+    // twice ICRP 72's at 4 MeV); within 5 %, the size of ICRP 72's two figures.
+    const fis = [
+      ['ingestion', 'Pu-244', null, ['Liver', 'Bone surface', 'Kidneys', 'Muscle', 'Brain'], 0.05],
+      ['inhalation', 'Cf-250', 'M', ['Kidneys', 'Muscle', 'Brain', 'Thyroid'], 0.05],
+      ['inhalation', 'Cf-254', 'M', ['E', 'Lung', 'ET'], 0.05],
+      ['inhalation', 'Cf-252', 'M', ['E', 'Lung', 'ET'], 0.05],
+      ['inhalation', 'Cm-248', 'S', ['E', 'Lung', 'ET'], 0.05],
+    ];
+    const like = { 'Cf-254': 'Cf-250', 'Cf-252': 'Cf-250', 'Cm-248': 'Cm-246' };
+    const N72 = { Liver: 'Liver', 'Bone surface': 'Bone Surface', Kidneys: 'Kidneys', Muscle: 'Muscle', Brain: 'Brain', Thyroid: 'Thyroid', Lung: 'Lungs', ET: 'ET' };
+    for (const [route, nuclide, type, keys, tol] of fis) {
+      await d60.prepare(nuclide);
+      const cases = like[nuclide] ? { [route]: d60.cases[route].filter((c) => c.nuclide === like[nuclide]).map((c) => ({ ...c, nuclide })) } : d60.cases;
+      const res = coefficients60(d60, recipe60(cases, route, { nuclide, bio: null, f1file: null, type: type ?? undefined }), AGES_60);
+      const off = [];
+      for (const r of res) {
+        const R = ref.find((x) => x.route === route && x.nuclide === nuclide && x.age === r.age && (!type || x.type === type));
+        for (const k of keys) {
+          const q = k === 'E' ? r.E / R.H.E : r.H[k] / R.H[N72[k]];
+          if (Math.abs(q - 1) > tol) off.push(`${k} ${r.age} d ${q.toFixed(3)}`);
+        }
+      }
+      check(`ICRP 60 fission, ${nuclide} ${route}${type ? ` Type ${type}` : ''}: ${keys.join(', ')} within ${tol * 100} % of ICRP 72 at every age`, !off.length, off.join('; '));
     }
   }
 }
