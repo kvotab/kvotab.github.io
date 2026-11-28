@@ -306,8 +306,10 @@ export function assemble60(data, spec) {
       if (rates.every((r) => r === 0)) { comp(j, from); if (!isSink(to)) comp(j, to); continue; }
       addTransfer(j, from, to, sys.ages, rates, 'systemic');
     }
-    // Urinary bladder.
-    for (const [from, to, rates] of bladder.transfers) addTransfer(j, from, to, bladder.ages, rates, 'bladder');
+    // Urinary bladder: ICRP 67's emptying rates by age, unless the element's
+    // model has its own (iron's, 12 d-1 at every age: FE_I72).
+    const ownBladder = sys.transfers.some(([from, to]) => from === 'UB_Cont' && to === 'Urine');
+    if (!ownBladder) for (const [from, to, rates] of bladder.transfers) addTransfer(j, from, to, bladder.ages, rates, 'bladder');
   });
 
   /* Ingrowth, and the compartments a daughter is born in. */

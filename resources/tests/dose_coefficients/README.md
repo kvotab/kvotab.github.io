@@ -3942,3 +3942,105 @@ against the database three alpha emitters at the six ages, the 3-month
 alveolar region with and without the newborn's fourth figure; and the
 airways' parts check with the bronchi's limits a third of what they were
 (345 checks).
+
+## Iron: how it leaves the body (2026-11-28, night)
+
+After an intake at 3 months every tissue's dose from 55Fe was 1.2-1.9 %
+below the ICRP's database from a year on. Three things about iron's
+excretion in the database, none of them in DCAL's Fe.DEF, came out of it.
+
+**1. The bladder empties at the adult's rate.** Page over database, the
+bladder wall after 55Fe is swallowed, on the first day:
+
+    3 months 0.792    1 year 0.857    5 years 0.9998    adult 0.9998
+
+The wall's dose less the muscle's is what the urine in the bladder gives:
+the database has 3.3 times the page's at 3 months and 2.64 times at 1
+year, and ICRP 67's emptying rates are 40, 32 and 12 d-1 at 3 months, 1
+year and from 5 years: 40 / 12 = 3.33, 32 / 12 = 2.67. Iron alone: after
+thirty other nuclides swallowed at 3 months (of Se, Sb, U, Ni, Sr, Pu, Zn,
+Ru, Te, Mo, Ce, Zr, Ba, Pb, Po, Am, Np, H, C, S, P, Ca, Co, Mn, Tc, I,
+Nb, Cf, Th, Ra) the bladder wall's first-day ratio is the muscle's within
+0.1 % with ICRP 67's rates (thorium's and radium's 0.3 and 0.6 % above it,
+in doses that are 0.3-6 % off as a whole that day). FE_I72 carries UB_Cont -> Urine at 12 d-1
+at every age, and model60.js leaves ICRP67.BLD out for a model that has
+its own.
+
+**2. The store's loss goes half to urine, half to faeces.** Fe.DEF's
+"BT-Soft_2 -> Excreta" takes iron out of the body past every tissue. In
+the database the adult's bladder wall and lower large intestine get more
+than that (55Fe, page over database at 1 d, 1 y, 5 y and in the end):
+
+                            Excreta                        half and half
+    muscle                  0.99996 1.00005 1.00024 1.00041   the same
+    bladder wall            0.99982 0.99920 0.99871 0.99877   0.99985 1.00005 1.00024 1.00041
+    lower large intestine   1.00100 1.00012 0.99753 0.99672   1.00100 1.00092 1.00085 1.00087
+    upper large intestine   1.00120 1.00095 1.00079 1.00083   the same
+
+Half of the loss to UB_Cont makes the bladder wall the muscle's ratio to
+1e-5 from a week on; half to LLI_Cont keeps the intestine's wall where it
+was on the first day. All of it to either overshoots (the intestine 1.0050
+with all of it by way of the gut). It is the database's rule for a loss
+whose route the model does not give: "where no guidance has been given in
+these publications a default urinary : faecal excretion ratio of 1 is
+applied" (RPDHLP.chm). The help also has systemic activity lost in the
+faeces enter by the upper large intestine; for this loss the doses say the
+lower: by way of ULI_Cont the upper large intestine's wall would be 1.0010
+of the database's for 60Fe in the adult where the muscle, the bladder wall
+and the lower large intestine are 0.9993 (0.9993 too with LLI_Cont), and
+1.0016-1.0027 after an intake at 3 months.
+
+**3. The store loses less at 3 months.** Neither changes what the body
+keeps. The deficit after an intake at 3 months grew from the second week
+(page over database for the muscle, in the interval): 0.9979 from 7 to 30
+days, 0.9857 from 30 days to 1 year, 0.9843 from 1 to 5 years, 0.985
+after: about 1.2e-4 of the body's iron a day at 3 months, less with age
+and nothing from 1 year on (an intake at 1 year agrees) -- one rate at the
+3-month end of the first year's interpolation. Which one, the tissues
+tell: less iron lost from the red cells to the gut (0.0006 for 7.5e-4
+d-1) would close the muscle and overshoot the liver, spleen and marrow;
+the store's loss, 4.29e-3 d-1 at 3 months in Fe.DEF, at about a seventh
+of that closes all of them alike. Page over database at 1 d, 30 d, 1 y, 5 y and
+in the end (55Fe at 3 months):
+
+                    Fe.DEF's 4.29e-3                          5.63e-4
+    muscle          0.99992 0.99821 0.98738 0.98593 0.98587   0.99997 1.00000 1.00006 1.00024 1.00029
+    liver           1.00083 1.00066 0.99516 0.99105 0.99067   1.00083 1.00077 1.00105 1.00134 1.00133
+    spleen          0.99899 0.99888 0.99248 0.98846 0.98819   0.99899 0.99910 0.99991 1.00037 1.00049
+    red marrow      0.99913 0.99894 0.99182 0.98750 0.98714   0.99913 0.99922 0.99948 0.99953 0.99957
+    LLI             1.00061 1.00002 0.98856 0.98173 0.98101   1.00061 1.00055 1.00038 1.00039 1.00034
+    bladder wall    0.79217 0.99325 0.98539 0.98418 0.98416   1.00010 1.00001 1.00006 1.00024 1.00029
+
+5.63e-4 d-1 is the adult's rate. Rates from 5.6e-4 to 6.3e-4 (the
+15-year-old's 6.25e-4) fit within 0.03 %; with the adult's the muscle's
+ratio in time is the adult's own (0.99996, 0.99999, 1.00005, 1.00024,
+1.00041), and 60Fe's too. What Publication 69's table has there I do not
+know; the doses of the database are those of about 6e-4. The 1-year rate
+(2.59e-3) and the later ones are the file's: intakes at 1, 5, 10 and 15
+years agree in the long run.
+
+Tried and ruled out on the way: the f1 of the first year held at 0.6 (it
+closes a third), the 3-month rates held to 1 year or put at birth (far
+off), another route for the bile's iron.
+
+**Left for iron.** After an intake at 1 year every tissue gets 0.2-0.35 %
+more than in the database between the first week and the first month
+(55Fe's muscle 0.99996 at 7 days, 1.00244 at 30 days, 1.00049 at 1 year;
+59Fe 1.0017 and 1.0012 in the end). Iron only: 63Ni, 60Co, 90Sr, 106Ru and
+65Zn are flat there. Not found.
+
+Seen in passing, at 3 months on the first day (not iron): 226Ra's tissues
+1.06 of the database's and 232Th's 1.003-1.03.
+
+In the whole comparison four nuclides of 760 hardly show: e rounding to
+ICRP 72's two figures 96.5 %, organ doses 95.8 %, as before; Publication
+119's e swallowed 95.0 -> 95.1 %. The effective dose after an intake at 3
+months: 55Fe swallowed 7.53e-9 -> 7.62e-9 Sv/Bq (ICRP 72: 7.6e-9), 60Fe
+7.75e-7 -> 7.87e-7 (7.9e-7), 55Fe breathed in as Type F 4.14e-9 ->
+4.20e-9 (4.2e-9).
+
+Tests: test-engine.mjs has FE_I72 against Fe.DEF (the store's loss in two
+halves at the adult's rate at 3 months, the bladder's own rate, DCAL's
+reading untouched), and against the database the four tissues at 3 months,
+the adult's bladder wall beside its muscle, the lower large intestine and
+the bladder wall's first day at 3 months and 1 year (346 checks).

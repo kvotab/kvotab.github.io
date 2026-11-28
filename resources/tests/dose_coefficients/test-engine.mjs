@@ -1444,17 +1444,35 @@ if (!SYSTEM || SYSTEM === '103') {
 /* ---- iron's other soft tissues (ICRP 60; the FE_I72 model of gen-dose-icrp60.mjs) -------------- */
 // DCAL's Fe.DEF has them in BT-Soft, the body's tissues without the mineral
 // bone, which irradiate the liver, spleen and red marrow that the model
-// names too; the ICRP's coefficients have them in the rest of the body.
+// names too; the ICRP's coefficients have them in the rest of the body. And
+// what the store of the soft tissues loses, which Fe.DEF sends out of the
+// body past every tissue, leaves half by the urinary bladder and half by the
+// lower large intestine, at 3 months at the adult's rate; the bladder
+// empties at 12 d-1 at every age.
 {
   const S = d60.models.systemic;
-  const renamed = S.FE.transfers.map(([a, b, r]) => [a.replace(/^BT-Soft/, 'Other'), b.replace(/^BT-Soft/, 'Other'), r]);
+  const lossOf = (m) => m.transfers.filter(([a, b]) => /_2$/.test(a) && /^(Excreta|UB_Cont|LLI_Cont)$/.test(b));
+  const file = lossOf(S.FE)[0][2];
+  const renamed = S.FE.transfers.filter(([, b]) => b !== 'Excreta').map(([a, b, r]) => [a.replace(/^BT-Soft/, 'Other'), b.replace(/^BT-Soft/, 'Other'), r]);
+  const kept = S.FE_I72.transfers.filter(([a, b]) => !(a === 'Other_2' && /^(UB_Cont|LLI_Cont)$/.test(b)) && a !== 'UB_Cont');
+  const loss = lossOf(S.FE_I72), own = [file[5], ...file.slice(1)].map((r) => r / 2);
   await d60.prepare('Fe-59');
-  const regions = (opt) => [...new Set(assemble60(d60, { ...recipe60(d60.cases, 'ingestion', { nuclide: 'Fe-59' }), intakeAge: 7300, ...opt }).comps.filter((c) => c.member === 0).map((c) => c.region))];
+  const sysOf = (opt, age = 7300) => assemble60(d60, { ...recipe60(d60.cases, 'ingestion', { nuclide: 'Fe-59' }), intakeAge: age, ...opt });
+  const regions = (opt) => [...new Set(sysOf(opt).comps.filter((c) => c.member === 0).map((c) => c.region))];
   const as72 = regions({}), asDcal = regions({ icrp72: false });
+  // the bladder's emptying rate at 3 months: iron's own 12 d-1, ICRP 67's 40 by DCAL's reading
+  const voids = (opt) => { const sys = sysOf(opt, 100); return JSON.stringify(sys.transfers.filter((x) => sys.comps[x.from]?.region === 'UB_Cont').map((x) => x.rates)); };
   check('ICRP 60: iron\'s other soft tissues are the rest of the body (FE_I72: Fe.DEF with BT-Soft read as Other), which gives nothing to the liver, spleen and red marrow',
-    JSON.stringify(S.FE_I72.transfers) === JSON.stringify(renamed) && S.FE.transfers.filter(([a, b]) => /^BT-Soft/.test(a) || /^BT-Soft/.test(b)).length === 5
+    JSON.stringify(kept) === JSON.stringify(renamed) && S.FE.transfers.filter(([a, b]) => /^BT-Soft/.test(a) || /^BT-Soft/.test(b)).length === 5
     && JSON.stringify(S.FE_I72.ages) === JSON.stringify(S.FE.ages) && as72.includes('Other') && !as72.includes('BT-Soft') && asDcal.includes('BT-Soft') && !asDcal.includes('Other'),
     JSON.stringify({ as72, asDcal }));
+  check(`ICRP 60: what iron's soft-tissue store loses leaves half by the urinary bladder and half by the lower large intestine (${loss.map(([a, b]) => `${a} -> ${b}`).join(', ')}), at 3 months at the adult's rate (${2 * loss[0][2][0]} d-1 for Fe.DEF's ${file[0]}); the bladder empties at 12 d-1 at every age`,
+    file[0] === 0.00429 && file[5] === 0.000563 && loss.length === 2 && loss.map(([, b]) => b).sort().join() === 'LLI_Cont,UB_Cont'
+    && loss.every(([, , r]) => r.every((v, i) => Math.abs(v - own[i]) < 1e-15))
+    && JSON.stringify(S.FE_I72.transfers.find(([a]) => a === 'UB_Cont')) === JSON.stringify(['UB_Cont', 'Urine', [12, 12, 12, 12, 12, 12]])
+    && !S.FE.transfers.some(([a]) => a === 'UB_Cont') && lossOf(S.FE).length === 1 && lossOf(S.FE)[0][1] === 'Excreta'
+    && voids({}) === '[[12,12,12,12,12,12]]' && voids({ icrp72: false }) === '[[40,32,12]]',
+    JSON.stringify({ loss, own: voids({}), dcal: voids({ icrp72: false }) }));
 }
 
 /* ---- the mass of the body's tissues (ICRP 60; see60.js BODY_TISSUES_60) ------------------------ */
@@ -1931,14 +1949,28 @@ if (!SYSTEM || SYSTEM === '60') {
     // liver, spleen and red marrow of the adult follow the database at every
     // time within 0.15 % after 55Fe and 59Fe (the spleen 1.23 of it on the
     // first day, the liver 1.03 in the long run, in BT-Soft), 0.3 % at 10
-    // years.
+    // years. With the store's loss at 3 months at the adult's rate they do
+    // so within 0.15 % after an intake at 3 months too (1.2-1.4 % below it
+    // from a year on with Fe.DEF's 4.29e-3 d-1). With that loss half in the
+    // urine and half in the lower large intestine the adult's bladder wall
+    // is the muscle's ratio within 1.2e-4 at every time (1e-5 from a week
+    // on) and the intestine's wall within 0.12 % (0.16 % and 0.43 % behind
+    // out of the body past them); and with the bladder emptying at 12 d-1 its wall gets the
+    // database's dose on the first day at 3 months and 1 year within 0.1 %
+    // (0.79 and 0.86 of it at ICRP 67's 40 and 32 d-1).
     {
-      const fe = { adult: 0, ten: 0 };
+      const fe = { adult: 0, ten: 0, infant: 0, lli: 0, bladder: 0, day1: [] };
       for (const nuclide of ['Fe-55', 'Fe-59']) for (const tissue of ['Muscle', 'Liver', 'Spleen', 'Red marrow']) {
         for (const x of await over(nuclide, 7300, tissue)) fe.adult = Math.max(fe.adult, Math.abs(x - 1));
         for (const x of await over(nuclide, 3650, tissue)) fe.ten = Math.max(fe.ten, Math.abs(x - 1));
+        for (const x of await over(nuclide, 100, tissue)) fe.infant = Math.max(fe.infant, Math.abs(x - 1));
       }
-      check(`ICRP 60 vs the ICRP database, iron: 55Fe and 59Fe, muscle, liver, spleen and red marrow at every time within ${(100 * fe.adult).toFixed(2)} % for the adult and ${(100 * fe.ten).toFixed(2)} % at 10 years`, fe.adult < 0.0015 && fe.ten < 0.003, JSON.stringify(fe));
+      const muscle = await over('Fe-55', 7300, 'Muscle'), bladder = await over('Fe-55', 7300, 'Bladder');
+      bladder.forEach((x, i) => { fe.bladder = Math.max(fe.bladder, Math.abs(x - muscle[i])); });
+      for (const x of await over('Fe-55', 7300, 'Lower large intestine')) fe.lli = Math.max(fe.lli, Math.abs(x - 1));
+      for (const age of [100, 365]) fe.day1.push((await over('Fe-55', age, 'Bladder'))[0]);
+      check(`ICRP 60 vs the ICRP database, iron: 55Fe and 59Fe, muscle, liver, spleen and red marrow at every time within ${(100 * fe.adult).toFixed(2)} % for the adult, ${(100 * fe.ten).toFixed(2)} % at 10 years and ${(100 * fe.infant).toFixed(2)} % at 3 months; the adult's bladder wall after 55Fe within ${(1e5 * fe.bladder).toFixed(0)}e-5 of its muscle at every time, the lower large intestine within ${(100 * fe.lli).toFixed(2)} %; the bladder wall on the first day ${fe.day1.map((x) => x.toFixed(4)).join(' at 3 months and ')} at 1 year`,
+        fe.adult < 0.0015 && fe.ten < 0.003 && fe.infant < 0.0015 && fe.bladder < 2e-4 && fe.lli < 0.0012 && fe.day1.every((x) => Math.abs(x - 1) < 0.001), JSON.stringify(fe));
     }
     // The airways' parts that the database stores, after intakes by
     // inhalation as Type M by the adult. Beta emitters: the alveolar region

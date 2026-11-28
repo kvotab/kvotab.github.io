@@ -322,7 +322,37 @@ function readLng(file) {
   nothing to a named organ: with BT-Soft 55Fe's spleen got 1.23 of the
   database's dose on the first day, the liver 1.03 and the red marrow 1.02
   in the long run and the bone surface 0.98; this way all are within 0.15 %
-  for the adult. FE_I72 is Fe.DEF with BT-Soft read as Other.
+  for the adult. FE_I72 is Fe.DEF with BT-Soft read as Other, and with three
+  things about what leaves the body as the database's doses have them:
+
+  - The iron that the soft tissues' store loses ("BT-Soft_2 -> Excreta" in
+    Fe.DEF, a way out of the body past every tissue) leaves half in the
+    urine and half in the faeces, the database's rule for a loss whose route
+    a model does not give ("a default urinary : faecal excretion ratio of 1
+    is applied"): half to the urinary bladder's contents and half to the
+    contents of the lower large intestine. With Excreta 55Fe's bladder wall
+    fell behind the muscle by 0.16 % in the long run and the lower large
+    intestine by 0.4 % (60Fe's by 0.6 %); this way the adult's bladder wall
+    is the muscle's ratio to 1e-5 at every time and the intestine's stays
+    within 2e-4 of its first day's. (By way of the upper large intestine,
+    where the database's help has systemic activity enter, its wall would be
+    0.2 % above the database's.)
+  - The bladder empties at 12 d-1 at every age, the adult's rate, where the
+    other elements have Publication 67's 40 d-1 at 3 months and 32 at 1 year:
+    on the first day after iron is swallowed the bladder wall got 0.79 of
+    the database's dose at 3 months and 0.86 at 1 year, and gets 1.0007 and
+    1.0003 this way. Iron alone: after thirty other nuclides swallowed at
+    3 months the bladder wall keeps to the muscle's ratio on the first day
+    (within 0.1 %; thorium and radium, off as a whole that day, 0.3-0.6 %).
+  - That store's loss at 3 months is 5.63e-4 d-1, the adult's, where Fe.DEF
+    has 4.29e-3 (and 2.59e-3 at 1 year, 9.23e-4 at 5 and 10, 6.25e-4 at 15).
+    With Fe.DEF's, every tissue's dose after an intake at 3 months fell
+    behind the database's from the second week on, 1.2-1.9 % low from a year
+    on, and by no more than that: a rate too high at 3 months that meets the
+    database's at 1 year. Between 5.6e-4 and 6.3e-4 the doses follow the
+    database's as the adult's do (55Fe's muscle 0.99997, 1.00000, 1.00000,
+    1.00006 and 1.00029 at a day, a month, 1 year, 5 years and in the end;
+    the adult's 0.99996, 0.99999, 1.00005, 1.00024, 1.00041).
 */
 const INSTANT = 1e7; // d-1 out of blood where a model has no time there
 // The kidneys' share of the body's tissues at 3 months (the newborn's), 1, 5, 10 and 15 years and in the adult.
@@ -343,11 +373,25 @@ function nickel67(ni) {
     ageNames: ['3 mo-old', '1 y-old', '5 y-old', '10 y-old', '15 y-old', 'Adult'], transfers, notes: '' };
 }
 
-/* Fe.DEF with its soft-tissue compartments in Other. */
+/* Fe.DEF with its soft-tissue compartments in Other, the store's loss half
+   to the urinary bladder's contents and half to the lower large intestine's,
+   at 3 months at the adult's rate, and the bladder emptying at 12 d-1 at
+   every age (a model's own UB_Cont -> Urine replaces ICRP67.BLD's:
+   model60.js). */
 function iron69(fe) {
   const other = (name) => name.replace(/^BT-Soft/, 'Other');
-  const transfers = fe.transfers.map(([from, to, rates]) => [other(from), other(to), rates]);
-  if (transfers.filter(([from, to]) => /^Other/.test(from) || /^Other/.test(to)).length !== 5) throw new Error('Fe.DEF: five ways into and out of BT-Soft expected');
+  const transfers = [];
+  let lost = 0;
+  for (const [from, to, rates] of fe.transfers) {
+    if (to !== 'Excreta') { transfers.push([other(from), other(to), rates]); continue; }
+    if (fe.ages[0] !== 100 || fe.ages[fe.ages.length - 1] !== 7300 || rates[0] !== 4.29e-3) throw new Error('Fe.DEF: the loss from BT-Soft_2 is not as expected');
+    const own = [rates[rates.length - 1], ...rates.slice(1)]; // at 3 months the adult's
+    transfers.push([other(from), 'UB_Cont', own.map((r) => r / 2)], [other(from), 'LLI_Cont', own.map((r) => r / 2)]);
+    lost++;
+  }
+  if (lost !== 1) throw new Error('Fe.DEF: one loss to Excreta expected');
+  transfers.push(['UB_Cont', 'Urine', fe.ages.map(() => 12)]);
+  if (transfers.filter(([from, to]) => /^Other/.test(from) || /^Other/.test(to)).length !== 6) throw new Error('Fe.DEF: five ways into and out of BT-Soft expected');
   return { title: 'Iron, ICRP 69', text: ['ICRP Publication 69, as used in ICRP Publication 72'], ages: fe.ages, ageNames: fe.ageNames, transfers, notes: '' };
 }
 
