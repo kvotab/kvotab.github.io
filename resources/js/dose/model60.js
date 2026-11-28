@@ -87,6 +87,9 @@ export function parentModelName(models, index, nuclide, route, chosen) {
   throw new Error(`no systemic model for ${nuclide}`);
 }
 
+/** The type of a vapour (V) or a gas (G) as the f1 files name it, else null. */
+export const vapourType = (type) => (/^[VG]$/.test(type || '') ? type : null);
+
 /** Which f1 file: the caller's, then $F1DEF.DAT's for the model, then the inhaled type's, then the element's. */
 export function f1FileName(models, el, route, bioName, type, chosen) {
   if (chosen) return key(chosen);
@@ -225,7 +228,10 @@ export function assemble60(data, spec) {
   const lung = lungName ? models.lung[lungName] : null;
   if (route === 'inhalation' && !lung) throw new Error(`no respiratory tract model ${lungName}`);
   const inhaledType = lung && /^ICRP66[FMS]$/.test(lungName) ? spec.type : null;
-  const parentF1 = f1FileName(models, parentEl, route, parentBio, inhaledType, spec.f1file);
+  // A vapour or a gas has an f1 file of its own where DCAL has one: sulphur's
+  // S$V, 0.8 from 1 year (the element's file, for sulphur swallowed, has 1),
+  // which is what the ICRP's database absorbs of sulphur dioxide breathed in.
+  const parentF1 = f1FileName(models, parentEl, route, parentBio, inhaledType || (lung ? vapourType(spec.type) : null), spec.f1file);
   if (parentF1 && !models.f1[parentF1]) throw new Error(`no f1 file ${parentF1}.GF1`);
   // ICRP 72's actinium and protactinium are ICRP 30's, with ICRP 30's shared
   // kinetics for their progeny; DCAL's batch files run them independently

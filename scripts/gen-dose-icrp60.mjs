@@ -69,14 +69,16 @@ const write = (rel, obj) => {
    Decay data
    ========================================================================== */
 
-/* ICRP 38 tells isomer pairs apart by a and b, in order of half-life, where
-   later publications (ICRP 72 and 119, and ICRP 107) write the ground state
-   plainly and the excited state with m (or n): Eu-150a is the 12.62 h
-   isomer, Eu-150m; Eu-150b the 34.2 y ground state, Eu-150. Two pairs are
-   the other way round in ICRP 38 itself: its Rh-102 (2.9 y) and Ta-180
-   (1.0E13 y) are the excited states that ICRP 72 lists as Rh-102m and
-   Ta-180m. The page uses the later names throughout; the half-lives are
-   ICRP 38's. */
+/* ICRP 38's data file tells isomer pairs apart by a and b, in order of
+   half-life, where ICRP 107, and ICRP 119 after it (its Table 2.3), write
+   the ground state plainly and the excited state with m (or n): Eu-150a is
+   the 12.62 h isomer, Eu-150m; Eu-150b the 34.2 y ground state, Eu-150. Two
+   pairs are the other way round in ICRP 38 itself: its Rh-102 (2.9 y) and
+   Ta-180 (1.0E13 y) are the excited states that ICRP 119 lists as Rh-102m
+   and Ta-180m. The page uses ICRP 119's names throughout; the half-lives
+   are ICRP 38's. ICRP 72 printed ICRP 38's names, a pair under one name
+   with its two half-lives: resources/js/dose/names72.js has what it prints
+   where that is not the page's name. */
 export const RENAME_38 = {
   'Eu-150a': 'Eu-150m', 'Eu-150b': 'Eu-150', 'In-110a': 'In-110m', 'In-110b': 'In-110',
   'Ir-186a': 'Ir-186', 'Ir-186b': 'Ir-186m', 'Ir-192m': 'Ir-192n', 'Nb-89a': 'Nb-89m', 'Nb-89b': 'Nb-89',

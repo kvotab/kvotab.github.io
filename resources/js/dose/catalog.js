@@ -75,7 +75,7 @@ export function catalog60(data) {
     let f1 = null;
     try {
       const bio = parentModelName(models, index, c.nuclide, 'inhalation', c.bio);
-      f1 = adultF1(models, f1FileName(models, el, 'inhalation', bio, /^[FMS]$/.test(c.type) ? c.type : null, c.f1));
+      f1 = adultF1(models, f1FileName(models, el, 'inhalation', bio, /^[FMSVG]$/.test(c.type) ? c.type : null, c.f1));
     } catch { /* gases without an f1 */ }
     const e = entry(c.nuclide);
     const gas = c.lung && !/^ICRP66[FMS]$/.test(c.lung);

@@ -4396,3 +4396,118 @@ colon without 207Tl (355 checks). Tools in ~/Downloads/icrp-dc/icrpcd/chain:
 kin.mjs, ends.mjs, worst.mjs, stopday.mjs, stoprule.mjs, stopq.mjs,
 useq.mjs, diff1.mjs, limits2.mjs; run files r60-kin.json (this state),
 r60-stopA/B/C.json (the stopping test tried, without and with age nodes).
+
+## Isomer names, chemical forms, and sulphur dioxide's f1 (2026-11-28, evening)
+
+The statistics against the ICRP's database still had some forty nuclides
+listed as far off that were not: the database names some isomers
+otherwise than the page, and keeps a chemical form in files of its own.
+Sorted out, one real difference was left among them, and it is in the
+engine now.
+
+**Whose names.** The page's ICRP 60 names are those of Publication 119,
+whose Table 2.3 ("Radionuclides for which Publication 107 identifies
+ground and excited states") gives the states of thirty nuclides the names
+of Publication 107: the ground state plain, the excited states with m and
+n. Publication 72 itself (its Table A.1, read off the user's copy) has
+Publication 38's names, and they differ for 19 nuclides in three ways:
+
+| Publication 72 prints | half-life there | here |
+|---|---|---|
+| Rh-102, Rh-102m | 2.90 y, 207 d | Rh-102m, Rh-102 |
+| Ta-180, Ta-180m | 1.00E13 y, 8.10 h | Ta-180m, Ta-180 |
+| Nb-89 twice | 2.03 h, 1.10 h | Nb-89, Nb-89m |
+| In-110 twice | 4.90 h, 1.15 h | In-110, In-110m |
+| Sb-120 twice | 5.76 d, 0.265 h | Sb-120m, Sb-120 |
+| Sb-128 twice | 9.01 h, 0.173 h | Sb-128, Sb-128m |
+| Eu-150 twice | 34.2 y, 12.6 h | Eu-150, Eu-150m |
+| Tb-156m twice | 1.02 d, 5.00 h | Tb-156m, Tb-156n |
+| Re-182 twice | 2.67 d, 12.7 h | Re-182, Re-182m |
+| Ir-186 twice | 15.8 h, 1.75 h | Ir-186, Ir-186m |
+| Ir-190m twice | 3.10 h, 1.20 h | Ir-190n, Ir-190m |
+| Np-236 twice | 1.15E5 y, 22.5 h | Np-236, Np-236m |
+| Nb-98 | 0.858 h | Nb-98m |
+| Sb-124m | 0.337 h | Sb-124n (the page's Sb-124m is the 93 s state) |
+| Ta-178 | 2.20 h | Ta-178m (the page's Ta-178 is the 9.31 min state) |
+| Ir-192m | 241 y | Ir-192n |
+| Es-250 | 2.10 h | Es-250m |
+
+The database has Publication 72's names, its files ending in L or S (the
+longer and the shorter lived) where a name stands for two states.
+Publication 119 calls that "ad-hoc notations 's' and 'l'". The page keeps
+its names (the user's decision, 2026-11-28: Publication 119's, which are
+the ICRP 103 system's too) and says the other name where it matters:
+
+- `resources/js/dose/names72.js` has the 19 (`NAME_72`, the page's name ->
+  Publication 72's) and `note72`, the sentence for the line under the
+  nuclide: for a swapped pair that the two names are the other way round
+  there, for a name printed otherwise what it is printed as, for a name of
+  two states that the other state has it too, and for a name that is
+  another state's there (Ta-178, Sb-124m) or none's here (Nb-98, Ir-192m,
+  Es-250) which nuclide of the page it is. The ICRP 103 system says
+  nothing.
+- `make-local-fixtures.py` gives each database file the page's name and
+  keeps the database's own beside it (`file`), and its chemical form
+  (`form`). Before that the fixture had the names as the files have them,
+  and the two swapped pairs were compared crosswise.
+
+With the names right, the adult's e after each of the 29 nuclides
+involved that the database has is within 0.15 % of the file so named,
+182Re 0.8 %; the other state of the pair would give 2.2 times it for
+Rh-102 and 16 times for Ta-180. At the other ages they are within 0.2 % too but for 182Re
+(0.8-1.1 % high at every age), 250mEs (2.6-4.1 % high at 1, 5 and 10
+years) and 236mNp (0.5 and 1.0 % at 1 and 5 years); the last two are
+short-lived parents that leave a long-lived alpha emitter, the pattern of
+the database's early stop (the section before this).
+
+**Chemical forms.** A form with files of its own has an element code of
+its own in the database, read off the effective doses of Publication 72's
+Table A.3: Hl tritium gas, Hm tritiated methane, Ot organically bound
+tritium, plain H tritiated water; Cx carbon dioxide, Cy carbon monoxide,
+Cz methane, plain C organic carbon; So organic sulphur, Sx sulphur
+dioxide, plain S inorganic sulphur; Im methyl iodide, plain I iodine; Hi
+inorganic mercury, plain Hg organic mercury. Every case of the page in
+these forms, swallowed or breathed in as gas or vapour, against the row of
+its form at the six ages (names/forms.mjs): e within 0.01 % for tritium,
+carbon-14, organic sulphur and mercury vapour, within 0.2 % for the rest
+and 0.4 % for 129I at 15 years - but for sulphur dioxide:
+
+| S-35 as SO2, page / database | 3 mo | 1 y | 5 y | 10 y | 15 y | adult |
+|---|---|---|---|---|---|---|
+| e, before | 1.0000 | 0.9858 | 0.9864 | 1.0193 | 0.9899 | 0.9906 |
+| muscle, before | 0.9999 | 1.0220 | 1.0220 | 1.0220 | 1.0220 | 1.0220 |
+| lower large intestine, before | 1.0006 | 0.8742 | 0.8722 | 0.8745 | 0.8755 | 0.8768 |
+| e, now | 1.0000 | 1.0001 | 0.9995 | 0.9999 | 0.9998 | 1.0000 |
+| lower large intestine, now | 1.0006 | 1.0008 | 0.9980 | 1.0005 | 0.9997 | 1.0009 |
+
+Right at 3 months, where f1 is 1, and off by the same 2.2 % in every
+tissue of the body from 1 year on with the colon an eighth low: what is
+swallowed out of the airways was absorbed completely, and the database
+absorbs 0.8 of it (its files say so, and so does the muscle: 1.0220 with
+f1 0.99, 0.9883 with 0.7, 1.0000 at 0.80). DCAL's library has the file,
+S$V.gf1 ("f1 values for inhalation of SO2 or CS2": 1 for the infant, 0.8
+from 1 year), and the Radiological Toolbox's ICRP 72 table says 0.8 too;
+the page looked for an f1 file by absorption Type only for particles, and
+a vapour fell through to the element's file, sulphur swallowed, f1 1.
+Carbon disulphide was right all along, $F1DEF.DAT naming organic sulphur's
+file for it. Now `model60.js` looks for the file of a vapour (V) or a gas
+(G) as for a Type; sulphur's are the only such files, so no other case
+moves (all other vapours within 0.1 % before and after), and the list of
+forms shows f1 = 0.8 for the two.
+
+**What the database has and the page has not** (names/gaps.mjs; a test
+keeps the list): 193mIr (11.9 d; not in DCAL's index of Publication 38),
+tritiated methane, carbon's vapour and methane (11C, 14C), and chromium
+swallowed with its second f1 (0.01). No other intake of the database is
+without a case here. The other way round the page has DCAL's absorption
+Types that Publication 72 does not list (559 intakes).
+
+Tests: test-engine.mjs has the table of names against the catalogue and
+the sentences by kind, the f1 of the vapours of sulphur, iodine and
+mercury, and against the database the names (19 differ, those of the
+table), the 29 nuclides' adult e, the forms of ten nuclides at six ages
+and the list of what the page lacks; test-ui.py the line under the
+nuclide in both systems. Tools in ~/Downloads/icrp-dc/icrpcd: match.mjs
+and cdall.mjs (a run file against the database, every case by its form),
+names/probe.mjs, names/forms.mjs, names/so2.mjs, names/gaps.mjs; run
+files r60-names.json (before the f1) and r60-so2.json (this state).

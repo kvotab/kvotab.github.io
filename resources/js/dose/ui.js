@@ -15,6 +15,7 @@ import { radonDoses, radonAssemble, radonJobText, KINDS as RADON_KINDS, MODE_LAB
 import { setupBatch } from './batch.js';
 import { listFolders, removeFolder, MAKE_VERSION } from './decay-store.js';
 import { GEOMETRY, externalForms } from './external.js';
+import { note72 } from './names72.js';
 
 const $ = (id) => document.getElementById(id);
 const h = (tag, attrs = {}, ...kids) => {
@@ -517,10 +518,13 @@ function setupSuggest() {
   list.addEventListener('click', (e) => { const li = e.target.closest('li[data-value]'); if (li) pickSuggest(li.dataset.value); });
 }
 
+/** The name in the field, written as the page writes names (cs137 -> Cs-137). */
+const typedName = () => $('dcNuclide').value.trim().replace(/\s+/g, '').replace(/^([a-z]{1,2})-?(\d+)([a-z]*)$/i, (_, s, a, m) => `${s[0].toUpperCase()}${s.slice(1).toLowerCase()}-${a}${m.toLowerCase()}`);
+
 function findEntry() {
   const cat = currentCatalog();
   if (!cat) return null;
-  const v = $('dcNuclide').value.trim().replace(/\s+/g, '').replace(/^([a-z]{1,2})-?(\d+)([a-z]*)$/i, (_, s, a, m) => `${s[0].toUpperCase()}${s.slice(1).toLowerCase()}-${a}${m.toLowerCase()}`);
+  const v = typedName();
   return cat.nuclides.find((n) => n.name === v) || null;
 }
 
@@ -528,8 +532,10 @@ function nuclideChanged() {
   const e = findEntry();
   state.entry = e;
   const note = $('dcNuclideNote');
+  // The ICRP 60 system has Publication 119's names; Publication 72 printed some otherwise (names72.js).
+  const as72 = (found, listed) => { const t = state.system === '60' ? note72(typedName(), found, listed) : ''; return t ? ` ${t}` : ''; };
   if (!e) {
-    note.textContent = $('dcNuclide').value.trim() ? `Not a radionuclide of ${decayLabel(state.decay, state.system)}, the decay data chosen.` : '';
+    note.textContent = $('dcNuclide').value.trim() ? `Not a radionuclide of ${decayLabel(state.decay, state.system)}, the decay data chosen.${as72(false, false)}` : '';
     $('dcForm').replaceChildren();
     $('dcRun').disabled = true;
     describeSoon();
@@ -538,7 +544,7 @@ function nuclideChanged() {
   const intakes = ['ingestion', 'inhalation', 'injection'].some((r) => e[r]?.length);
   note.textContent = `Half-life ${e.T ? halfLife(e.T) : e.t || '?'}.${intakes ? '' : state.system === '103'
     ? ' External exposure only: the ICRP 103 system has models of intakes for the elements of Publication 158 and the Part 2 and 3 drafts, and nuclides with half-lives of 10 minutes or more.'
-    : ' External exposure only: it is not one of the nuclides of ICRP Publication 72.'}`;
+    : ' External exposure only: it is not one of the nuclides of ICRP Publication 72.'}${as72(true, intakes)}`;
   // Routes this nuclide has.
   for (const r of document.querySelectorAll('input[name="dcRoute"]')) {
     r.disabled = !e[r.value]?.length;
@@ -1846,7 +1852,7 @@ function renderChain() {
     h('thead', {}, h('tr', {}, h('th', {}, 'Member'), h('th', {}, 'Half-life'), h('th', { class: 'text' }, 'Produced from'),
       h('th', {}, 'Alpha, MeV'), h('th', {}, 'Electron, MeV'), h('th', {}, 'Photon, MeV'), h('th', {}, 'Transformations per Bq'), h('th', { class: 'text' }, 'In the body'))),
     h('tbody', {}, members.map((m, j) => h('tr', {},
-      h('td', {}, m.name, m.other ? h('span', { class: 'dc-other-name', 'data-tip': `${decayLabel(s.decay, s.system)} calls this state ${m.other}; the page keeps the ${s.system === '60' ? 'ICRP 38' : 'ICRP 107'} name (Help: “Decay data”)` }, ` (${m.other})`) : null),
+      h('td', {}, m.name, m.other ? h('span', { class: 'dc-other-name', 'data-tip': `${decayLabel(s.decay, s.system)} calls this state ${m.other}; the page keeps ${s.system === '60' ? 'Publication 119’s' : 'ICRP 107’s'} name (Help: “Decay data”)` }, ` (${m.other})`) : null),
       h('td', {}, halfLife(m.T)),
       h('td', { class: 'text' }, parentsOf[j].map(([i, b]) => `${members[i].name} (${b < 0.9999 ? `${+(100 * b).toPrecision(3)} %` : '100 %'})`).join(', ') || '—'),
       ...(m.E || [null, null, null]).map((x) => h('td', {}, mev(x))),
@@ -1911,7 +1917,7 @@ function renderChainExternal(s) {
     h('tbody', {}, chain.map((m, j) => {
       const x = byName.get(m.name);
       return h('tr', {},
-        h('td', {}, m.name, m.other ? h('span', { class: 'dc-other-name', 'data-tip': `${decayLabel(s.decay, s.system)} calls this state ${m.other}; the page keeps the ${s.system === '60' ? 'ICRP 38' : 'ICRP 107'} name (Help: “Decay data”)` }, ` (${m.other})`) : null),
+        h('td', {}, m.name, m.other ? h('span', { class: 'dc-other-name', 'data-tip': `${decayLabel(s.decay, s.system)} calls this state ${m.other}; the page keeps ${s.system === '60' ? 'Publication 119’s' : 'ICRP 107’s'} name (Help: “Decay data”)` }, ` (${m.other})`) : null),
         h('td', {}, halfLife(m.T)),
         h('td', { class: 'text' }, parentsOf[j].map(([i, b]) => `${chain[i].name} (${b < 0.9999 ? `${+(100 * b).toPrecision(3)} %` : '100 %'})`).join(', ') || '—'),
         ...(m.E || [null, null, null]).slice(1).map((v) => h('td', {}, mev(v))),

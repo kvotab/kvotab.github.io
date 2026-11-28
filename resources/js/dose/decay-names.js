@@ -1,8 +1,9 @@
 /*
   The names of the states of other decay data, in a system's own names.
 
-  The page names a radionuclide as its system's decay data do (ICRP 107 in
-  the ICRP 103 system, ICRP 38 in the ICRP 60 one), and its models, forms
+  The page names a radionuclide as its system does (as ICRP 107 in the
+  ICRP 103 system; in the ICRP 60 one ICRP 38's nuclides have the names of
+  Publication 119, which are ICRP 107's: names72.js), and its models, forms
   and cases are listed under those names. Decay data made from a release of
   ENSDF (scripts/gen-dose-ensdf.mjs) name the states as that release
   orders them, and some differ: ENSDF 2026 calls the 2.36 h state of Ta-178

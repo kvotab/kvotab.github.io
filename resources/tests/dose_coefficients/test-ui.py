@@ -795,6 +795,18 @@ async def main():
               bool(got) and 'Pb-210' in got and 'the system (now ICRP 60)' in got and await p.ev("document.querySelectorAll('#dcETable tbody tr').length > 0"))
         await p.ev("(() => { const i = document.getElementById('dcNuclide'); i.value = 'Sr-90'; i.dispatchEvent(new Event('change', { bubbles: true })); })()")
         check('injection is not offered in the ICRP 60 system', await p.ev("document.querySelector('input[name=\"dcRoute\"][value=\"injection\"]').disabled"))
+        # The ICRP 60 system has Publication 119's names; the line under the nuclide says what Publication 72 prints (names72.js).
+        notes = await p.ev("""(() => { const i = document.getElementById('dcNuclide'), out = {};
+          for (const n of ['Rh-102', 'Ta-180m', 'Eu-150m', 'Eu-150', 'ta178', 'Nb-98', 'Sr-90']) { i.value = n; i.dispatchEvent(new Event('change', { bubbles: true }));
+            out[n] = document.getElementById('dcNuclideNote').textContent; }
+          return out; })()""")
+        check('in the ICRP 60 system the line under the nuclide says what Publication 72 calls it: the swapped pairs, a name printed otherwise, a name of two states, a name that is another state’s or none’s there',
+              bool(notes) and [notes['Rh-102'], notes['Ta-180m'][:20], notes['Eu-150m'], notes['Eu-150'], notes['ta178'], notes['Nb-98'], notes['Sr-90']],
+              ['Half-life 207 d. Publication 72 and the ICRP’s database of dose coefficients have the two names the other way round: this is their Rh-102m, and their Rh-102 is Rh-102m here.',
+               notes['Ta-180m'][:20] if 'this is their Ta-180, and their Ta-180m is Ta-180 here.' in notes['Ta-180m'] else None,
+               'Half-life 12.62 h. Publication 72 prints it as Eu-150.', 'Half-life 34.2 y. Publication 72 prints Eu-150m under this name too.',
+               'Half-life 9.31 min. External exposure only: it is not one of the nuclides of ICRP Publication 72. The Ta-178 of Publication 72 is Ta-178m here.',
+               'Not a radionuclide of ICRP 38, the decay data chosen. The Nb-98 of Publication 72 is Nb-98m here.', notes['Sr-90'] if 'Publication 72' not in notes['Sr-90'] else None])
         # A disabled route is a dimmed button with a reason, not a button with the radio showing on top.
         look = await p.ev("""(() => { const r = document.querySelector('input[name="dcRoute"][value="injection"]');
           return { radio: getComputedStyle(r).opacity, span: getComputedStyle(r.nextElementSibling).opacity, title: r.closest('label').getAttribute('data-tip') || '' }; })()""")
@@ -881,6 +893,9 @@ async def main():
         await p.ev("(() => { const r = document.querySelector('input[name=\"dcSystem\"][value=\"103\"]'); r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); })()")
         await p.until("/ICRP 103 system/.test(document.getElementById('dcStatus').textContent)", 60)
         await asyncio.sleep(0.3)
+        rh = await p.ev("""(() => { const i = document.getElementById('dcNuclide'), was = i.value; i.value = 'Rh-102'; i.dispatchEvent(new Event('change', { bubbles: true }));
+          const note = document.getElementById('dcNuclideNote').textContent; i.value = was; i.dispatchEvent(new Event('change', { bubbles: true })); return note; })()""")
+        check('in the ICRP 103 system, whose names are Publication 107’s, the line says nothing of Publication 72', bool(rh) and rh.startswith('Half-life') and 'Publication 72' not in rh)
         t1 = await p.ev(cells)
         check('and in the ICRP 103 system Publication 103 Table 1: cancer 5.49, heritable 0.19, total 5.74 (printed 5.5, 0.2, 5.7; Publication 60 6.0, 1.3, 7.3)',
               bool(t1) and t1[0][1:] == ['5.49', '5.5', '6.0', '0.19', '0.2', '1.3', '5.74', '5.7', '7.3'] and t1[1][7:9] == ['4.22', '4.2'])

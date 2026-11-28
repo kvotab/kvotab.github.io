@@ -1693,6 +1693,51 @@ if (!SYSTEM || SYSTEM === '103') {
     out.every(([, dev, half]) => dev < 1e-12 && half) && out.some(([k]) => k.includes('split')), out.map(([k, dev]) => `${k} ${dev.toExponential(1)}`).join('; '));
 }
 
+/* ---- Publication 72's names, and a vapour's own f1 (ICRP 60; names72.js, model60.js) ---------- */
+const { NAME_72, note72 } = await import(path.join(JS, 'names72.js'));
+{
+  // The page has Publication 119's names (its Table 2.3). Of the 19 that
+  // Publication 72 prints otherwise, each is a nuclide of the page with
+  // coefficients; the name it has there is another nuclide's with
+  // coefficients (the two swapped pairs, and the ten names that stand for
+  // two states), a nuclide's without (Ta-178 of 9.31 min, Sb-124m of 93 s)
+  // or no nuclide's (Nb-98, Ir-192m, Es-250).
+  const c60 = catalog60(d60), has = (n) => c60.nuclides.find((x) => x.name === n), listed = (n) => !!has(n)?.ingestion.length;
+  const kinds = { two: [], bare: [], none: [] };
+  for (const printed of new Set(Object.values(NAME_72))) (listed(printed) ? kinds.two : has(printed) ? kinds.bare : kinds.none).push(printed);
+  const T = (n) => d60.index[n].T;
+  check(`ICRP 60 names: the ${Object.keys(NAME_72).length} nuclides that Publication 72 prints under another name all have coefficients here; of the names it prints, ${kinds.two.length} are nuclides with coefficients here too (Rh-102 of 207 d, Ta-180 of 8.1 h ...), ${kinds.bare.join(' and ')} nuclides without, ${kinds.none.join(', ')} none`,
+    Object.keys(NAME_72).length === 19 && Object.keys(NAME_72).every(listed) && kinds.two.length === 14 && kinds.bare.sort().join() === 'Sb-124m,Ta-178' && kinds.none.sort().join() === 'Es-250,Ir-192m,Nb-98'
+    && T('Rh-102') === 207 && near(T('Rh-102m'), 2.9 * 365.25, 1e-9) && near(T('Ta-180'), 8.1 / 24, 1e-9) && T('Ta-180m') > 1e15
+    && T('Nb-89m') < T('Nb-89') && T('Sb-120m') > T('Sb-120') && T('Tb-156n') < T('Tb-156m') && T('Ir-190n') > T('Ir-190m') && T('Ta-178m') > T('Ta-178'),
+    JSON.stringify(kinds));
+  // What the line under the nuclide says, by kind.
+  const say = (n) => note72(n, !!has(n), listed(n));
+  check('ICRP 60 names: the line under the nuclide says what Publication 72 calls it (a swapped pair, a name printed otherwise, a name that stands for two states there, a name that is another state’s there) and nothing where the names agree',
+    say('Rh-102') === 'Publication 72 and the ICRP’s database of dose coefficients have the two names the other way round: this is their Rh-102m, and their Rh-102 is Rh-102m here.'
+    && /this is their Ta-180, and their Ta-180m is Ta-180 here\.$/.test(say('Ta-180m'))
+    && say('Eu-150m') === 'Publication 72 prints it as Eu-150.' && say('Ir-192n') === 'Publication 72 prints it as Ir-192m.'
+    && say('Eu-150') === 'Publication 72 prints Eu-150m under this name too.' && say('Tb-156m') === 'Publication 72 prints Tb-156n under this name too.'
+    && say('Ta-178') === 'The Ta-178 of Publication 72 is Ta-178m here.' && say('Sb-124m') === 'The Sb-124m of Publication 72 is Sb-124n here.'
+    && say('Nb-98') === 'The Nb-98 of Publication 72 is Nb-98m here.' && say('Es-250') === 'The Es-250 of Publication 72 is Es-250m here.'
+    && ['Cs-137', 'Tc-99m', 'Ir-192', 'Am-242m', 'Xx-1'].every((n) => say(n) === ''),
+    ['Rh-102', 'Eu-150m', 'Eu-150', 'Ta-178', 'Nb-98', 'Cs-137'].map((n) => `${n}: ${say(n)}`).join(' | '));
+  // A vapour's f1. DCAL has an f1 file for sulphur's vapours (S$V: 1 for the
+  // infant, 0.8 from 1 year); sulphur swallowed has 1 at every age (S.gf1),
+  // which sulphur dioxide breathed in got too. Carbon disulphide has organic
+  // sulphur's file by $F1DEF.DAT, with the same values; other vapours have
+  // no file of their own and keep the element's.
+  await d60.prepare('S-35'); await d60.prepare('I-131'); await d60.prepare('Hg-203');
+  const vap = (nuclide, lung, bio, age) => { const sys = assemble60(d60, { ...recipe60(d60.cases, 'inhalation', { nuclide, bio, f1file: null, type: 'V', lung }), intakeAge: age });
+    return sys.transfers.filter((x) => x.origin === 'f1').map((x) => x.rates.map((v) => +v.toFixed(4))); };
+  const so2 = vap('S-35', 'SO2GAS', 'S_INORG', 7300), cs2 = vap('S-35', 'CS2GAS', 'S_ORG', 7300), iod = vap('I-131', 'IVAPOR', null, 7300), hg = vap('Hg-203', 'HGVAPOR', 'HG', 7300);
+  check('ICRP 60: sulphur dioxide breathed in is absorbed from the gut by sulphur’s f1 for vapours, 1 for the infant and 0.8 from 1 year (594 and 24 d-1), as carbon disulphide is; sulphur swallowed by 1 at every age, and iodine’s and mercury’s vapours by their elements’ files',
+    JSON.stringify(d60.models.f1.S$V.f1) === '[1,0.8]' && JSON.stringify(d60.models.f1.S.f1) === '[1]'
+    && JSON.stringify(so2) === '[[594,24]]' && JSON.stringify(cs2) === '[[594,24]]' && JSON.stringify(iod) === '[[594]]' && hg.length === 1 && near(hg[0].at(-1), 0.02 * 6 / 0.98, 1e-3)
+    && has('S-35').inhalation.filter((f) => /SO2GAS|CS2GAS/.test(f.spec.lung || '')).map((f) => /, f1 = 0\.8$/.test(f.label)).join() === 'true,true',
+    JSON.stringify({ so2, cs2, iod, hg, forms: has('S-35').inhalation.map((f) => f.label) }));
+}
+
 /* ---- against the ICRP's coefficients ---------------------------------------------------- */
 const SAMPLE60 = /^(H-3|Co-60|Sr-90|I-131|Cs-137|Ra-226|U-238|Pu-239|Am-241|Th-232)$/;
 const SAMPLE103 = /^(H-3|Co-60|Sr-90|I-131|Cs-137|Ra-226|U-238|Pu-239|Am-241|Ce-144|Pb-210|Po-210|Na-22|K-40|Ti-44|Sn-113|Hg-203|At-210|Fr-223)$/;
@@ -2231,6 +2276,86 @@ if (!SYSTEM || SYSTEM === '60') {
       for (const n of ['Ce-141', 'Sb-125', 'V-48']) { mixed[n] = await alveoliDay(d60, n); mixedFile[n] = await alveoliDay(asFile, n); }
       check(`ICRP 60 vs the ICRP database, the decay data as printed: the alveolar region on the first day after 55Fe, 59Ni, 53Mn, 49V and 41Ca within ${(1e6 * far(Object.values(pure))).toFixed(0)}e-6 (by the file's lines ${(1e5 * far(Object.values(pureFile))).toFixed(0)}e-5), after 141Ce, 125Sb and 48V ${Object.values(mixed).map((x) => x.toFixed(4)).join(', ')} (${Object.values(mixedFile).map((x) => x.toFixed(4)).join(', ')})`,
         far(Object.values(pure)) < 5e-6 && far(Object.values(pureFile)) > 3e-4 && far(Object.values(mixed)) < 5e-4 && Object.values(mixedFile).every((x) => x > 1.002), JSON.stringify({ pure, pureFile, mixed, mixedFile }));
+    }
+    // The database's chemical form of a case of the page (the fixture's form; null where the element has one form there).
+    const elementOf = (n) => n.split('-')[0];
+    const formOf = (c) => { const el = elementOf(c.nuclide), lung = c.lung || '', bio = c.bio || '';
+      return el === 'H' ? (lung === 'HGAS' ? 'tritium gas' : bio === 'H_ORG' ? 'organically bound tritium' : 'tritiated water')
+        : el === 'C' ? (lung === 'COGAS' ? 'carbon monoxide' : lung === 'CO2GAS' ? 'carbon dioxide' : 'organic carbon')
+        : el === 'S' ? (lung === 'SO2GAS' ? 'sulphur dioxide' : bio === 'S_ORG' ? 'organic sulphur' : 'inorganic sulphur')
+        : el === 'I' ? (lung === 'IMETHYL' ? 'methyl iodide' : 'iodine') : el === 'Hg' ? (bio === 'HG_ORG' ? 'organic mercury' : 'inorganic mercury') : null; };
+    // The names. The database has Publication 72's, with L or S after one
+    // that stands for two states (the longer and the shorter lived);
+    // make-local-fixtures.py gives each file the page's name and keeps the
+    // database's beside (file). The two differ for the nuclides of the
+    // page's table of Publication 72's names and for no others, and the
+    // adult's effective dose after each of the 29 nuclides involved is the
+    // database's of the file so named: within 0.2 %, 182Re 0.8 %. (The
+    // other state of a pair would give another dose: 2.2 times it for
+    // Rh-102, 16 times for Ta-180.)
+    {
+      const files = new Map(); for (const r of cd.rows) if (!r.form) files.set(r.nuclide, r.file.replace(/[LS]$/, ''));
+      const differ = [...files].filter(([n, f]) => f !== n);
+      const wrong = differ.filter(([n, f]) => NAME_72[n] !== f).map(([n, f]) => `${f} for ${n}`), unmet = Object.keys(NAME_72).filter((n) => !differ.some(([m]) => m === n));
+      const eOf = async (n) => { await d60.prepare(n); return coefficients60(d60, recipe60(d60.cases, 'ingestion', { nuclide: n }), [7300])[0].E; };
+      const dbE = (n) => cd.rows.find((x) => x.nuclide === n && x.route === 'ingestion' && x.age === 7300)?.H.E.at(-1);
+      const offN = []; let worstN = 0, count = 0;
+      for (const n of new Set([...Object.keys(NAME_72), ...Object.values(NAME_72)])) {
+        if (!dbE(n)) continue;
+        const q = await eOf(n) / dbE(n);
+        count++; if (n !== 'Re-182') worstN = Math.max(worstN, Math.abs(q - 1));
+        if (!(Math.abs(q - 1) <= (n === 'Re-182' ? 0.01 : 0.002))) offN.push(`${n} ${q.toFixed(4)}`);
+      }
+      const swap = { rh: await eOf('Rh-102m') / dbE('Rh-102'), ta: await eOf('Ta-180m') / dbE('Ta-180') };
+      check(`ICRP 60 vs the ICRP database, names: its ${differ.length} names that are not the page's are those of the page's table of Publication 72's names; the adult's e after each of the ${count} nuclides swallowed within ${(100 * worstN).toFixed(2)} % of the file so named (182Re 1 %), where the other state of Rh-102 would give ${swap.rh.toFixed(2)} and of Ta-180 ${swap.ta.toFixed(2)} times it`,
+        differ.length === 19 && !wrong.length && !unmet.length && count === 29 && !offN.length && swap.rh > 2 && swap.ta > 10, JSON.stringify({ wrong, unmet, offN, count, swap }));
+    }
+    // The chemical forms. A form with files of its own has an element code
+    // of its own in the database (the fixture's form): tritiated water,
+    // organically bound tritium and tritium gas; carbon dioxide and monoxide;
+    // inorganic and organic sulphur, sulphur dioxide; iodine and methyl
+    // iodide; inorganic and organic mercury. Each case of the page for ten
+    // nuclides of them, swallowed or breathed in as a gas or vapour, against
+    // the database's row of its form at the six ages: e within 0.4 %, and
+    // sulphur dioxide (2 % off from 1 year on with the f1 of sulphur
+    // swallowed) within 0.1 %, its lower large intestine within 0.3 %.
+    {
+      const NUCLIDES = ['H-3', 'C-14', 'S-35', 'Ni-63', 'Ru-106', 'Te-132', 'I-129', 'I-131', 'Hg-197', 'Hg-203'];
+      const offF = [], seen = new Set(), taken = new Set(); let worstF = 0, so2 = 0, so2Colon = 0, cases = 0;
+      for (const route of ['ingestion', 'inhalation']) for (const c of d60.cases[route]) {
+        const gas = c.type === 'V' || c.type === 'G';
+        if (!NUCLIDES.includes(c.nuclide) || (route === 'inhalation' && !gas)) continue;
+        await d60.prepare(c.nuclide);
+        const res = coefficients60(d60, recipe60(d60.cases, route, { nuclide: c.nuclide, bio: c.bio, f1file: c.f1, type: c.type ?? undefined, lung: route === 'inhalation' ? c.lung : undefined }), AGES_60);
+        const form = formOf(c), label = `${c.nuclide} ${gas ? c.lung : 'swallowed'}${c.f1 ? ` ${c.f1}` : ''}`;
+        cases++; seen.add(`${gas ? 'gas' : 'swallowed'}: ${form || elementOf(c.nuclide)}`);
+        AGES_60.forEach((age, i) => {
+          // organic mercury has two f1 values there, each a case of the page: the nearer row, and no row twice
+          const rows = cd.rows.filter((x) => x.nuclide === c.nuclide && x.route === (gas ? 'gas' : route) && (x.form || null) === form && x.age === age)
+            .sort((a, b) => Math.abs(Math.log(res[i].E / a.H.E.at(-1))) - Math.abs(Math.log(res[i].E / b.H.E.at(-1))));
+          const row = rows[0], q = row ? res[i].E / row.H.E.at(-1) : NaN;
+          if (!row || taken.has(row)) { offF.push(`${label} ${age} d: ${row ? 'a row taken twice' : 'no row'}`); return; }
+          taken.add(row);
+          if (c.lung === 'SO2GAS') { so2 = Math.max(so2, Math.abs(q - 1)); so2Colon = Math.max(so2Colon, Math.abs(res[i].H['Lower large intestine'] / row.H['Lower large intestine'].at(-1) - 1)); }
+          worstF = Math.max(worstF, Math.abs(q - 1));
+          if (!(Math.abs(q - 1) <= 0.004)) offF.push(`${label} ${age} d ${q.toFixed(4)}`);
+        });
+      }
+      check(`ICRP 60 vs the ICRP database, chemical forms: ${cases} cases of ${NUCLIDES.length} nuclides in ${seen.size} forms swallowed or breathed in as gas or vapour, each against the database's row of its form at the six ages, e within ${(100 * worstF).toFixed(2)} %; sulphur dioxide within ${(100 * so2).toFixed(2)} %, its lower large intestine ${(100 * so2Colon).toFixed(2)} %`,
+        cases >= 30 && seen.size >= 20 && !offF.length && so2 < 0.001 && so2Colon < 0.003, offF.join('; ') + ' ' + [...seen].join(', '));
+    }
+    // What the database has and the page has not: 193mIr, tritiated methane,
+    // carbon's vapour and methane, and chromium swallowed with its second
+    // f1. No other intake of the database is without a case here.
+    {
+      const page = new Map(), db = new Map();
+      for (const route of ['ingestion', 'inhalation']) for (const c of d60.cases[route]) { const gas = c.type === 'V' || c.type === 'G';
+        const k = `${c.nuclide} ${gas ? 'gas' : route}${gas || !c.type ? '' : ` ${c.type}`}${formOf(c) ? ` (${formOf(c)})` : ''}`; page.set(k, (page.get(k) || 0) + 1); }
+      for (const r of cd.rows) { if (r.age !== 7300) continue; const k = `${r.nuclide} ${r.route}${r.type ? ` ${r.type}` : ''}${r.form ? ` (${r.form})` : ''}`; db.set(k, (db.get(k) || 0) + 1); }
+      const lacking = [...db].filter(([k, n]) => (page.get(k) || 0) < n).map(([k]) => k).sort();
+      check(`ICRP 60 vs the ICRP database: of its ${db.size} intakes by nuclide, route, type and form the page lacks ${lacking.length}: 193mIr, tritiated methane, carbon's vapour and methane, chromium swallowed with a second f1`,
+        lacking.join('; ') === ['C-11 gas (methane)', 'C-11 gas (organic carbon)', 'C-14 gas (methane)', 'C-14 gas (organic carbon)', 'Cr-48 ingestion', 'Cr-49 ingestion', 'Cr-51 ingestion', 'H-3 gas (tritiated methane)',
+          'Ir-193m ingestion', 'Ir-193m inhalation F', 'Ir-193m inhalation M', 'Ir-193m inhalation S'].join('; '), lacking.join('; '));
     }
   }
 }

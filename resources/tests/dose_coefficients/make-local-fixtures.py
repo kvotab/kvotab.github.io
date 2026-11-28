@@ -368,6 +368,28 @@ ICRPDOSE_SERIES = {0: 'Ovaries', 1: 'Testes', 2: 'Breast', 3: 'Red marrow', 4: '
                    24: 'ET part 1', 25: 'ET part 2', 26: 'ET part 3', 27: 'Lung part 1', 28: 'Lung part 2', 29: 'Lung part 3', 30: 'Lung part 4', 31: 'Lung part 5',
                    32: 'ET', 33: 'Lung', 34: 'Colon', 35: 'E'}
 ICRPDOSE_TIMES = ['1 d', '7 d', '30 d', '1 y', '5 y', '10 y', '20 y', '30 y', '45 y', '50 y or to the age of 70']
+# The database's names that are not the page's. Publication 72 prints both
+# isomers of a pair under one name, told apart by the half-life; the files
+# of such a pair end in L or S, the longer and the shorter lived. And it has
+# Publication 38's names where Publication 119 (its Table 2.3) has those of
+# Publication 107, which are the page's (scripts/gen-dose-icrp60.mjs's
+# RENAME_38; resources/js/dose/names72.js has what Publication 72 prints).
+ICRPDOSE_NAMES = {
+    'Eu-150L': 'Eu-150', 'Eu-150S': 'Eu-150m', 'In-110L': 'In-110', 'In-110S': 'In-110m', 'Ir-186L': 'Ir-186', 'Ir-186S': 'Ir-186m',
+    'Ir-190mL': 'Ir-190n', 'Ir-190mS': 'Ir-190m', 'Ir-192m': 'Ir-192n', 'Nb-89L': 'Nb-89', 'Nb-89S': 'Nb-89m', 'Nb-98': 'Nb-98m',
+    'Np-236L': 'Np-236', 'Np-236S': 'Np-236m', 'Re-182L': 'Re-182', 'Re-182S': 'Re-182m', 'Sb-120L': 'Sb-120m', 'Sb-120S': 'Sb-120',
+    'Sb-124mL': 'Sb-124n', 'Sb-128L': 'Sb-128', 'Sb-128S': 'Sb-128m', 'Ta-178L': 'Ta-178m', 'Tb-156mL': 'Tb-156m', 'Tb-156mS': 'Tb-156n',
+    'Es-250': 'Es-250m', 'Rh-102': 'Rh-102m', 'Rh-102m': 'Rh-102', 'Ta-180': 'Ta-180m', 'Ta-180m': 'Ta-180',
+}
+# A chemical form with files of its own has an element code of its own
+# there (read off the effective doses of Publication 72's Table A.3); the
+# plain files of those elements hold the form named last.
+ICRPDOSE_FORMS = {
+    'Hl': ('H', 'tritium gas'), 'Hm': ('H', 'tritiated methane'), 'Ot': ('H', 'organically bound tritium'), 'H': ('H', 'tritiated water'),
+    'Cx': ('C', 'carbon dioxide'), 'Cy': ('C', 'carbon monoxide'), 'Cz': ('C', 'methane'), 'C': ('C', 'organic carbon'),
+    'So': ('S', 'organic sulphur'), 'Sx': ('S', 'sulphur dioxide'), 'S': ('S', 'inorganic sulphur'),
+    'Im': ('I', 'methyl iodide'), 'I': ('I', 'iodine'), 'Hi': ('Hg', 'inorganic mercury'), 'Hg': ('Hg', 'organic mercury'),
+}
 
 
 def icrpdose(folder):
@@ -378,7 +400,10 @@ def icrpdose(folder):
         if not m:
             continue
         el, mass, meta, pair = m.groups()
-        name = el[0] + el[1:].lower() + '-' + mass + meta.lower() + pair  # an isomer pair's files keep L or S (long, short lived)
+        own = el[0] + el[1:].lower() + '-' + mass + meta.lower() + pair  # the database's name: an isomer pair's files end in L or S
+        code = el[0] + el[1:].lower()
+        element, chemical = ICRPDOSE_FORMS.get(code, (code, None))
+        name = ICRPDOSE_NAMES.get(own, element + own[len(code):])
         with open(os.path.join(folder, fn), 'rb') as f:
             b = f.read()
         off = 0
@@ -403,7 +428,8 @@ def icrpdose(folder):
                 start += lengths[36 * block + i]
                 if i in ICRPDOSE_SERIES:
                     H[ICRPDOSE_SERIES[i]] = [float(f'{v:.7g}') for v in series]
-            rows.append({'nuclide': name, 'age': ICRPDOSE_CLASS[cls], 'route': 'ingestion' if k == 0 else 'inhalation' if k in (1, 2, 3) else 'gas',
+            rows.append({'nuclide': name, 'file': own, 'form': chemical, 'age': ICRPDOSE_CLASS[cls],
+                         'route': 'ingestion' if k == 0 else 'inhalation' if k in (1, 2, 3) else 'gas',
                          'type': 'FMS'[k - 1] if k in (1, 2, 3) else None, 'f1': round(float(f1), 7), 'H': H})
     return rows
 
