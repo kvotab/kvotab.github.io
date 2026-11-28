@@ -807,6 +807,20 @@ async def main():
                'Half-life 12.62 h. Publication 72 prints it as Eu-150.', 'Half-life 34.2 y. Publication 72 prints Eu-150m under this name too.',
                'Half-life 9.31 min. External exposure only: it is not one of the nuclides of ICRP Publication 72. The Ta-178 of Publication 72 is Ta-178m here.',
                'Not a radionuclide of ICRP 38, the decay data chosen. The Nb-98 of Publication 72 is Nb-98m here.', notes['Sr-90'] if 'Publication 72' not in notes['Sr-90'] else None])
+        # What Publication 72 has and DCAL's batch files do not run: 193mIr (not in Publication 38), trivalent chromium, three gases.
+        added = await p.ev("""(() => { const i = document.getElementById('dcNuclide'), out = {};
+          const set = (n) => { i.value = n; i.dispatchEvent(new Event('change', { bubbles: true })); };
+          const route = (r) => { const b = document.querySelector('input[name="dcRoute"][value="' + r + '"]'); b.checked = true; b.dispatchEvent(new Event('change', { bubbles: true })); };
+          const forms = () => [...document.getElementById('dcForm').options].map((o) => o.textContent);
+          set('Ir-193m'); out.ir = document.getElementById('dcNuclideNote').textContent; out.irRun = !document.getElementById('dcRun').disabled;
+          route('ingestion'); set('Cr-51'); out.cr = forms();
+          set('C-14'); route('inhalation'); out.c = forms(); set('H-3'); out.h = forms();
+          route('ingestion'); set('Sr-90'); return out; })()""")
+        check('193mIr can be calculated in the ICRP 60 system and the line under it says whose radiations and half-life it has; chromium swallowed has two forms; carbon and tritium have their vapour and methane',
+              bool(added) and [added['ir'], added['irRun'], added['cr'],
+                               [x for x in added['c'] if 'vapour (organic' in x or x.startswith('Methane')], [x for x in added['h'] if 'methane' in x]],
+              ['Half-life 11.9 d. Publication 38 has no Ir-193m: its radiations here are Publication 107’s, with Publication 72’s half-life, and the coefficients come out 4 to 8 % above Publication 72’s (Help: “Decay data” under the ICRP 60 system).',
+               True, ['f1 = 0.1', 'f1 = 0.01'], ['Carbon vapour (organic compounds) (Type V), f1 = 1', 'Methane (gas or vapour), f1 = 1'], ['Tritiated methane (gas or vapour), f1 = 1']])
         # A disabled route is a dimmed button with a reason, not a button with the radio showing on top.
         look = await p.ev("""(() => { const r = document.querySelector('input[name="dcRoute"][value="injection"]');
           return { radio: getComputedStyle(r).opacity, span: getComputedStyle(r.nextElementSibling).opacity, title: r.closest('label').getAttribute('data-tip') || '' }; })()""")

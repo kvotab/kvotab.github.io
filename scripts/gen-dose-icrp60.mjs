@@ -46,7 +46,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { icrp38Nuclides, labelLSeries, labelAugerGroups, compactRad, compactSpectrum, sig } from './lib/dose-decay.mjs';
+import { icrp38Nuclides, icrp107Nuclides, labelLSeries, labelAugerGroups, compactRad, compactSpectrum, sig } from './lib/dose-decay.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = path.join(ROOT, 'resources/data/dose/icrp60');
@@ -89,8 +89,40 @@ export const RENAME_38 = {
 };
 const rename38 = (n) => RENAME_38[n] || n;
 
+/* Ir-193m. Publication 72 gives coefficients for it, with a half-life of
+   11.9 d, and Publication 38 has no such nuclide (not in ICRP38.NDX, nor in
+   ORNL's other copies of the file; FGR 13 leaves it out). What the ICRP's
+   coefficients were calculated with is not published. The page takes its
+   radiations from Publication 107, the ICRP's later decay data, and keeps
+   Publication 72's half-life. With Publication 107's 10.53 d the tissues
+   that get their dose from iridium in the body come out 5 % below the
+   ICRP's database of dose coefficients and the walls of the gut 7 % above;
+   with 11.9 d the first are 6 % above and the walls 8 %, one cause for
+   both: the half-life is right and the energy per decay higher than in
+   whatever the ICRP had. (Publication 107's conversion electrons alone,
+   0.0713 of its 0.0776 MeV of electrons, give the effective dose after
+   swallowing within 1 %; but the airways' doses say that the ICRP's
+   radiations differed in more than the Auger electrons.) The effective
+   dose is 8 % above Publication 72's swallowed, 4 % breathed in as Type M
+   or S and 2-5 % as Type F (6 % below at 3 months). The engine takes these
+   radiations as the file has them, not as a table of Publication 38 would
+   print them (index.from). The daughter, Ir-193, is stable. */
+const FROM_107 = { 'Ir-193m': { t: '11.9d', T: 11.9, after: 'Ir-192m' } };
+function addFrom107(nucs) {
+  const all = icrp107Nuclides(icrp07Dir);
+  for (const [name, { t, T, after }] of Object.entries(FROM_107)) {
+    if (nucs.some((n) => n.name === name)) throw new Error(`${name} is in ICRP38.NDX`);
+    const n = all.find((x) => x.name === name);
+    const at = nucs.findIndex((x) => x.name === after);
+    if (!n || at < 0) throw new Error(`${name}: not in ICRP-07.NDX, or no ${after} in ICRP38.NDX`);
+    if (n.d.some(([d]) => all.some((x) => x.name === d && x.T > 0))) throw new Error(`${name}: a radioactive daughter`);
+    nucs.splice(at + 1, 0, { ...n, t, T, d: [], from: `ICRP 107 (half-life ${n.t})` });
+  }
+}
+
 function buildDecay() {
   const nucs = icrp38Nuclides(path.join(DAT, 'nuc'), path.join(icrp07Dir, 'icrp-07.bet'));
+  addFrom107(nucs);
   // The series of the L X-rays, from the binding energies of the page's atomic tables.
   const ATOMIC = path.join(ROOT, 'resources/data/dose/atomic');
   const symbols = JSON.parse(fs.readFileSync(path.join(ATOMIC, 'index.json'), 'utf8')).elements;
@@ -106,9 +138,10 @@ function buildDecay() {
     const name = rename38(n.name);
     index[name] = { t: n.t, T: sig(n.T, 8), m: n.mode, d: n.d.map(([d, b]) => [rename38(d), sig(b)]), E: n.E };
     if (name !== n.name) index[name].icrp38 = n.name;
+    if (n.from) index[name].from = n.from;
     (byEl[n.el] ||= {})[name] = { r: compactRad(n.rad), bs: compactSpectrum(n.bs) };
   }
-  let bytes = write('decay/index.json', { source: 'ICRP Publication 38, from DCAL (ICRP38.NDX, .RAD, .BET)', nuclides: index });
+  let bytes = write('decay/index.json', { source: 'ICRP Publication 38, from DCAL (ICRP38.NDX, .RAD, .BET); Ir-193m, which it has not, from ICRP Publication 107 (ICRP-07.NDX, .RAD) with the half-life of ICRP Publication 72', nuclides: index });
   for (const [el, obj] of Object.entries(byEl)) bytes += write(`decay/${el}.json`, obj);
   console.log(`decay: ${nucs.length} nuclides of ${Object.keys(byEl).length} elements, ${(bytes / 1e6).toFixed(2)} MB`);
 }
@@ -506,6 +539,62 @@ function parseElementBlock(lines, parseLine) {
   return out;
 }
 
+/* Three gases and vapours that the ICRP's coefficients have and DCAL's
+   library has no file for, by the models of Publication 71 as the help of
+   the ICRP's database of dose coefficients states them. Like DCAL's files
+   for tritiated water, tritium gas and carbon dioxide each is "in effect an
+   injection to blood" of what is absorbed:
+
+   - Tritiated methane (Publication 72, Table A.3): "1% of inhaled tritiated
+     methane is rapidly absorbed and converted to tritiated water". Tritium
+     gas is the same with 0.01 % (Hgas.LNG), and the database's doses after
+     tritiated methane are 100 times those after tritium gas to its seven
+     figures, at every age and time.
+   - Carbon vapour (Table A.3: carbon-11 vapour, carbon-14 vapour): "all
+     organic compounds ... are classed as SR-2 vapours, ie. they are taken
+     to be completely absorbed by the lung. Organic compounds are taken to
+     follow the model for organic carbon ... treated as if they were
+     directly injected into the blood".
+   - Methane labelled with carbon (in the database, not in Table A.3): "1%
+     of inhaled carbon labelled methane is rapidly absorbed and ... one half
+     of this is converted to carbon dioxide and one half to forms of organic
+     carbon"; C_CH4 below is its systemic model. */
+function gases72(lung) {
+  const injected = (like, fraction, title, text) => {
+    const { compartments, transfers } = lung[like];
+    if (JSON.stringify(Object.keys(lung[like].deposition)) !== '["Blood"]') throw new Error(`${like}.LNG is not an injection to blood`);
+    return { title, text: [text, `Not a file of DCAL: made by gen-dose-icrp60.mjs after ${like}.LNG`], compartments, deposition: { Blood: fraction }, transfers, notes: '' };
+  };
+  return {
+    HCH4GAS: injected('HGAS', 0.01, 'Inhalation of tritiated methane', 'In effect 1% of the inhaled activity is injected in blood, as tritiated water (ICRP 71)'),
+    CVAPOR: injected('CO2GAS', 1, 'Inhalation of carbon vapour (organic compounds)', 'In effect an injection to blood, as organic carbon (ICRP 71)'),
+    CH4GAS: injected('CO2GAS', 0.01, 'Inhalation of methane labelled with carbon', 'In effect 1% of the inhaled activity is injected in blood, half as carbon dioxide and half as organic carbon (ICRP 71)'),
+  };
+}
+
+/* The systemic model of carbon absorbed from methane: the database's help
+   gives it as three compartments of the body's tissues with 9, 40.5 and
+   50.5 % and the half-times of carbon dioxide's (3.5E-03 d, 0.04 d, and by
+   age 8, 15, 19, 26, 32 and 40 d) -- half carbon dioxide (18, 81 and 1 %)
+   and half organic carbon, whose half-time is that of carbon dioxide's
+   third compartment. Blood is left as in C_CO2.def, at 1000 d-1, also by
+   the half that is organic carbon: the database's doses after methane are
+   0.005 of those after carbon dioxide plus 0.005 of those after carbon
+   vapour less what the vapour's half-time of 0.25 d in the transfer
+   compartment adds (3 % at 3 months, 0.6 % for the adult). */
+function methane71(co2, organic) {
+  const out = (m, from) => JSON.stringify(m.transfers.find(([f, to]) => f === from && to === 'Excreta')[2]);
+  if (JSON.stringify(co2.ages) !== JSON.stringify(organic.ages) || out(co2, 'Body_Tis_3') !== out(organic, 'Body_Tis')) throw new Error('C_CO2.def and C_Org.def: the long-term half-times differ');
+  const blood = co2.transfers.filter(([from]) => from === 'Blood');
+  if (blood.length !== 3 || blood.some(([, , r]) => r.some((x) => x !== r[0])) || blood.reduce((a, [, , r]) => a + r[0], 0) !== 1000) throw new Error('C_CO2.def: blood is not cleared at 1000 d-1 to three compartments');
+  return {
+    title: 'Carbon absorbed from methane', text: ['Half as carbon dioxide (C_CO2.def) and half as organic carbon, in the third compartment (ICRP 71)', 'Not a file of DCAL: made by gen-dose-icrp60.mjs from C_CO2.def and C_Org.def'],
+    ages: co2.ages, ageNames: co2.ageNames,
+    transfers: co2.transfers.map(([from, to, r]) => (from === 'Blood' ? [from, to, r.map((x) => x / 2 + (to === 'Body_Tis_3' ? 500 : 0))] : [from, to, r])),
+    notes: '',
+  };
+}
+
 function buildModels() {
   const bioDir = path.join(DAT, 'bio', 'f13');
   const systemic = {}, f1 = {};
@@ -558,6 +647,8 @@ function buildModels() {
     if (!/\.lng$/i.test(f)) continue;
     lung[f.replace(/\.lng$/i, '').toUpperCase()] = readLng(path.join(DAT, 'mis', f));
   }
+  Object.assign(lung, gases72(lung));
+  systemic.C_CH4 = methane71(systemic.C_CO2, systemic.C_ORG);
 
   const bytes = write('models.json', {
     source: 'DCAL biokinetic library for Federal Guidance Report 13 (folder DAT/BIO/F13), which with the exceptions noted in ORNL/TM-2001/190 section 3.3.1 holds the models of ICRP Publications 56, 67, 69, 71 and 72; DCAL DAT/MIS for the respiratory, gastrointestinal and bladder models',
@@ -630,8 +721,9 @@ function keepCases(file, cases, library) {
    not being part of its dosimetry, and the batch files run 244Pu but not the
    other four. Publication 72 gives them with the forms of the other isotopes
    of their elements, which the batch files run all alike; each takes those,
-   after the isotopes of its element of lower mass. */
-const LEFT_OUT = ['Cm-248', 'Cm-250', 'Cf-252', 'Cf-254'];
+   after the isotopes of its element of lower mass. So does Ir-193m, which
+   Publication 38 has not (FROM_107 above). */
+const LEFT_OUT = ['Cm-248', 'Cm-250', 'Cf-252', 'Cf-254', 'Ir-193m'];
 function addLeftOut(file, cases) {
   const elementOf = (n) => n.split('-')[0], massOf = (n) => parseInt(n.split('-')[1], 10);
   for (const nuclide of LEFT_OUT) {
@@ -654,11 +746,40 @@ function addLeftOut(file, cases) {
   return cases;
 }
 
+/* Forms that Publication 72 gives and the batch files of FGR 13 do not run.
+   Trivalent chromium swallowed: Table A.1 has chromium with two f1 values,
+   0.1 and 0.01 (0.2 and 0.02 for the infant), and DCAL's library the file
+   of the second (CrT.gf1, "ingestion trivalent Cr", which $F1DEF.DAT offers
+   beside the hexavalent compounds'). And the three gases of gases72 above.
+   Each case goes after the case named, with what it changes. */
+const FORMS_72 = {
+  'FGR13ING.INP': [
+    ...['Cr-48', 'Cr-49', 'Cr-51'].map((nuclide) => ({ after: { nuclide, f1: 'CR' }, set: { f1: 'CRT', note: 'trivalent' } })),
+  ],
+  'FGR13INH.INP': [
+    { after: { nuclide: 'H-3', lung: 'HGAS' }, set: { lung: 'HCH4GAS', note: 'tritiated methane' } },
+    ...['C-11', 'C-14'].flatMap((nuclide) => [
+      { after: { nuclide, lung: 'CO2GAS' }, set: { bio: 'C_ORG', type: 'V', lung: 'CVAPOR', note: 'carbon vapour' } },
+      { after: { nuclide, lung: 'CVAPOR' }, set: { bio: 'C_CH4', type: 'G', lung: 'CH4GAS', note: 'methane' } },
+    ]),
+  ],
+};
+function addForms72(file, cases, library) {
+  for (const { after, set } of FORMS_72[file]) {
+    const at = cases.findIndex((c) => Object.entries(after).every(([k, v]) => c[k] === v));
+    if (at < 0) throw new Error(`${file}: no case ${JSON.stringify(after)}`);
+    const add = { ...cases[at], ...set };
+    for (const [name, files, ext] of [[add.bio, library.systemic, 'DEF'], [add.f1, library.f1, 'GF1'], [add.lung, library.lung, 'LNG']]) if (name && !files[name]) throw new Error(`${file}: no ${name}.${ext} for ${add.nuclide}`);
+    cases = [...cases.slice(0, at + 1), add, ...cases.slice(at + 1)];
+  }
+  return cases;
+}
+
 function buildCases(library) {
-  const ingestion = addLeftOut('FGR13ING.INP', keepCases('FGR13ING.INP', readCases('FGR13ING.INP'), library));
-  const inhalation = addLeftOut('FGR13INH.INP', keepCases('FGR13INH.INP', readCases('FGR13INH.INP'), library));
+  const ingestion = addForms72('FGR13ING.INP', addLeftOut('FGR13ING.INP', keepCases('FGR13ING.INP', readCases('FGR13ING.INP'), library)), library);
+  const inhalation = addForms72('FGR13INH.INP', addLeftOut('FGR13INH.INP', keepCases('FGR13INH.INP', readCases('FGR13INH.INP'), library)), library);
   const bytes = write('cases.json', {
-    source: 'DCAL batch input files of Federal Guidance Report 13 (wrk/fgr13/FGR13ING.INP, FGR13INH.INP); 248Cm, 250Cm, 252Cf and 254Cf, which they leave out, with the forms of their elements\' other isotopes (Publication 72)',
+    source: 'DCAL batch input files of Federal Guidance Report 13 (wrk/fgr13/FGR13ING.INP, FGR13INH.INP); 248Cm, 250Cm, 252Cf and 254Cf, which they leave out, with the forms of their elements\' other isotopes (Publication 72); trivalent chromium swallowed, tritiated methane, carbon vapour and methane, which they do not run (Publication 72 and the ICRP\'s database of dose coefficients)',
     ingestion, inhalation,
   });
   console.log(`cases: ${ingestion.length} ingestion, ${inhalation.length} inhalation, ${(bytes / 1e3).toFixed(0)} kB`);

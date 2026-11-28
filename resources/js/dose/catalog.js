@@ -38,10 +38,12 @@ function adultF1(models, name) {
 }
 const fmt = (x) => (x == null ? '?' : x >= 0.01 ? String(+x.toPrecision(3)) : x.toExponential(0).replace('e', 'E'));
 
-/* DCAL's respiratory tract files for gases and vapours (ICRP 66 and 71). */
+/* DCAL's respiratory tract files for gases and vapours (ICRP 66 and 71), and
+   the three made after them for Publication 72's other gases (gen-dose-icrp60.mjs). */
 const GAS_60 = {
-  H2OVAPOR: 'Tritiated water vapour (HTO)', HGAS: 'Tritium gas (HT)', HORGANIC: 'Organic tritium compounds',
-  COGAS: 'Carbon monoxide', CO2GAS: 'Carbon dioxide', SO2GAS: 'Sulphur dioxide', CS2GAS: 'Carbon disulphide',
+  H2OVAPOR: 'Tritiated water vapour (HTO)', HGAS: 'Tritium gas (HT)', HCH4GAS: 'Tritiated methane', HORGANIC: 'Organic tritium compounds',
+  COGAS: 'Carbon monoxide', CO2GAS: 'Carbon dioxide', CVAPOR: 'Carbon vapour (organic compounds)', CH4GAS: 'Methane',
+  SO2GAS: 'Sulphur dioxide', CS2GAS: 'Carbon disulphide',
   NIVAPOR: 'Nickel carbonyl', RUO4: 'Ruthenium tetroxide', TEVAPOR: 'Tellurium vapour', IVAPOR: 'Elemental iodine vapour',
   IMETHYL: 'Methyl iodide', HGVAPOR: 'Mercury vapour',
 };
@@ -53,7 +55,7 @@ export function catalog60(data) {
   const byName = new Map();
   const external = externalForms('60');
   const entry = (name) => {
-    if (!byName.has(name)) byName.set(name, { name, Z: Z[elementOf(name)] || 0, t: index[name]?.t || null, T: index[name]?.T ?? null, m: index[name]?.m || '', ingestion: [], inhalation: [], external });
+    if (!byName.has(name)) byName.set(name, { name, Z: Z[elementOf(name)] || 0, t: index[name]?.t || null, T: index[name]?.T ?? null, m: index[name]?.m || '', from: index[name]?.from || null, ingestion: [], inhalation: [], external });
     return byName.get(name);
   };
   for (const c of cases.ingestion) {

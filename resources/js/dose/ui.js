@@ -544,7 +544,8 @@ function nuclideChanged() {
   const intakes = ['ingestion', 'inhalation', 'injection'].some((r) => e[r]?.length);
   note.textContent = `Half-life ${e.T ? halfLife(e.T) : e.t || '?'}.${intakes ? '' : state.system === '103'
     ? ' External exposure only: the ICRP 103 system has models of intakes for the elements of Publication 158 and the Part 2 and 3 drafts, and nuclides with half-lives of 10 minutes or more.'
-    : ' External exposure only: it is not one of the nuclides of ICRP Publication 72.'}${as72(true, intakes)}`;
+    : ' External exposure only: it is not one of the nuclides of ICRP Publication 72.'}${as72(true, intakes)}${e.from && state.system === '60'
+    ? ` Publication 38 has no ${e.name}: its radiations here are Publication 107’s, with Publication 72’s half-life, and the coefficients come out 4 to 8 % above Publication 72’s (Help: “Decay data” under the ICRP 60 system).` : ''}`;
   // Routes this nuclide has.
   for (const r of document.querySelectorAll('input[name="dcRoute"]')) {
     r.disabled = !e[r.value]?.length;
@@ -2476,7 +2477,7 @@ const TOPICS = {
       { heading: 'What is covered', list: [
         'Intakes, ICRP 60: the nuclides of Publication 72, with its decay data (Publication 38).',
         'Intakes, ICRP 103: the nuclides of Publication 107 with half-lives of at least 10 minutes (Publication 158 section 1.4.1), of the elements whose models Publication 158 and the Part 2 and 3 drafts give. Shorter-lived ones are followed as progeny.',
-        'External exposure: every radionuclide of the decay data, in both systems (838 of Publication 38, 1252 of Publication 107), noble gases and short-lived ones too; a nuclide with no model of the body has that route only.',
+        'External exposure: every radionuclide of the decay data, in both systems (838 of Publication 38 and Ir-193m, 1252 of Publication 107), noble gases and short-lived ones too; a nuclide with no model of the body has that route only.',
       ] },
       { heading: 'Typing', list: [
         'cs137, Cs-137 and Cs 137 all mean Cs-137; a metastable state ends in m: Tc-99m, Am-242m.',

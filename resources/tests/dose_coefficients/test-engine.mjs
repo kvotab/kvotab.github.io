@@ -1738,6 +1738,43 @@ const { NAME_72, note72 } = await import(path.join(JS, 'names72.js'));
     JSON.stringify({ so2, cs2, iod, hg, forms: has('S-35').inhalation.map((f) => f.label) }));
 }
 
+/* ---- forms of Publication 72 that DCAL's batch files do not run, and 193mIr (gen-dose-icrp60.mjs) ---- */
+{
+  const c60 = catalog60(d60), forms = (n, route) => c60.nuclides.find((x) => x.name === n)[route];
+  const L = d60.models.lung, S = d60.models.systemic;
+  const rates = (m, from) => Object.fromEntries(m.transfers.filter(([f]) => f === from).map(([, to, r]) => [to, r[0]]));
+  // Tritiated methane: 1 % absorbed, as tritiated water (tritium gas 0.01 %).
+  // Carbon vapour: absorbed completely, as organic carbon. Methane: 1 %
+  // absorbed, half as carbon dioxide and half as organic carbon, which is
+  // 9, 40.5 and 50.5 % in carbon dioxide's three compartments.
+  const ch4 = rates(S.C_CH4, 'Blood'), co2 = rates(S.C_CO2, 'Blood');
+  const gasCase = (n, lung) => d60.cases.inhalation.find((c) => c.nuclide === n && c.lung === lung);
+  check('ICRP 60: tritiated methane, carbon vapour and methane, by Publication 71: 1 % of tritiated methane to blood as tritiated water (tritium gas 0.01 %), all of carbon vapour as organic carbon, 1 % of methane to three compartments with 9, 40.5 and 50.5 % (carbon dioxide 18, 81 and 1 %) and carbon dioxide’s half-times',
+    JSON.stringify(L.HCH4GAS.deposition) === '{"Blood":0.01}' && JSON.stringify(L.HGAS.deposition) === '{"Blood":0.0001}' && JSON.stringify(L.CVAPOR.deposition) === '{"Blood":1}' && JSON.stringify(L.CH4GAS.deposition) === '{"Blood":0.01}'
+    && JSON.stringify(ch4) === '{"Body_Tis_1":90,"Body_Tis_2":405,"Body_Tis_3":505}' && JSON.stringify(co2) === '{"Body_Tis_1":180,"Body_Tis_2":810,"Body_Tis_3":10}'
+    && JSON.stringify(S.C_CH4.transfers.filter(([f]) => f !== 'Blood')) === JSON.stringify(S.C_CO2.transfers.filter(([f]) => f !== 'Blood'))
+    && gasCase('H-3', 'HCH4GAS').bio === 'H_H2O' && ['C-11', 'C-14'].every((n) => gasCase(n, 'CVAPOR').bio === 'C_ORG' && gasCase(n, 'CH4GAS').bio === 'C_CH4')
+    && ['Tritiated methane (gas or vapour), f1 = 1'].every((l) => forms('H-3', 'inhalation').some((f) => f.label === l))
+    && ['Carbon vapour (organic compounds) (Type V), f1 = 1', 'Methane (gas or vapour), f1 = 1'].every((l) => forms('C-14', 'inhalation').some((f) => f.label === l)),
+    JSON.stringify({ ch4, labels: [...forms('H-3', 'inhalation'), ...forms('C-14', 'inhalation')].map((f) => f.label) }));
+  // Chromium swallowed: hexavalent and trivalent, f1 0.1 and 0.01 (the infant 0.2 and 0.02).
+  const cr = ['Cr-48', 'Cr-49', 'Cr-51'].map((n) => forms(n, 'ingestion').map((f) => [f.spec.f1file, f.f1, d60.models.f1[f.spec.f1file].f1.join('/')]));
+  check('ICRP 60: chromium swallowed has Publication 72’s two forms, hexavalent first (f1 0.1, for the infant 0.2) and trivalent (0.01 and 0.02, DCAL’s CrT.gf1)',
+    cr.every((f) => JSON.stringify(f) === '[["CR",0.1,"0.2/0.1"],["CRT",0.01,"0.02/0.01"]]'), JSON.stringify(cr));
+  // 193mIr, which Publication 38 has not: Publication 107's radiations as
+  // its file has them, Publication 72's half-life, the forms of iridium's
+  // other isotopes.
+  const ir = d60.index['Ir-193m'], entry = c60.nuclides.find((x) => x.name === 'Ir-193m');
+  await d60.prepare('Ir-193m');
+  const em = d60.emissions('Ir-193m'), energy = (l) => l.reduce((a, [E, Y]) => a + E * Y, 0);
+  const irForms = (n) => JSON.stringify([forms(n, 'ingestion').map((f) => f.label), forms(n, 'inhalation').map((f) => f.label)]);
+  check(`ICRP 60: 193mIr, which Publication 38 has not, with Publication 107's radiations (${(1000 * energy(em.r.e)).toFixed(1)} keV of electrons and ${(1000 * energy(em.r.p)).toFixed(2)} keV of photons per decay, as the file has them) and Publication 72's half-life of 11.9 d; the forms of iridium's other isotopes; no other nuclide of the system is from elsewhere`,
+    ir.T === 11.9 && ir.t === '11.9d' && ir.m === 'IT' && !ir.d.length && /^ICRP 107 \(half-life 10\.53d\)$/.test(ir.from) && entry.from === ir.from
+    && near(energy(em.r.e), 0.0776, 2e-3) && near(energy(em.r.p), 0.00266, 5e-3) && em.r.e.every((x) => x.length === 2) && irForms('Ir-193m') === irForms('Ir-192')
+    && Object.entries(d60.index).filter(([, v]) => v.from).map(([n]) => n).join() === 'Ir-193m' && c60.nuclides.filter((x) => x.from).length === 1,
+    JSON.stringify({ ir, forms: irForms('Ir-193m') }));
+}
+
 /* ---- against the ICRP's coefficients ---------------------------------------------------- */
 const SAMPLE60 = /^(H-3|Co-60|Sr-90|I-131|Cs-137|Ra-226|U-238|Pu-239|Am-241|Th-232)$/;
 const SAMPLE103 = /^(H-3|Co-60|Sr-90|I-131|Cs-137|Ra-226|U-238|Pu-239|Am-241|Ce-144|Pb-210|Po-210|Na-22|K-40|Ti-44|Sn-113|Hg-203|At-210|Fr-223)$/;
@@ -2280,8 +2317,8 @@ if (!SYSTEM || SYSTEM === '60') {
     // The database's chemical form of a case of the page (the fixture's form; null where the element has one form there).
     const elementOf = (n) => n.split('-')[0];
     const formOf = (c) => { const el = elementOf(c.nuclide), lung = c.lung || '', bio = c.bio || '';
-      return el === 'H' ? (lung === 'HGAS' ? 'tritium gas' : bio === 'H_ORG' ? 'organically bound tritium' : 'tritiated water')
-        : el === 'C' ? (lung === 'COGAS' ? 'carbon monoxide' : lung === 'CO2GAS' ? 'carbon dioxide' : 'organic carbon')
+      return el === 'H' ? (lung === 'HGAS' ? 'tritium gas' : lung === 'HCH4GAS' ? 'tritiated methane' : bio === 'H_ORG' ? 'organically bound tritium' : 'tritiated water')
+        : el === 'C' ? (lung === 'COGAS' ? 'carbon monoxide' : lung === 'CO2GAS' ? 'carbon dioxide' : lung === 'CH4GAS' ? 'methane' : 'organic carbon')
         : el === 'S' ? (lung === 'SO2GAS' ? 'sulphur dioxide' : bio === 'S_ORG' ? 'organic sulphur' : 'inorganic sulphur')
         : el === 'I' ? (lung === 'IMETHYL' ? 'methyl iodide' : 'iodine') : el === 'Hg' ? (bio === 'HG_ORG' ? 'organic mercury' : 'inorganic mercury') : null; };
     // The names. The database has Publication 72's, with L or S after one
@@ -2312,16 +2349,19 @@ if (!SYSTEM || SYSTEM === '60') {
     }
     // The chemical forms. A form with files of its own has an element code
     // of its own in the database (the fixture's form): tritiated water,
-    // organically bound tritium and tritium gas; carbon dioxide and monoxide;
-    // inorganic and organic sulphur, sulphur dioxide; iodine and methyl
-    // iodide; inorganic and organic mercury. Each case of the page for ten
-    // nuclides of them, swallowed or breathed in as a gas or vapour, against
-    // the database's row of its form at the six ages: e within 0.4 %, and
-    // sulphur dioxide (2 % off from 1 year on with the f1 of sulphur
-    // swallowed) within 0.1 %, its lower large intestine within 0.3 %.
+    // organically bound tritium, tritium gas and tritiated methane; carbon
+    // vapour, dioxide, monoxide and methane; inorganic and organic sulphur,
+    // sulphur dioxide; iodine and methyl iodide; inorganic and organic
+    // mercury. Each case of the page for twelve nuclides of them, swallowed
+    // or breathed in as a gas or vapour, against the database's row of its
+    // form at the six ages (chromium's two f1 values and organic mercury's
+    // by the nearer row): e within 0.4 %, and sulphur dioxide (2 % off from
+    // 1 year on with the f1 of sulphur swallowed) within 0.1 %, its lower
+    // large intestine within 0.3 %. The three gases that DCAL's library has
+    // no file for (gen-dose-icrp60.mjs gases72) within 0.02 %.
     {
-      const NUCLIDES = ['H-3', 'C-14', 'S-35', 'Ni-63', 'Ru-106', 'Te-132', 'I-129', 'I-131', 'Hg-197', 'Hg-203'];
-      const offF = [], seen = new Set(), taken = new Set(); let worstF = 0, so2 = 0, so2Colon = 0, cases = 0;
+      const NUCLIDES = ['H-3', 'C-11', 'C-14', 'S-35', 'Cr-51', 'Ni-63', 'Ru-106', 'Te-132', 'I-129', 'I-131', 'Hg-197', 'Hg-203'];
+      const offF = [], seen = new Set(), taken = new Set(); let worstF = 0, so2 = 0, so2Colon = 0, cases = 0, made = 0, madeN = 0;
       for (const route of ['ingestion', 'inhalation']) for (const c of d60.cases[route]) {
         const gas = c.type === 'V' || c.type === 'G';
         if (!NUCLIDES.includes(c.nuclide) || (route === 'inhalation' && !gas)) continue;
@@ -2337,25 +2377,43 @@ if (!SYSTEM || SYSTEM === '60') {
           if (!row || taken.has(row)) { offF.push(`${label} ${age} d: ${row ? 'a row taken twice' : 'no row'}`); return; }
           taken.add(row);
           if (c.lung === 'SO2GAS') { so2 = Math.max(so2, Math.abs(q - 1)); so2Colon = Math.max(so2Colon, Math.abs(res[i].H['Lower large intestine'] / row.H['Lower large intestine'].at(-1) - 1)); }
+          if (['HCH4GAS', 'CVAPOR', 'CH4GAS'].includes(c.lung)) { made = Math.max(made, Math.abs(q - 1)); madeN++; }
           worstF = Math.max(worstF, Math.abs(q - 1));
           if (!(Math.abs(q - 1) <= 0.004)) offF.push(`${label} ${age} d ${q.toFixed(4)}`);
         });
       }
-      check(`ICRP 60 vs the ICRP database, chemical forms: ${cases} cases of ${NUCLIDES.length} nuclides in ${seen.size} forms swallowed or breathed in as gas or vapour, each against the database's row of its form at the six ages, e within ${(100 * worstF).toFixed(2)} %; sulphur dioxide within ${(100 * so2).toFixed(2)} %, its lower large intestine ${(100 * so2Colon).toFixed(2)} %`,
-        cases >= 30 && seen.size >= 20 && !offF.length && so2 < 0.001 && so2Colon < 0.003, offF.join('; ') + ' ' + [...seen].join(', '));
+      check(`ICRP 60 vs the ICRP database, chemical forms: ${cases} cases of ${NUCLIDES.length} nuclides in ${seen.size} forms swallowed or breathed in as gas or vapour, each against the database's row of its form at the six ages, e within ${(100 * worstF).toFixed(2)} %; sulphur dioxide within ${(100 * so2).toFixed(2)} %, its lower large intestine ${(100 * so2Colon).toFixed(2)} %; tritiated methane and carbon's vapour and methane within ${(100 * made).toFixed(3)} %`,
+        cases >= 42 && seen.size >= 24 && !offF.length && so2 < 0.001 && so2Colon < 0.003 && madeN === 30 && made < 2e-4, offF.join('; ') + ' ' + [...seen].join(', '));
     }
-    // What the database has and the page has not: 193mIr, tritiated methane,
-    // carbon's vapour and methane, and chromium swallowed with its second
-    // f1. No other intake of the database is without a case here.
+    // 193mIr, whose radiations in the ICRP's calculation are not known (the
+    // page has Publication 107's with Publication 72's half-life): the
+    // tissues that iridium in the body irradiates 6 % above the database,
+    // the walls of the gut 8 %, the same at every age; e 8 % above swallowed,
+    // 4 % as Type M or S, and as Type F between 6 % below (3 months) and 5 %
+    // above. With Publication 107's half-life the first would be 5 % below.
+    {
+      await d60.prepare('Ir-193m');
+      const at = (route, type, key) => { const res = coefficients60(d60, recipe60(d60.cases, route, { nuclide: 'Ir-193m', type }), AGES_60);
+        return AGES_60.map((age, i) => { const c = cd.rows.find((x) => x.nuclide === 'Ir-193m' && x.route === route && (x.type || undefined) === type && x.age === age);
+          return (key === 'E' ? res[i].E : res[i].H[key]) / c.H[key].at(-1); }); };
+      const span = (v) => `${Math.min(...v).toFixed(3)}-${Math.max(...v).toFixed(3)}`, within = (v, lo, hi) => v.every((x) => x >= lo && x <= hi);
+      const eIng = at('ingestion', undefined, 'E'), liver = at('ingestion', undefined, 'Liver'), kidneys = at('inhalation', 'F', 'Kidneys'), wall = at('ingestion', undefined, 'Small intestine');
+      const eF = at('inhalation', 'F', 'E'), eM = at('inhalation', 'M', 'E'), eS = at('inhalation', 'S', 'E');
+      check(`ICRP 60 vs the ICRP database, 193mIr with Publication 107's radiations: liver ${span(liver)} and kidneys ${span(kidneys)} of the database's at the six ages, the small intestine's wall ${span(wall)}; e swallowed ${span(eIng)}, Type M ${span(eM)}, Type S ${span(eS)}, Type F ${span(eF)}`,
+        within(liver, 1.055, 1.07) && within(kidneys, 1.055, 1.07) && within(wall, 1.07, 1.09) && within(eIng, 1.07, 1.09) && within(eM, 1.03, 1.05) && within(eS, 1.03, 1.05) && within(eF, 0.93, 1.06),
+        JSON.stringify({ eIng, eF, eM, eS }));
+    }
+    // Every intake of the database has a case here: by nuclide, route,
+    // absorption Type and chemical form, and as many of it as the database
+    // has f1 values. (Before 193mIr, tritiated methane, carbon's vapour and
+    // methane and trivalent chromium were added, twelve had none.)
     {
       const page = new Map(), db = new Map();
       for (const route of ['ingestion', 'inhalation']) for (const c of d60.cases[route]) { const gas = c.type === 'V' || c.type === 'G';
         const k = `${c.nuclide} ${gas ? 'gas' : route}${gas || !c.type ? '' : ` ${c.type}`}${formOf(c) ? ` (${formOf(c)})` : ''}`; page.set(k, (page.get(k) || 0) + 1); }
       for (const r of cd.rows) { if (r.age !== 7300) continue; const k = `${r.nuclide} ${r.route}${r.type ? ` ${r.type}` : ''}${r.form ? ` (${r.form})` : ''}`; db.set(k, (db.get(k) || 0) + 1); }
       const lacking = [...db].filter(([k, n]) => (page.get(k) || 0) < n).map(([k]) => k).sort();
-      check(`ICRP 60 vs the ICRP database: of its ${db.size} intakes by nuclide, route, type and form the page lacks ${lacking.length}: 193mIr, tritiated methane, carbon's vapour and methane, chromium swallowed with a second f1`,
-        lacking.join('; ') === ['C-11 gas (methane)', 'C-11 gas (organic carbon)', 'C-14 gas (methane)', 'C-14 gas (organic carbon)', 'Cr-48 ingestion', 'Cr-49 ingestion', 'Cr-51 ingestion', 'H-3 gas (tritiated methane)',
-          'Ir-193m ingestion', 'Ir-193m inhalation F', 'Ir-193m inhalation M', 'Ir-193m inhalation S'].join('; '), lacking.join('; '));
+      check(`ICRP 60 vs the ICRP database: every one of its ${db.size} intakes by nuclide, route, type and form has a case on the page`, db.size > 2500 && !lacking.length, lacking.join('; '));
     }
   }
 }

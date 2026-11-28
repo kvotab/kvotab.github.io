@@ -4511,3 +4511,100 @@ nuclide in both systems. Tools in ~/Downloads/icrp-dc/icrpcd: match.mjs
 and cdall.mjs (a run file against the database, every case by its form),
 names/probe.mjs, names/forms.mjs, names/so2.mjs, names/gaps.mjs; run
 files r60-names.json (before the f1) and r60-so2.json (this state).
+
+## What Publication 72 has and DCAL's batch files do not run (2026-11-28, night)
+
+After the names and forms were sorted out, twelve intakes of the ICRP's
+database had no case on the page: trivalent chromium swallowed (three
+nuclides), tritiated methane, carbon's vapour and methane (11C, 14C), and
+193mIr by four ways. The page's cases are DCAL's batch files of FGR 13,
+which do not run them. All are in now (`gen-dose-icrp60.mjs`: `FORMS_72`,
+`gases72`, `methane71`, `FROM_107`); a test checks that no intake of the
+database is without a case.
+
+**Trivalent chromium.** Publication 72's Table A.1 has chromium with two
+f1 values, 0.1 and 0.01 (0.2 and 0.02 for the infant). DCAL's library has
+the file of the second (CrT.gf1, "ingestion trivalent Cr"), which
+$F1DEF.DAT offers beside the hexavalent compounds'; the batch file runs
+the first only. The three cases with CRT: e within 0.12 % of the
+database's rows of f1 0.01 at the six ages, every tissue within 0.35 %
+(names/cr.mjs), and the eighteen two-figure values those of the table.
+
+**The three gases.** DCAL's files for tritiated water, tritium gas and
+carbon dioxide are "in effect an injection to blood" of what is absorbed
+(H2OVapor.LNG, Hgas.LNG with 0.01 %, CO2GAS.LNG). The database's help
+(BIO.chm) gives Publication 71's models of the three that are missing:
+
+- *Tritiated methane* (Table A.3): "1% of inhaled tritiated methane is
+  rapidly absorbed and converted to tritiated water". In the database its
+  doses are 100 times those after tritium gas to all seven figures, in
+  every tissue at every age (names/gasrel.mjs). `HCH4GAS`: Hgas.LNG with
+  0.01 for 0.0001.
+- *Carbon vapour* (Table A.3, "Carbon-11 vapour", "Carbon-14 vapour"): the
+  organic compounds, "completely absorbed by the lung ... follow the model
+  for organic carbon ... treated as if they were directly injected into
+  the blood". `CVAPOR`: CO2GAS.LNG, with C_Org.def.
+- *Methane labelled with carbon* (in the database; not in Table A.3): "1%
+  ... is rapidly absorbed and ... one half of this is converted to carbon
+  dioxide and one half to forms of organic carbon", with a table of three
+  compartments of 9, 40.5 and 50.5 % and carbon dioxide's half-times
+  (3.5E-03 d, 0.04 d, and 8 to 40 d by age). That is half of carbon
+  dioxide's 18, 81 and 1 % plus organic carbon in the third compartment,
+  whose half-time is organic carbon's. `CH4GAS` (0.01 to blood) with
+  `C_CH4`, made from C_CO2.def.
+
+  One detail the database shows and the help does not say: its doses after
+  methane are not 0.005 of those after carbon dioxide plus 0.005 of those
+  after carbon vapour, but less by the same factor in every tissue:
+
+  | 14C, methane / (0.005 dioxide + 0.005 vapour) | 3 mo | 1 y | 5 y | 10 y | 15 y | adult |
+  |---|---|---|---|---|---|---|
+  | every tissue | 0.9702 | 0.9839 | 0.9872 | 0.9906 | 0.9923 | 0.9939 |
+
+  The shortfall times the half-time is the same 0.24 d at every age: the
+  organic half of methane does not pass through organic carbon's transfer
+  compartment (half-time 0.25 d, a mean stay of 0.36 d, against the 58 d
+  that carbon then stays in an adult's tissues and the 12 d in an
+  infant's). In C_CH4 blood is left at 1000 d-1 as in C_CO2.def.
+
+  With these the page's e is the database's within 0.01 % at the six ages
+  for all five intakes, and the eighteen values of Table A.3 for
+  tritiated methane and the two vapours are met in both figures.
+
+**193mIr.** Publication 72 has it with a half-life of 11.9 d. No file of
+Publication 38 has it (DCAL's ICRP38.NDX, ORNL's other copies; FGR 13
+leaves it out), though the database's help says its decay data are
+Publication 38's. Publication 107 has it with 10.53 d: an 80 keV
+transition, 77.6 keV of electrons and 2.7 keV of photons per decay. The
+page takes Publication 107's radiations with Publication 72's half-life
+(names/ir193m.mjs, ir.mjs):
+
+| 193mIr, page / database | liver, kidneys | gut walls | e swallowed | e Type M, S | e Type F | ET |
+|---|---|---|---|---|---|---|
+| 107's radiations, 10.53 d | 0.95 | 1.07 | 1.07 | | | |
+| 107's radiations, 11.9 d (the page) | 1.06 | 1.08 | 1.08 | 1.04 | 0.94-1.05 | 0.70-0.92 |
+| 107's conversion electrons only, 11.9 d | 0.98 | 0.99 | 0.99 | | | |
+
+With 10.53 d the tissues that iridium in the body irradiates and the gut's
+walls (which get their dose within a day or two) go opposite ways; with
+11.9 d everything is off by one factor, so the half-life is the ICRP's and
+the energy per decay is not. What the ICRP had is not published and is not
+simply Publication 107's without the Auger electrons: the airways of the
+nose and throat get more in the database than by any of these, the muscle
+after Type S material (photons from the lungs) too. So it is left at a
+stated rule and a stated difference: 8 % in e swallowed, and most of
+Publication 72's values off in the second figure (2.9E-10 for 2.7E-10,
+adult, swallowed; 6.4E-10 for 6.0E-10 at 10 years). The line under the
+nuclide and Help say
+so; the index marks the nuclide (`from`), and the engine takes its
+radiations as the file has them, not as a table of Publication 38 would
+print them. The ICRP 60 system has 839 nuclides with it.
+
+Tests: test-engine.mjs has the three gases' models and cases, chromium's
+two forms, 193mIr's index entry and forms, and against the database the
+new forms among the forms of twelve nuclides, 193mIr's ratios as they are
+(a check that will fail if they move), and that every intake of the
+database has a case here; test-external.mjs counts 839; test-ui.py has the
+line under 193mIr and the new forms in the list. Tools:
+~/Downloads/icrp-dc/icrpcd/names/gasrel.mjs, cr.mjs, a3.mjs, ir193m.mjs,
+ir.mjs, gaps.mjs; run file r60-forms.json.

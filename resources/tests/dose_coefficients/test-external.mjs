@@ -86,7 +86,7 @@ for (const [sys, x] of Object.entries(X)) {
 
 /* ---- catalogues ----------------------------------------------------------------- */
 const cat = { 60: catalog60(D[60]), 103: catalog103(D[103]) };
-check('the ICRP 60 catalogue has external exposure for every ICRP 38 radionuclide (838)', cat[60].nuclides.length === 838 && cat[60].nuclides.every((n) => n.external?.length === 7));
+check('the ICRP 60 catalogue has external exposure for every ICRP 38 radionuclide (838) and for Ir-193m, which Publication 72 has beside them', cat[60].nuclides.length === 839 && cat[60].nuclides.filter((n) => n.from).map((n) => n.name).join() === 'Ir-193m' && cat[60].nuclides.every((n) => n.external?.length === 7));
 check('the ICRP 103 catalogue has it for every ICRP 107 radionuclide (1252), Kr-85 and N-16 by that route only',
   cat[103].nuclides.length === 1252 && cat[103].nuclides.every((n) => n.external?.length === 7)
   && ['Kr-85', 'N-16'].every((k) => { const n = cat[103].nuclides.find((x) => x.name === k); return n && !n.ingestion.length && !n.inhalation.length && !n.injection.length; }));

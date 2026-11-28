@@ -247,7 +247,8 @@ export function coefficients60(data, spec, ages = AGES_60, opt = {}) {
       // which is what Publication 72's coefficients were calculated from;
       // with dcal the whole file, as DCAL has it. Other decay data are taken
       // as they are.
-      const em = !opt.dcal && data.decaySource?.own ? printed38(data.emissions(m.name), A) : data.emissions(m.name);
+      // as Publication 38's tables print them; a nuclide that is not Publication 38's (index.from) as its file has it
+      const em = !opt.dcal && data.decaySource?.own && !data.index[m.name]?.from ? printed38(data.emissions(m.name), A) : data.emissions(m.name);
       // The atomic number, for spontaneous fission (see60.js); dcal for the
       // SEE as DCAL's SEECAL has them (its photon SAFs and joules per MeV).
       const Z = ATOMIC[/^([A-Z][a-z]?)-/.exec(m.name)[1]];
