@@ -40,7 +40,7 @@ const ONLY = args.includes('--only') ? new RegExp(args[args.indexOf('--only') + 
 const { loadSystem } = await import(path.join(JS, 'data.js'));
 const { coefficients60, AGES_60, TISSUES_60, W_60, REMAINDER_60, remainder60 } = await import(path.join(JS, 'dose60.js'));
 const { TARGETS_60: TARGETS_60_ALL } = await import(path.join(JS, 'see60.js'));
-const { parentModelName, f1FileName, recipe60, assemble60, depositionFor, DEPOSITION_71 } = await import(path.join(JS, 'model60.js'));
+const { parentModelName, f1FileName, recipe60, assemble60, depositionFor, DEPOSITION_71, listedRegions } = await import(path.join(JS, 'model60.js'));
 const { coefficients103, AGES_103 } = await import(path.join(JS, 'dose103.js'));
 const { emissionWeights, sAllRows, pchipSlopes, pchipEval, pchipIntegral, spectrumLines, MEV } = await import(path.join(JS, 'see103.js'));
 const { firstYearWeight, dcalWeight } = await import(path.join(JS, 'solve.js'));
@@ -1475,6 +1475,44 @@ if (!SYSTEM || SYSTEM === '103') {
     JSON.stringify({ loss, own: voids({}), dcal: voids({ icrp72: false }) }));
 }
 
+// ICRP 60: radium's chain as ICRP 72's coefficients have it -- the radon it
+// forms in the gut absorbed from the small intestine, what radon decays to
+// left where it is formed, the tissues radon's model lists as regions of
+// the chain. Not with DCAL's reading (icrp72: false), and the radon of
+// thorium's chain is carried on with the contents.
+{
+  for (const nuclide of ['Ra-226', 'Th-227', 'Pb-210']) await d60.prepare(nuclide);
+  const sysOf = (nuclide, route, spec = {}, type) => assemble60(d60, { ...recipe60(d60.cases, route, { nuclide, type }), intakeAge: 7300, ...spec });
+  const memberOf = (sys, name) => sys.members.findIndex((m) => m.name === name);
+  // a member's rates from the small intestine to blood, and how many transfers of its systemic model it has
+  const absorbed = (sys, name) => sys.transfers.filter((x) => sys.comps[x.from].member === memberOf(sys, name) && sys.comps[x.from].name === 'SI_Cont' && x.to >= 0 && sys.comps[x.to].name === 'Blood').map((x) => x.rates[0]);
+  const systemic = (sys, name) => sys.transfers.filter((x) => sys.comps[x.from].member === memberOf(sys, name) && x.origin === 'systemic').length;
+  const ra = sysOf('Ra-226', 'ingestion'), raDcal = sysOf('Ra-226', 'ingestion', { icrp72: false }), raS = sysOf('Ra-226', 'inhalation', {}, 'S');
+  const th = sysOf('Th-227', 'ingestion'), pb = sysOf('Pb-210', 'ingestion');
+  const f1Of = (sys, name) => sys.members[memberOf(sys, name)].f1;
+  const rate = absorbed(ra, 'Rn-222');
+  check(`ICRP 60: the radon that radium taken in forms in the gut is absorbed from the small intestine completely (RNRA_I72, f1 = 1: ${rate[0]?.toFixed(0)} d-1, as every f1 of 1), after Type S material breathed in too; by DCAL's Rn.gf1 not at all, and so the radon of thorium's chain`,
+    JSON.stringify(d60.models.f1.RNRA_I72.f1) === '[1]' && JSON.stringify(d60.models.f1.RN.f1) === '[0]'
+    && f1Of(ra, 'Rn-222') === 'RNRA_I72' && rate.length === 1 && near(rate[0], 594, 1e-12)
+    && f1Of(raS, 'Rn-222') === 'RNRA_I72' && near(absorbed(raS, 'Rn-222')[0], 594, 1e-12) && ra.members[memberOf(raS, 'Rn-222')].f1cap === null
+    && f1Of(raDcal, 'Rn-222') === 'RN' && absorbed(raDcal, 'Rn-222').every((v) => v === 0)
+    && th.members[memberOf(th, 'Rn-219')].bio === 'RNTH' && f1Of(th, 'Rn-219') === 'RN' && absorbed(th, 'Rn-219').every((v) => v === 0),
+    JSON.stringify({ rate, typeS: absorbed(raS, 'Rn-222'), dcal: absorbed(raDcal, 'Rn-222'), thorium: [f1Of(th, 'Rn-219'), absorbed(th, 'Rn-219')] }));
+  const moves = Object.fromEntries(['Po-218', 'Pb-214', 'Bi-214', 'Po-214', 'Po-210'].map((n) => [n, systemic(ra, n)]));
+  // 218Po's compartments are those it is formed in, radon's
+  const names = (sys, name) => sys.comps.filter((c) => c.member === memberOf(sys, name)).map((c) => c.name).sort().join();
+  check(`ICRP 60: what radon decays to stays where it is formed -- 218Po has no transfer of polonium's model (${moves['Po-218']}), 214Pb, 214Bi, 214Po and 210Po have theirs (${moves['Pb-214']}, ${moves['Bi-214']}, ${moves['Po-214']}, ${moves['Po-210']}); by DCAL's reading 218Po has them too`,
+    moves['Po-218'] === 0 && moves['Pb-214'] > 20 && moves['Bi-214'] > 20 && moves['Po-214'] > 20 && moves['Po-210'] === moves['Po-214']
+    && systemic(raDcal, 'Po-218') === moves['Po-214'] && names(ra, 'Po-218') === names(ra, 'Rn-222')
+    && systemic(th, 'Po-215') === 0 && systemic(pb, 'Po-210') > 20,
+    JSON.stringify({ moves, dcal: systemic(raDcal, 'Po-218'), po218: names(ra, 'Po-218') }));
+  check(`ICRP 60: with radon in the chain the tissues its model lists are regions of the chain (${ra.gasRegions.join(', ')}), the testes and the ovaries that no member is carried into among them; not in lead's chain, and not by DCAL's reading`,
+    ra.gasRegions.includes('Testes') && ra.gasRegions.includes('Ovaries') && !ra.members.some((m) => m.explicit.includes('Testes') || m.explicit.includes('Ovaries'))
+    && JSON.stringify([...listedRegions(d60.models.systemic.RNRA)].sort()) === JSON.stringify([...ra.gasRegions].sort())
+    && pb.gasRegions.length === 0 && raDcal.gasRegions.length === 0 && th.gasRegions.includes('Testes'),
+    JSON.stringify({ radium: ra.gasRegions, lead: pb.gasRegions, dcal: raDcal.gasRegions }));
+}
+
 /* ---- the mass of the body's tissues (ICRP 60; see60.js BODY_TISSUES_60) ------------------------ */
 // What a source spread through the whole body is spread over: the database's
 // masses, DCAL's with dcal. 3H in the body tissues of the adult: every
@@ -1794,10 +1832,10 @@ if (!SYSTEM || SYSTEM === '60') {
   else {
     const TIMES = [1, 7, 30, 365, 1825, 3650, 7300, 10950, 16425];
     // this page over the database at each stored time, for a tissue of an intake by ingestion
-    const over = async (nuclide, age, tissue, opt = {}) => {
+    const over = async (nuclide, age, tissue, opt = {}, spec = {}) => {
       const c = cd.rows.find((x) => x.nuclide === nuclide && x.route === 'ingestion' && x.age === age);
       await d60.prepare(nuclide);
-      const r = coefficients60(d60, recipe60(d60.cases, 'ingestion', { nuclide }), [age], { outputs: TIMES, ...opt })[0];
+      const r = coefficients60(d60, { ...recipe60(d60.cases, 'ingestion', { nuclide }), ...spec }, [age], { outputs: TIMES, ...opt })[0];
       const n = r.system.comps.length;
       return c.H[tissue].map((v, i) => { const p = r.series.find((x) => Math.abs(x.t - TIMES[i]) < 1e-6);
         return (p ? TISSUES_60[tissue].reduce((u, [t, w]) => u + w * p.y[n + TARGETS_60_ALL.indexOf(t)], 0) : r.H[tissue]) / v; });
@@ -1971,6 +2009,42 @@ if (!SYSTEM || SYSTEM === '60') {
       for (const age of [100, 365]) fe.day1.push((await over('Fe-55', age, 'Bladder'))[0]);
       check(`ICRP 60 vs the ICRP database, iron: 55Fe and 59Fe, muscle, liver, spleen and red marrow at every time within ${(100 * fe.adult).toFixed(2)} % for the adult, ${(100 * fe.ten).toFixed(2)} % at 10 years and ${(100 * fe.infant).toFixed(2)} % at 3 months; the adult's bladder wall after 55Fe within ${(1e5 * fe.bladder).toFixed(0)}e-5 of its muscle at every time, the lower large intestine within ${(100 * fe.lli).toFixed(2)} %; the bladder wall on the first day ${fe.day1.map((x) => x.toFixed(4)).join(' at 3 months and ')} at 1 year`,
         fe.adult < 0.0015 && fe.ten < 0.003 && fe.infant < 0.0015 && fe.bladder < 2e-4 && fe.lli < 0.0012 && fe.day1.every((x) => Math.abs(x - 1) < 0.001), JSON.stringify(fe));
+    }
+    // Radium's chain. With the radon formed in the gut absorbed (RNRA_I72),
+    // 218Po left where it is formed, the testes and the ovaries regions of
+    // the chain and each region's share of a member's Other taken from
+    // masses that run straight in age, nine tissues are within 0.6 % of
+    // the database at every time after 226Ra swallowed at any of the six
+    // ages (0.15 % at 3 months and for the adult). By DCAL's reading the
+    // kidneys get 1.80 of the database's dose on the first day at 3 months,
+    // 1.2-1.4 at the other ages, and the testes 0.57 of it by the fifth
+    // year after an intake at 10 years. After 224Ra the adult's soft
+    // tissues are within 1.1 % (a quarter below it on the first day without
+    // the thoron absorbed). The shares by mass alone, where the gonads are
+    // regions already: 238U's are within 0.15 % at 3 months and at 10 years
+    // (13 % above and 10 % below with the shares straight in age). And what
+    // must not move: 227Th's muscle (thorium's radon is not absorbed) and
+    // 210Pb's testes, the muscle's dose to 1e-5 (lead's chain has the
+    // gonads in the rest of the body).
+    {
+      const TIS = ['Muscle', 'Kidneys', 'Liver', 'Spleen', 'Testes', 'Ovaries', 'Small intestine', 'Upper large intestine', 'Lower large intestine'];
+      const worst = async (nuclide, age, tissues, opt, spec) => { let w = 0; for (const t of tissues) for (const x of await over(nuclide, age, t, opt, spec)) w = Math.max(w, Math.abs(x - 1)); return w; };
+      const ra = {}, asDcal = {};
+      for (const age of [100, 365, 1825, 3650, 5475, 7300]) { ra[age] = await worst('Ra-226', age, TIS); asDcal[age] = await worst('Ra-226', age, TIS, {}, { icrp72: false }); }
+      const kidneys = (await over('Ra-226', 100, 'Kidneys', {}, { icrp72: false }))[0], testes = (await over('Ra-226', 3650, 'Testes', {}, { icrp72: false }))[4];
+      check(`ICRP 60 vs the ICRP database, radium's chain: nine tissues at every time after 226Ra swallowed within ${[100, 365, 1825, 3650, 5475, 7300].map((a) => (100 * ra[a]).toFixed(2)).join(', ')} % at the six ages (by DCAL's reading ${[100, 365, 1825, 3650, 5475, 7300].map((a) => (100 * asDcal[a]).toFixed(0)).join(', ')} %: the kidneys ${kidneys.toFixed(2)} of the database on the first day at 3 months, the testes ${testes.toFixed(2)} by the fifth year after an intake at 10 years)`,
+        ra[100] < 0.002 && ra[365] < 0.005 && ra[1825] < 0.004 && ra[3650] < 0.004 && ra[5475] < 0.007 && ra[7300] < 0.002
+        && Object.values(asDcal).every((v) => v > 0.2) && kidneys > 1.7 && testes < 0.6, JSON.stringify({ ra, asDcal, kidneys, testes }));
+      const SOFT = ['Muscle', 'Kidneys', 'Liver', 'Small intestine', 'Upper large intestine', 'Lower large intestine'];
+      const thoron = await worst('Ra-224', 7300, SOFT), thoronDcal = (await over('Ra-224', 7300, 'Muscle', {}, { icrp72: false }))[0];
+      const u = { 100: await worst('U-238', 100, ['Testes', 'Ovaries']), 3650: await worst('U-238', 3650, ['Testes', 'Ovaries']) };
+      const straight = { 100: await worst('U-238', 100, ['Testes'], { dcal: true }), 3650: await worst('U-238', 3650, ['Testes'], { dcal: true }) };
+      const th = await worst('Th-227', 7300, ['Muscle']);
+      const pbT = await over('Pb-210', 3650, 'Testes'), pbM = await over('Pb-210', 3650, 'Muscle');
+      const lead = Math.max(...pbT.map((x, i) => Math.abs(x - pbM[i])));
+      check(`ICRP 60 vs the ICRP database, chains: the adult's soft tissues after 224Ra within ${(100 * thoron).toFixed(2)} % at every time (the muscle ${thoronDcal.toFixed(2)} of it on the first day by DCAL's reading); 238U's testes and ovaries within ${(100 * u[100]).toFixed(2)} % at 3 months and ${(100 * u[3650]).toFixed(2)} % at 10 years with the shares by masses straight in age (the testes ${(100 * straight[100]).toFixed(0)} and ${(100 * straight[3650]).toFixed(0)} % off with the shares themselves straight); 227Th's muscle within ${(100 * th).toFixed(2)} %; 210Pb's testes the muscle's ratio within ${(1e5 * lead).toFixed(1)}e-5 after an intake at 10 years`,
+        thoron < 0.011 && thoronDcal < 0.8 && u[100] < 0.0015 && u[3650] < 0.002 && straight[100] > 0.1 && straight[3650] > 0.08 && th < 0.005 && lead < 5e-5,
+        JSON.stringify({ thoron, thoronDcal, u, straight, th, lead }));
     }
     // The airways' parts that the database stores, after intakes by
     // inhalation as Type M by the adult. Beta emitters: the alveolar region

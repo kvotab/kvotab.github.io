@@ -168,7 +168,11 @@ export function dcalWeight(ageDays, interval = ageDays < 365 ? 0 : 1) {
  *                        functionals: Float64Array[] (optional; weights of the targets' doses, such
  *                        as those that make the effective dose), byCompartment (optional: a dose
  *                        group for every compartment, so that the functionals' shares are each
- *                        compartment's -- the Model tab's boxes; more integrals, the same doses)}
+ *                        compartment's -- the Model tab's boxes; more integrals, the same doses),
+ *                        split (optional, per comp or null: the parts its activity is shared among
+ *                        by mass, [{cols, mass, total} or {cols, rest: true}], cols per phantom age
+ *                        as `columns`, mass and total per phantom age; with ICRP 103's steps, and
+ *                        in the ICRP 60 system with dose.hold)}
  * @param {object} opt   {intakeAge, period (days), outputs: number[] (days after intake), rtol}
  * @returns {{H: Float64Array, U: number[], q: Float64Array, series, stats, doseGroups, parts}} the
  *   dose to each target (Sv per Bq), the transformations in each group, the activities at the end,
@@ -351,6 +355,34 @@ export function integrate(sys, dose, opt) {
         }
       }
     });
+    /* A group in parts (dose.split) in the ICRP 60 system: the stretch
+       has one age (dose.hold's, or one past the last phantom's), and the
+       group's SEE is each part's at that age times the part's share of the
+       mass there -- the masses straight in age between the phantoms', the
+       part marked `rest` with what the others leave. The basis functions
+       add up to one, so every coefficient is that SEE. */
+    if (!icrp103) dg.forEach(({ parts }, g) => {
+      if (!parts) return;
+      const w = weightAt(ageMid);
+      const share = parts.map((x) => (x.rest ? 0 : lerp(pa, x.mass, ageMid) / lerp(pa, x.total, ageMid)));
+      const rest = 1 - share.reduce((sum, v) => sum + v, 0);
+      for (let T = 0; T < nT; T++) {
+        let v = 0;
+        parts.forEach((x, i) => {
+          const f = x.rest ? rest : share[i];
+          if (f) v += f * (x.cols[kp][T] + w * (x.cols[hiP][T] - x.cols[kp][T]));
+        });
+        const k = (g * nT + T) * M;
+        for (let j = 0; j < M; j++) coef[k + j] = v;
+      }
+    });
+  };
+  // The weight of the upper phantom's SEE at an age of the stretch.
+  const weightAt = (age) => {
+    const w = stretch.mode === 'first' ? (dcal ? dcalWeight(age, 0) : firstYearWeight(age))
+      : stretch.mode === 'dcal' ? dcalWeight(age, 1)
+      : stretch.h > 0 ? (age - pa[stretch.kp]) / stretch.h : 0;
+    return Math.min(1, Math.max(0, w));
   };
   const B = new Float64Array(M);
   const basis = (age) => {
@@ -361,10 +393,7 @@ export function integrate(sys, dose, opt) {
       return;
     }
     if (heldNow === heldNow) age = heldNow;
-    let w = stretch.mode === 'first' ? (dcal ? dcalWeight(age, 0) : firstYearWeight(age))
-      : stretch.mode === 'dcal' ? dcalWeight(age, 1)
-      : stretch.h > 0 ? (age - pa[stretch.kp]) / stretch.h : 0;
-    w = Math.min(1, Math.max(0, w));
+    const w = weightAt(age);
     if (product) {
       const x = stretch.h > 0 ? Math.min(1, Math.max(0, (age - pa[stretch.kp]) / stretch.h)) : 0;
       B[0] = (1 - x) * (1 - w); B[1] = (1 - x) * w; B[2] = x * (1 - w); B[3] = x * w;

@@ -4044,3 +4044,175 @@ halves at the adult's rate at 3 months, the bladder's own rate, DCAL's
 reading untouched), and against the database the four tissues at 3 months,
 the adult's bladder wall beside its muscle, the lower large intestine and
 the bladder wall's first day at 3 months and 1 year (346 checks).
+
+## Radium's chain: radon in the gut, 218Po, the gonads, and shares by mass (2026-11-28, the day after)
+
+It began with 226Ra at 3 months, 1.06 of the database's dose to the soft
+tissues on the first day. It was not the infant: the adult's kidneys got
+1.22 of the database's dose on that day and the walls of the intestine
+1.09-1.12. Four things about a chain with independent kinetics came out,
+each read off the ICRP's database of dose coefficients (page over
+database after 226Ra is swallowed, at 1 d and in the end; by DCAL's
+reading and now):
+
+                   3 months                   10 years                   adult
+    kidneys        1.80 1.03 -> 0.999 1.000   1.28 1.01 -> 1.000 0.999   1.22 1.01 -> 0.999 0.999
+    liver          1.36 1.00 -> 1.000 1.001   1.05 1.00 -> 0.998 0.998   1.03 1.00 -> 0.999 0.999
+    muscle         1.06 1.00 -> 0.999 1.000   1.01 1.00 -> 1.000 1.000   1.01 1.00 -> 1.000 1.000
+    upper large    1.12 1.02 -> 1.001 1.000   1.11 1.03 -> 1.000 1.000   1.11 1.04 -> 1.001 1.000
+    testes         1.02 0.96 -> 0.999 1.001   1.01 0.67 -> 1.000 1.002   1.01 1.00 -> 1.000 1.000
+    spleen         1.40 1.03 -> 0.999 1.000   1.04 1.02 -> 1.001 1.000   1.03 1.01 -> 0.999 0.999
+
+Nine tissues (those, the ovaries, the small and the lower large intestine)
+are now within 0.13, 0.37, 0.27, 0.26, 0.52 and 0.14 % of the database at
+every stored time after an intake at 3 months, 1, 5, 10 and 15 years and
+by the adult; by DCAL's reading the worst of them was 80, 21, 21, 43, 42
+and 22 % off.
+
+**1. The radon that radium forms in the gut is absorbed.** DCAL's Rn.gf1
+has an f1 of 0, so the radon formed in the contents of the tract travelled
+with them to the end and its short-lived progeny irradiated the walls and,
+absorbed as lead, bismuth and polonium, the kidneys and the liver. The
+first-day doses by chain member and source region (chain/parts.mjs) showed
+what the database lacks: of the adult's dose to the wall of the small
+intestine 10.6 % came from radon and its progeny in the contents, and the
+page stood 12 % above the database; in the upper large intestine 27 % and
+11 % (the radon formed in the colon itself stays). Radon absorbed from the
+small intestine completely -- an f1 of 1, which the engine takes as 0.99
+as every f1 of 1 (594 d-1 against the tract's 6) -- closes it: 0.9999,
+1.0011 and 1.0010 for the three walls, the kidneys 1.0011. Leaving the gut
+contents at 100 d-1, as radon leaves the airways, would empty the stomach
+and the colon of it too (the colon's wall 0.72-0.81).
+
+224Ra says how fast. Its 220Rn lives 56 s, and what is absorbed gives
+212Pb to the blood: without it every soft tissue got 0.89 of the
+database's committed dose (0.75 on the first day; the kidneys 0.22 after
+Type S material breathed in). Page over database on the first day by the
+rate from the small intestine to blood:
+
+    d-1         300     450     594     800     1e5
+    muscle      0.910   0.965   1.009   1.060   1.467
+    SI wall     1.040   1.021   1.005   0.987   0.843
+
+The muscle is the database's at about 565 d-1 and the wall at 650; 0.99 is
+594. Complete absorption with f1 = 1 as 0.99 is also what the database has
+for caesium, iodine and rubidium (the colon's walls within 0.08 %).
+
+After Type S material the radon is absorbed all the same (226Ra Type S:
+the small intestine 1.157 -> 0.9996), so the rule that a member is
+absorbed no more than a Type S parent does not hold for it.
+
+Only radium's own chains. After 227Th swallowed the soft tissues are
+within 0.4 % of the database with Rn.gf1 (the muscle 0.9964 on the first
+day) and 7 % above it with the radon absorbed. So the f1 is that of the
+member whose model is RnRa.def (RNRA_I72 in models.json, written by the
+generator; model60.js takes a member's <model>_I72 where there is one),
+and RnTh.def's radon keeps Rn.gf1.
+
+**2. 218Po stays where it is formed.** With the radon absorbed the spleen
+was still 1.01 of the database's dose for the adult, 1.07 in the first
+year after an intake at 15 years and 1.10 on the first day after Type S
+material; the liver 1.04 on that day. DCAL's PoRa.def takes polonium out
+of blood at 100 d-1 (25.5 to the liver, 8.5 each to kidneys and red
+marrow, 4.25 to the spleen), a quarter of the 218Po (3.05 min) that radon
+forms in blood. With 218Po left in blood: spleen 0.9993, liver 0.9992,
+kidneys 0.998-0.999, flat in time. It is not polonium's rate that is
+other: 210Po after 210Pb, with PoPb.def's same 100 d-1, has the spleen
+within 0.2 % of the database from the first day on, and at the 0.25 d of
+polonium's own model (2.77 d-1) it would be a quarter below it on that
+day and the muscle 6 % above in the end. Nor do 214Pb and 214Bi stay
+(kept in place they leave the kidneys 3 % low), nor 211Bi, which lives
+2 minutes (the kidneys after 223Ra 0.83 without its move). model60.js:
+a member that every way into which is from a noble gas takes no part in
+its element's systemic model (stays; the others such are 216Po, 215Po
+and 214Po from 218Rn, which live under a second).
+
+**3. The testes and the ovaries are regions of a chain with radon.** The
+database's own doses say it: after 226Ra the testes get the muscle's dose
+in the adult, but (testes over muscle, by interval)
+
+    intake at 10 years:  30 d-1 y 1.41    1-5 y 2.07    5-10 y 1.09
+    intake at 5 years:   1-5 y 0.95       5-10 y 1.91   10-20 y 1.07
+    intake at 3 months:  first 30 days 1.03-1.04        10-20 y 1.75
+
+Twice the muscle's dose between 10 and 15 years of age, when the testes
+grow from 1.9 to 15.5 g, is no physiology: it is what comes of a share of
+the rest of the body's activity that follows the testes' mass, times a
+dose per transformation in the testes that is interpolated between the
+phantoms. So the database counts a share of radium's Other in the gonads,
+as it does in a tissue that a member's model names. None of DCAL's files
+of radium's chain carries a member into the gonads; all four (RnRa, PoRa,
+PbRa, BiRa) list them as compartments a member leaves. Lead's chain has
+the gonads in the rest of the body in the database (210Pb: the testes'
+dose is the muscle's to 1e-5 at every age and time), though BiPb and PoPb
+list them the same way. What radium's chains have and lead's have not is
+radon, whose model lists every soft tissue it leaves at 100 d-1: the
+regions radon's model lists are the chain's (model60.js gasRegions,
+listedRegions; in uranium's and thorium's chains thorium names the gonads
+anyway).
+
+**4. A region's share is by masses that run straight in age.** DCAL
+(ACTACAL, then EPACAL) interpolates the share itself straight in age and
+multiplies by the SEE at the age; that product was in solve.js as the
+cross columns. With the gonads as regions it gave the testes 0.88 of the
+database's dose in the five years after 226Ra at 10 years and 1.11 at 3
+months. The database has the region's mass over the Other's at the age,
+each mass straight in age between the phantoms' (the same change of
+variable for every region, x M1 / M(x) for the share's x: sharex in
+chain/variants.mjs). And the Other's mass is counted from the phantoms'
+file's body mass (the database's help lists 3536, 9543, 19458, 32620,
+55825 and 68831 g), not from BODY_TISSUES_60, which is for the SEE of the
+body's tissues: with the latter 238U's testes at 3 months were 0.5 % low.
+Uranium, where thorium names the gonads and the rule was DCAL's already,
+shows it alone (238U swallowed, testes, page over database at 1 y and
+5 y):
+
+                         shares straight      masses straight
+    intake at 3 months   1.12  1.09           0.9995  1.0000
+    intake at 10 years   0.93  0.89           1.0001  1.0001
+
+solve.js: a group in parts (dose.split, ICRP 103's own way) also outside
+ICRP 103's steps, the age held by dose.hold; dose60.js gives the parts
+(otherParts) unless `dcal`, which keeps DCAL's product.
+
+**What it does to the whole.** Against the database, committed doses of
+the 2,880 tissue values of radium's nuclides: within 1 % 58.8 -> 75.6 %,
+within 5 % 83.8 -> 98.2 %; e within 1 % 95.8 -> 98.3 %. 224Ra's tissues
+within 1 %: swallowed 23 -> 81 %, Type M 26 -> 81 %, Type S 21 -> 96 %.
+226Ra's by every route 72-88 -> 100 %. Uranium's e within 0.2 % 62.9 ->
+68.3 %. Lead's, tellurium's and thorium's as before. The effective dose
+hardly moves, the bone surfaces carrying it: 224Ra swallowed by the adult
+6.43e-8 -> 6.57e-8 Sv/Bq (database 6.54e-8), 226Ra at 10 years 7.95e-7 ->
+8.03e-7 (8.03e-7). Of all 14,617 e values 96.6 % round to ICRP 72's two
+figures (96.5), of the organ doses 95.9 % (95.8).
+
+**Left.**
+
+- Where progeny in the rest of the body give most of the dose, the gonads
+  get 2-5 % and the spleen 1-3 % more than in the database, the muscle up
+  to 1 %: 223Ra and 224Ra (adult: testes 1.05, spleen 1.02-1.03), 228Ra
+  and 232U by way of 228Th (testes 1.03). In the database's own doses the
+  adult's testes get 0.96 of the muscle's dose after 223Ra and 224Ra, the
+  spleen 0.98 and 0.99, where this page has them alike. The shares by
+  mass uncovered it for 232U and 228Ra (testes 1.01 -> 1.03): before,
+  too little in the growing years hid it. Not a member's own Other left
+  out of the regions its model names (232U's spleen would be 0.72).
+- 223Ra at 3 months: the soft tissues 0.80 of the database on the first
+  day and 0.95 in the end, the kidneys 0.69 and 0.89 (224Ra 0.97 and
+  0.99; 226Ra fine). Not the radon's rate (at 1485 d-1 the muscle is
+  0.83) nor lead's f1 alone.
+- 226Ra at 15 years: bone surfaces and red marrow 0.5 % above from the
+  first year on.
+- 226Th (the spleen far off: where its chain ends) and 230U, as before.
+
+Tests: test-engine.mjs has the assembled chains (radon's f1 and rate after
+radium swallowed and breathed in as Type S, DCAL's reading, thorium's
+radon; 218Po without polonium's transfers, the other members with
+theirs; the regions radon's model lists, none for lead's chain) and
+against the database 226Ra's nine tissues at the six ages, 224Ra's soft
+tissues, 238U's gonads at 3 months and 10 years with the shares either
+way, 227Th's muscle and 210Pb's testes beside its muscle (351 checks).
+Tools in ~/Downloads/icrp-dc/icrpcd/chain: parts.mjs and gparts.mjs (a
+dose by member and source region or compartment), var.mjs with
+variants.mjs (a case with the assembled system patched), elstat.mjs and
+nucdiff.mjs (run files by element and nuclide), limits.mjs.

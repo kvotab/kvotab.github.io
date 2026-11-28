@@ -223,9 +223,13 @@ export function assemble60(data, spec) {
     if (kinetics === 'I') {
       const name = memberModelName(el, parentEl);
       if (models.systemic[name]) {
-        const f1 = f1FileName(models, el, route, name, inhaledType, null) || parentF1;
-        const cap = inhaledType === 'S' && !models.f1[`${el.toUpperCase()}$S`] ? parentF1 : null;
-        return { bio: name, f1, f1cap: cap, own: true };
+        const own = f1FileName(models, el, route, name, inhaledType, null) || parentF1;
+        // The member's f1 as ICRP 72's coefficients have it, where that is
+        // not its element's file (RNRA_I72, radon after radium: see
+        // gen-dose-icrp60.mjs); it holds whatever the type inhaled.
+        const as72 = spec.icrp72 !== false && models.f1[`${name}_I72`] ? `${name}_I72` : null;
+        const cap = !as72 && inhaledType === 'S' && !models.f1[`${el.toUpperCase()}$S`] ? parentF1 : null;
+        return { bio: name, f1: as72 || own, f1cap: cap, own: true };
       }
       notes.push(`${m.name}: no model ${name}.DEF for it as a member of the ${parentEl} chain; it takes the parent's model`);
     }
@@ -269,6 +273,25 @@ export function assemble60(data, spec) {
     && chain.branches.some((b) => b.from === j && !NOBLE_GASES.has(elementOf(chain.members[b.to].name))));
   const gasRule = chain.members.map((m, j) => (j > 0 && kinetics === 'S' ? nobleGasRule(m.name, chain.members[0].name, m.T, keptGas[j]) : null));
 
+  /* What a noble gas decays to takes no part in its element's systemic model
+     in ICRP 72's coefficients: it decays where it is formed. That is 218Po,
+     which lives 3 minutes (the others live under a second). DCAL's files
+     take polonium out of blood at 100 d-1, a quarter of the 218Po formed
+     from radon there, a twentieth of it to the spleen: after 226Ra the
+     spleen then gets 1.01 of the dose of the ICRP's database of dose
+     coefficients (1.07 in the first year after an intake at 15 years, and
+     1.10 on the first day after Type S material is breathed in), the liver
+     1.04 on that day; with 218Po left where it is, all are within 0.2 %.
+     Polonium formed otherwise does leave blood at that rate (210Po after
+     210Pb: the spleen within 0.2 % from the first day on; at the 0.25 d of
+     polonium's own model it would be a quarter below), and so do 214Pb and
+     214Bi (kept in place they leave the kidneys 3 % low). */
+  const stays = chain.members.map((m, j) => {
+    if (j === 0 || kinetics !== 'I' || spec.icrp72 === false) return false;
+    const from = chain.branches.filter((b) => b.to === j);
+    return from.length > 0 && from.every((b) => NOBLE_GASES.has(elementOf(chain.members[b.from].name)));
+  });
+
   const git = models.git;
   const bladder = models.bladder;
   const giKeys = new Set(GI.map(key));
@@ -301,8 +324,8 @@ export function assemble60(data, spec) {
     const f1 = f1Table(models, mm.f1, mm.f1cap);
     if (f1) addTransfer(j, 'SI_Cont', 'Blood', f1.ages, f1.rates, 'f1');
     else notes.push(`${m.name}: no f1 file, no absorption from the small intestine`);
-    // Systemic model.
-    for (const [from, to, rates] of sys.transfers) {
+    // Systemic model (not for a member that stays where it is formed).
+    if (!stays[j]) for (const [from, to, rates] of sys.transfers) {
       if (rates.every((r) => r === 0)) { comp(j, from); if (!isSink(to)) comp(j, to); continue; }
       addTransfer(j, from, to, sys.ages, rates, 'systemic');
     }
@@ -319,7 +342,7 @@ export function assemble60(data, spec) {
       const keep = gasRule[br.to] ? gasRule[br.to](comps[i].region) : 1;
       if (!(keep > 0)) continue;
       let t = compIndex[br.to].get(k);
-      if (t === undefined && gasRule[br.to]) t = comp(br.to, comps[i].name); // decays where it is born
+      if (t === undefined && (gasRule[br.to] || stays[br.to])) t = comp(br.to, comps[i].name); // decays where it is born
       if (t === undefined) {
         // DCAL's category 1 problem: the daughter's model says nothing about
         // this compartment. Its own files are complete for the cases they
@@ -350,8 +373,25 @@ export function assemble60(data, spec) {
      "Other" is the complement of. */
   const explicit = memberModels.map((mm) => explicitRegions(models.systemic[mm.bio]));
 
+  /* With radon in a chain of independent kinetics, the tissues radon's own
+     model lists -- those it leaves for blood at 100 d-1, the testes and the
+     ovaries among them -- are source regions of the chain in ICRP 72's
+     coefficients, although no member is carried into them: a share of each
+     member's Other is counted in them by mass (dose60.js). It shows where
+     the share and the SEE run differently with age: after 226Ra the testes
+     get twice the muscle's dose between 10 and 15 years of age in the ICRP's
+     database, 1.04 times it at 3 months, and the same in an adult. Lead's
+     chains, which have no radon, have the gonads in the rest of the body
+     (210Pb: the muscle's dose at every age), as by DCAL's rule. */
+  const gasRegions = new Set();
+  if (kinetics === 'I' && spec.icrp72 !== false) {
+    chain.members.forEach((m, j) => {
+      if (j > 0 && memberModels[j].own && NOBLE_GASES.has(elementOf(m.name))) for (const r of listedRegions(models.systemic[memberModels[j].bio])) gasRegions.add(r);
+    });
+  }
+
   return {
-    system: 'icrp60', spec: { ...spec, kinetics }, chain, notes,
+    system: 'icrp60', spec: { ...spec, kinetics }, chain, notes, gasRegions: [...gasRegions],
     members: chain.members.map((m, j) => ({ ...m, bio: memberModels[j].bio, f1: memberModels[j].f1, f1cap: memberModels[j].f1cap || null, ownModel: memberModels[j].own, explicit: [...explicit[j]] })),
     comps, transfers, decays, init,
     lungModel: lungName, f1Parent: parentF1,
@@ -458,6 +498,21 @@ export function explicitRegions(sys) {
     if (!r || r === regionOf(from) || ['Blood', 'Other', 'Body_Tis', 'BT-Soft', 'Urine', 'Feces', 'Excreta'].includes(r)) continue;
     if (CONTENTS.has(r) || LUNG_REGIONS.has(r)) continue;
     out.add(r);
+  }
+  return out;
+}
+
+/* The tissues a systemic model lists at all, those it only leaves too (see
+   gasRegions in assemble60). */
+export function listedRegions(sys) {
+  const out = new Set();
+  for (const [from, to] of sys.transfers) {
+    for (const name of [from, to]) {
+      const r = regionOf(name);
+      if (!r || ['Blood', 'Other', 'Body_Tis', 'BT-Soft', 'Urine', 'Feces', 'Excreta'].includes(r)) continue;
+      if (CONTENTS.has(r) || LUNG_REGIONS.has(r)) continue;
+      out.add(r);
+    }
   }
   return out;
 }

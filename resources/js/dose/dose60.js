@@ -231,6 +231,8 @@ export function coefficients60(data, spec, ages = AGES_60, opt = {}) {
        Other is the body tissues the parent's model does not name; with
        independent kinetics, see otherTargets. */
     const common = new Set(sys.members.flatMap((m) => (sys.spec.kinetics === 'S' ? sys.members[0].explicit : m.explicit)));
+    // With radon in the chain, the tissues its model lists too (model60.js gasRegions).
+    for (const r of sys.gasRegions || []) common.add(r);
     // Tellurium's Other takes in the mineral bone, and so does its chain's.
     const boneInOther = !opt.dcal && BONE_IN_OTHER_60.has(sys.members[0].bio);
     const targets = sys.members.map((m, j) => otherTargets(j, sys.members, common, boneInOther));
@@ -281,13 +283,38 @@ export function coefficients60(data, spec, ages = AGES_60, opt = {}) {
     /* DCAL shares a member's Other activity out by fractions interpolated
        linearly in age (ACTACAL) and multiplies by SEE interpolated with its
        weights (EPACAL): with shares, the Other groups take solve.js's cross
-       columns. Without, every group keeps two basis functions. */
+       columns (`dcal`; otherwise otherParts below). Without, every group
+       keeps two basis functions. */
     const shared = otherSplit.some((ph) => ph.some((split) => split.length > 1));
     const cross = shared ? sys.comps.map((c) => {
       if (c.region !== 'Other') return null;
       const key = `${c.member}|${c.region}`;
       if (!crossCache.has(key)) crossCache.set(key, PHANTOM_AGES_60.slice(1).map((pa, p) => [column(c, p + 1, p), column(c, p, p + 1)]));
       return crossCache.get(key);
+    }) : null;
+    /* ICRP 72's coefficients have a region's share of a member's Other as
+       the region's mass over the Other's at the age, each mass straight in
+       age between the phantoms' (solve.js, a group in parts), and the
+       Other's counted from the body mass of the phantoms' file, not from
+       BODY_TISSUES_60: after 238U swallowed at 10 years the testes got 0.89
+       of the database's dose by the fifth year with the shares themselves
+       straight in age, and get 1.0001 this way; at 3 months 1.13 in the
+       first month, and 0.999. */
+    const partsCache = new Map();
+    const otherParts = shared && !opt.dcal ? sys.comps.map((c) => {
+      if (c.region !== 'Other') return null;
+      const j = c.member;
+      if (partsCache.has(j)) return partsCache.get(j);
+      const colsOf = (region) => phantoms.map((ph, p) => {
+        const k = regionsOf[j].indexOf(region), m = seeOf[j][p], col = new Float64Array(nT);
+        for (let t = 0; t < nT; t++) col[t] = m[t][k];
+        return col;
+      });
+      const otherMass = (of) => phantoms.map((ph) => robMass(sys.members[of === 'own' ? j : 0].explicit, { ...ph.masses.sources, Body_Tis: ph.bodyTissues(true) }, boneInOther));
+      const parts = targets[j].map(([region, of]) => ({ cols: colsOf(region), mass: phantoms.map((ph) => ph.masses.sources[region] || 0), total: otherMass(of) }));
+      const out = parts.length ? [{ cols: colsOf('Other'), rest: true }, ...parts] : null;
+      partsCache.set(j, out);
+      return out;
     }) : null;
     const groupKeys = [];
     const groups = [];
@@ -302,7 +329,7 @@ export function coefficients60(data, spec, ages = AGES_60, opt = {}) {
     // effective dose is made of (effectivePieces60), put together below; a
     // group for each compartment (the Model tab's boxes).
     const pieces = opt.outputs ? effectivePieces60(nT, intakeAge) : null;
-    const res = integrate(sys, { phantomAges: PHANTOM_AGES_60, columns, nTargets: nT, groups, interp: 'linear', weights: 'dcal', hold: opt.dcal ? undefined : HOLD_60, cross: cross || undefined, functionals: pieces || undefined, byCompartment: !!opt.outputs },
+    const res = integrate(sys, { phantomAges: PHANTOM_AGES_60, columns, nTargets: nT, groups, interp: 'linear', weights: 'dcal', hold: opt.dcal ? undefined : HOLD_60, cross: otherParts ? undefined : cross || undefined, split: otherParts || undefined, functionals: pieces || undefined, byCompartment: !!opt.outputs },
       { intakeAge, period, outputs: opt.outputs, rtol: opt.rtol });
     const Ht = Object.fromEntries(TARGETS_60.map((t, i) => [t, res.H[i]]));
     const H = {};

@@ -530,6 +530,26 @@ function buildModels() {
   const lungdef = parseElementBlock(lngb['ELEMENT ASSIGNMENT'] || [], (l) => ({ file: l.slice(3, 11).trim().toUpperCase(), text: l.slice(12).trim() }));
 
   Object.assign(systemic, icrp30Models(systemic));
+  /* Radon formed in the gut from radium that was taken in. DCAL's Rn.gf1 has
+     an f1 of 0: the radon that radium forms in the contents of the tract is
+     carried along with them to the end. In the ICRP's coefficients for
+     radium it is absorbed from the small intestine completely, an f1 of 1
+     (which the engine takes as 0.99, as every f1 of 1: model60.js F1_MAX),
+     whatever the type of the material breathed in. After 226Ra swallowed by
+     an adult the walls of the small and the large intestine otherwise get
+     1.09-1.12 of the dose of the ICRP's database of dose coefficients on
+     the first day and the colon 1.04 in the long run, the kidneys 1.21 and
+     at 3 months 1.80 on that day (from the lead and bismuth formed in the
+     gut and absorbed); after 224Ra every soft tissue gets 0.89 of the
+     database's committed dose and 0.75 on the first day, for the 220Rn that
+     the blood then never sees. With it all are within 1 %, 226Ra's within
+     0.3 %. 220Rn lives 56 s, so the rate shows: 224Ra's muscle is the
+     database's at 565 d-1 and the small intestine's wall at 650; an f1 of
+     0.99 is 594. Not so the radon of thorium's chains: after 227Th
+     swallowed the soft tissues are within 0.4 % of the database with
+     Rn.gf1, and 7 % above it on the first day with this. RNRA_I72, the f1
+     of the member whose model is RnRa.def. */
+  f1.RNRA_I72 = { title: 'Radon formed from radium taken in, absorbed from the small intestine completely (ICRP 72)', text: ['Radon as a member of radium\'s chains, as the coefficients of ICRP Publication 72 have it: f1 = 1'], ages: [100], f1: [1] };
 
   const lung = {};
   for (const f of fs.readdirSync(path.join(DAT, 'mis')).sort()) {
