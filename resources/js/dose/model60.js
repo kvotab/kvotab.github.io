@@ -339,7 +339,8 @@ export function assemble60(data, spec) {
   else if (route === 'ingestion') init.push([comp(0, 'St_Cont'), 1]);
   else if (route === 'injection') init.push([comp(0, 'Blood'), 1]);
   else {
-    const dep = Object.keys(lung.deposition).length ? lung.deposition : depositionFor(models, spec.intakeAge, spec.amad ?? 1);
+    const dep = Object.keys(lung.deposition).length ? lung.deposition
+      : depositionFor(models, spec.intakeAge, spec.amad ?? 1, spec.icrp72 !== false && !spec.dcal);
     for (const [name, frac] of Object.entries(dep)) if (frac > 0) init.push([comp(0, name), frac]);
   }
 
@@ -355,12 +356,39 @@ export function assemble60(data, spec) {
   };
 }
 
+/* What members of the public deposit of an aerosol of 1 um AMAD in the
+   bronchi, the bronchioles and the alveolar region, in percent of the
+   intake, at 3 months, 1, 5, 10 and 15 years and for the adult: the
+   two-decimal figures of Publication 71's table of regional deposition,
+   which Publication 72's coefficients were calculated with. DCAL's file
+   (and the help of the ICRP's database) gives each compartment to four
+   figures, which add up to 1.2860, 1.9510 and 11.4800 % for the adult; the
+   database's doses are those of 1.29, 1.95 and 11.48 %, and so at every age
+   -- to 1e-5 in the alveolar region and the bronchioles, the bronchi within
+   3e-4 -- and only at 1 um: at its nine other particle sizes the database
+   has the four-figure fractions, and the page's doses are its own to five
+   figures (tests' README). Sixteen of the eighteen are the file's totals
+   rounded; the bronchi at 5 years, 1.0350 % in the file, are 1.03, and the
+   bronchioles at 3 months 2.05, where the file's three compartments add up
+   to 2.044 % and its sequestered fraction (0.7 % of the region) says 2.046.
+   The extrathoracic regions' four figures are two decimals already. */
+export const DEPOSITION_71 = {
+  100: { BBi: 1.04, bbe: 2.05, AI: 8.56 },
+  365: { BBi: 1.04, bbe: 1.71, AI: 9.64 },
+  1825: { BBi: 1.03, bbe: 1.85, AI: 9.85 },
+  3650: { BBi: 1.17, bbe: 1.70, AI: 9.51 },
+  5475: { BBi: 1.69, bbe: 2.00, AI: 10.65 },
+  7300: { BBi: 1.29, bbe: 1.95, AI: 11.48 },
+};
+
 /* The deposition fractions of ICRP66.DEP for a reference age and AMAD. Ages
    between reference individuals are not interpolated: the ICRP gives
    coefficients only at the reference ages, and DCAL deposits per reference
    individual. AMADs between the 13 tabulated values are interpolated
-   linearly in log AMAD. */
-export function depositionFor(models, intakeAge, amad) {
+   linearly in log AMAD. With `printed` the thoracic regions of an aerosol of
+   1 um take Publication 71's totals (DEPOSITION_71), each region's
+   compartments keeping their shares of it. */
+export function depositionFor(models, intakeAge, amad, printed = false) {
   const dep = models.deposition;
   const groups = dep.groups.filter((g) => typeof g.age === 'number');
   let g = groups[0];
@@ -374,6 +402,14 @@ export function depositionFor(models, intakeAge, amad) {
     if (a[k] === amad || k === 0) { out[name] = fr[k]; continue; }
     const w = (la - Math.log(a[k - 1])) / (Math.log(a[k]) - Math.log(a[k - 1]));
     out[name] = fr[k - 1] + w * (fr[k] - fr[k - 1]);
+  }
+  const table = printed && amad === 1 ? DEPOSITION_71[g.age] : null;
+  if (table) {
+    for (const [region, percent] of Object.entries(table)) {
+      const names = Object.keys(out).filter((n) => n.startsWith(region));
+      const total = names.reduce((sum, n) => sum + out[n], 0);
+      if (total > 0) for (const n of names) out[n] *= percent / 100 / total;
+    }
   }
   return out;
 }

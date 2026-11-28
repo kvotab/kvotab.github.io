@@ -3814,3 +3814,131 @@ electron radiations, 1.000025 of the file's energy); the marks on 125I's
 and 152Eu's Auger electrons; and against the database the alveolar region
 on the first day after the five X-ray emitters (within 5e-6) and after
 141Ce, 125Sb and 48V (343 checks).
+
+## The deposition at 1 um as Publication 71 tabulates it (2026-11-28, evening)
+
+What the airways still had: the bronchi off by a factor that depended on
+the age alone (0.997 for the adult, 1.005 at 5 years), the bronchioles
+1.0005, both for every emitter, absorption type and time.
+
+**It is not the target's mass.** With the decay data settled the first
+day's doses after alpha emitters show each part to 1e-5 (a target's alpha
+dose comes from its own region alone). Page over database, Type M or S,
+the first day (210Po, 241Am, 244Cm, 148Gd, 234U agree within 3e-4 in the
+bronchi and 1e-5 elsewhere):
+
+               ET1       ET2       BB sec    bb        AI
+    3 months   1.00000   1.00000   1.0005    0.99710   1.00085
+    1 year     1.00000   1.00000   1.0007    0.99830   0.99965
+    5 years    1.00000   1.00000   1.0044    1.00054   1.00046
+    10 years   1.00000   1.00000   0.9978    1.00117   1.00035
+    15 years   1.00000   1.00000   0.9993    0.99772   1.00000
+    adult      1.00000   1.00000   0.9973    1.00048   1.00000
+
+A mass would show in what the alveolar region's electrons do to the
+bronchi as well (air/latebb.mjs: 5 to 10 years after 90Sr Type S, when
+that is all the bronchi get, the basal cells are 0.9997-1.0003 of the
+database's at every age). And Publication 66's own derivation (the areas
+of airway generations 1 to 8 of its Table 2, scaled by Table 4's constants
+for the body heights of Table 7, times 15 or 30 um) gives DCAL's masses to
+their four figures (air/p66mass.mjs: 4.32386e-4 kg for the adult's basal
+cells, DCAL 4.324e-4).
+
+**It is the deposit, in two decimals of a percent.** The regions' shares
+of the intake at 1 um, from the file's compartments (and the help of the
+database, which lists the same four-figure fractions), and the same to two
+decimals:
+
+               BB                 bb                 AI
+    3 months   1.0410  1.04      2.0443  2.05*     8.5622  8.56
+    1 year     1.0411  1.04      1.7070  1.71      9.6366  9.64
+    5 years    1.0350  1.03*     1.8511  1.85      9.8545  9.85
+    10 years   1.1671  1.17      1.7020  1.70      9.5133  9.51
+    15 years   1.6889  1.69      1.9952  2.00     10.6500  10.65
+    adult      1.2860  1.29      1.9510  1.95     11.4800  11.48
+
+The ratios of the two columns are the table above, upside down: adult
+bronchi 1.2860 / 1.29 = 0.9969 (0.9973, a little of the bronchi's dose
+being from what passes through from below), bronchioles 1.9510 / 1.95 =
+1.00051 (1.00048); 1 year's alveolar region 9.6366 / 9.64 = 0.99965
+(0.99965), 5 years' 1.00046 (1.00046), 10 years' 1.00035 (1.00035). These
+are the figures of Publication 71's table of regional deposition, which
+Publication 72's coefficients were calculated with. Two of the eighteen do
+not follow from the file by rounding (*): the bronchi at 5 years, on the
+half, are 1.03; and the bronchioles at 3 months are 2.05, where the file's
+gel and sol fractions (0.01015 each) with the sequestered one add up to
+2.044 % but the sequestered fraction, 0.7 % of the region, says 2.046 %.
+ET1 and ET2 have four figures that are two decimals already.
+
+**Only at 1 um.** The database holds ten particle sizes. Read from its
+files for 210Po, 241Am and 239Pu (air/amads.mjs), the first day's doses to
+ET1, ET2, the bronchi, the bronchioles and the alveolar region at 0.001,
+0.003, 0.01, 0.03, 0.1, 0.3, 3, 5 and 10 um are the page's to five figures
+with the file's fractions, where two decimals would move them by up to
+0.3 % (the adult's bronchi at 0.1 um, 1.0730 %). So the nine other sizes
+were calculated from the four-figure fractions and 1 um from the
+publication's table.
+
+model60.js DEPOSITION_71 holds the eighteen percentages; depositionFor
+gives each region's compartments their shares of them at 1 um, unless
+`dcal` or DCAL's reading of the models (icrp72: false) is asked for.
+
+**The newborn's alveolar region.** With that, the first day's dose to the
+alveolar region after an intake at 3 months was 1.00059 of the database's,
+at 1 um and at eight of the nine other sizes alike (0.001 um deposits next
+to nothing there), with every other part 1.00000: not the deposit, then,
+but the mass, which at 3 months lies between the newborn's and the
+1-year-old's. The file has the newborn's to three figures, 0.0514 kg;
+0.05145 makes the ratio 1.00000 at every size (see60.js AI_NEWBORN_60,
+not with `dcal`). The other masses need nothing: the 1-year-old's to the
+adult's alveolar region, and the bronchi and bronchioles at every age, are
+1.00000 at the sizes where the deposit is the file's.
+
+**Now** (page over database, the first day, alpha emitters): the bronchi
+within 6e-5 at every age, the bronchioles within 17e-5, the alveolar
+region within 1e-5.
+
+**Left in the airways** (adult, committed, two dozen emitters):
+- the secretory cells of the bronchi 0.05-0.16 % high after energetic beta
+  emitters (90Y 1.0005, 32P 1.0007, 89Sr 1.0009, 90Sr Type S 1.0016): what
+  the alveolar region's electrons give them, by Table H.9's function 2,
+  1 + a2 exp(a3 x) + a4 exp(a5 x) + ..., with a2 = -859.74, a4 = 1689.772,
+  a8 = -832.213: at 1 MeV the three terms are -171.0, +350.3 and -179.5 and
+  leave 0.72, so the last printed figure of a parameter is worth 0.1-0.2 %.
+  The row was read again from the page image; it is as printed. (The basal
+  cells' row, with -400.456, 777.7234 and -379.908, comes out within
+  0.03 %.)
+- 110mAg: the bronchi, bronchioles and alveolar region 1.0013-1.0015, the
+  lower large intestine after swallowing 1.0020, the tissues far from it
+  1.0000-1.0002: its electrons, of which the database has 0.5 % less
+  energy than its table by the rules here. Not understood.
+- 224Ra Type M: ET2 1.017, the lymph nodes 0.95-0.99 (the chain's thoron).
+- 152Eu 1.0004-1.0007 in every part.
+
+**The whole comparison** (2,999 cases, 14,617 values of e; the last
+section's run, then now):
+
+                                                  before    now
+    e rounding to ICRP 72's two figures           96.3 %    96.5 %
+    organ doses rounding to the print             95.6 %    95.8 %
+    Publication 119, e swallowed                  95.0 %    95.0 %
+    Publication 119, e breathed in                96.8 %    97.2 %
+
+    the ICRP database, share within 0.1 / 0.2 / 0.5 / 1 / 2 %, and the median
+    e                 81.4  91.8  95.1  96.3  97.9  1.0001   84.3  92.2  95.1  96.3  98.0  1.0002
+    lungs and ET      82.0  90.6  94.7  96.2  97.6  1.0000   89.5  92.8  94.7  96.3  97.6  1.0000
+    by inhalation only (9,534 intakes and ages):
+    lungs             69.1  88.4  96.8  98.0  99.0  0.9998   91.2  95.0  96.9  97.9  99.0  1.0000
+    ET                92.5  95.3  97.0  98.0  98.9  1.0000   92.6  95.3  97.0  98.0  98.9  1.0000
+    e                 84.5  93.2  96.5  97.5  98.7  1.0001   88.8  93.9  96.5  97.5  98.8  1.0001
+
+Help's rows for Publication 119 are unchanged (99.6 / 99.8 / 100.0 % and
+99.7 / 99.8 / 99.9 %); Pu-246's rows moved by 0.01.
+
+Tests: test-engine.mjs has the table against the file's fractions (the
+regions' totals, the compartments' shares, the other sizes and the
+extrathoracic regions untouched, `dcal` and icrp72: false with the file's);
+against the database three alpha emitters at the six ages, the 3-month
+alveolar region with and without the newborn's fourth figure; and the
+airways' parts check with the bronchi's limits a third of what they were
+(345 checks).

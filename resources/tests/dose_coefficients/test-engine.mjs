@@ -40,7 +40,7 @@ const ONLY = args.includes('--only') ? new RegExp(args[args.indexOf('--only') + 
 const { loadSystem } = await import(path.join(JS, 'data.js'));
 const { coefficients60, AGES_60, TISSUES_60, W_60, REMAINDER_60, remainder60 } = await import(path.join(JS, 'dose60.js'));
 const { TARGETS_60: TARGETS_60_ALL } = await import(path.join(JS, 'see60.js'));
-const { parentModelName, f1FileName, recipe60, assemble60 } = await import(path.join(JS, 'model60.js'));
+const { parentModelName, f1FileName, recipe60, assemble60, depositionFor, DEPOSITION_71 } = await import(path.join(JS, 'model60.js'));
 const { coefficients103, AGES_103 } = await import(path.join(JS, 'dose103.js'));
 const { emissionWeights, sAllRows, pchipSlopes, pchipEval, pchipIntegral, spectrumLines, MEV } = await import(path.join(JS, 'see103.js'));
 const { firstYearWeight, dcalWeight } = await import(path.join(JS, 'solve.js'));
@@ -1226,6 +1226,37 @@ if (!SYSTEM || SYSTEM === '103') {
     JSON.stringify({ as72: names(as72), asDcal: names(asDcal) }));
 }
 
+/* ---- the deposition of Publication 71's table (ICRP 60; model60.js DEPOSITION_71) ----- */
+// At 1 um AMAD the bronchi, the bronchioles and the alveolar region take the
+// two-decimal percentages that Publication 72's coefficients were calculated
+// with; each region's compartments keep their shares. Every other particle
+// size, the extrathoracic regions, DCAL's way and DCAL's reading of the
+// models keep the file's four-figure fractions.
+{
+  const region = (dep, r) => Object.entries(dep).filter(([n]) => n.startsWith(r)).reduce((a, [, v]) => a + v, 0);
+  const ages = [100, 365, 1825, 3650, 5475, 7300];
+  let off = 0, shares = 0, moved = 0;
+  for (const age of ages) {
+    const file = depositionFor(d60.models, age, 1), printed = depositionFor(d60.models, age, 1, true);
+    for (const [r, percent] of Object.entries(DEPOSITION_71[age])) {
+      off = Math.max(off, Math.abs(100 * region(printed, r) - percent));
+      moved = Math.max(moved, Math.abs(region(printed, r) / region(file, r) - 1));
+      const names = Object.keys(file).filter((n) => n.startsWith(r));
+      for (const n of names) shares = Math.max(shares, Math.abs(printed[n] / region(printed, r) - file[n] / region(file, r)));
+    }
+    for (const n of Object.keys(file).filter((x) => x.startsWith('ET'))) off = Math.max(off, Math.abs(printed[n] - file[n]));
+  }
+  const adult = depositionFor(d60.models, 7300, 1), adult5 = depositionFor(d60.models, 7300, 5), adult5p = depositionFor(d60.models, 7300, 5, true);
+  await d60.prepare('Am-241');
+  const init = (spec) => assemble60(d60, { ...recipe60(d60.cases, 'inhalation', { nuclide: 'Am-241', type: 'M' }), intakeAge: 7300, ...spec });
+  const bb = (sys) => sys.init.filter(([c]) => /^BBi/.test(sys.comps[c].region)).reduce((a, [, f]) => a + f, 0);
+  check(`ICRP 60 deposition: at 1 um the thoracic regions take Publication 71's percentages (adult ${(100 * region(adult, 'BBi')).toFixed(4)}, ${(100 * region(adult, 'bbe')).toFixed(4)} and ${(100 * region(adult, 'AI')).toFixed(4)} % in the file: 1.29, 1.95 and 11.48), by up to ${(100 * moved).toFixed(2)} %; the compartments keep their shares, ET and the other sizes the file's fractions`,
+    off < 1e-12 && shares < 1e-12 && moved > 0.004 && moved < 0.006 && JSON.stringify(adult5) === JSON.stringify(adult5p)
+    && Math.abs(100 * region(adult, 'BBi') - 1.286) < 1e-4 && DEPOSITION_71[1825].BBi === 1.03 && DEPOSITION_71[100].bbe === 2.05
+    && Math.abs(100 * bb(init({})) - 1.29) < 1e-10 && Math.abs(100 * bb(init({ dcal: true })) - 1.286) < 1e-4 && Math.abs(100 * bb(init({ icrp72: false })) - 1.286) < 1e-4
+    && Math.abs(100 * bb(init({ amad: 5 })) - 100 * region(adult5, 'BBi')) < 1e-12, JSON.stringify({ off, shares, moved }));
+}
+
 /* ---- the decay data as Publication 38 printed them (ICRP 60; decay38.js) ------------ */
 // What the publication's tables do to the file's lines: three figures of a
 // yield and four of an energy, a half going down; a nuclide of more than 32
@@ -1914,11 +1945,14 @@ if (!SYSTEM || SYSTEM === '60') {
     // (its fourth lung part) within 5e-4 (0.3-0.5 % below it with the
     // trapezoidal rule), and with Publication 66's functions the basal cells
     // of ET1 and ET2 within 2e-4 (63Ni's ET1 a fifth below it by straight
-    // lines through the tables), the bronchioles within 0.1 %, the bronchi
-    // within 0.35 %. Alpha emitters from 2.2 to 6.1 MeV: ET1 and ET2 within
-    // 0.05 % (239Pu a fifth below it, 244Cm 40 % above by the tables; within
-    // 0.2 % with the file's yields instead of Publication 38's three
-    // figures), the bronchi within 0.35 % (147Sm 1.9 and 2.4 times it by the
+    // lines through the tables), the bronchioles within 0.05 %, the bronchi
+    // within 0.1 % (the secretory cells, which the alveolar region's
+    // electrons reach by a function printed to six figures; 0.3 % below it
+    // with the file's deposition instead of Publication 71's 1.29 %). Alpha
+    // emitters from 2.2 to 6.1 MeV: ET1 and ET2 within 0.05 % (239Pu a fifth
+    // below it, 244Cm 40 % above by the tables; within 0.2 % with the file's
+    // yields instead of Publication 38's three figures), the bronchioles and
+    // the bronchi within 0.03 % (147Sm's bronchi 1.9 and 2.4 times it by the
     // tables).
     {
       const part = async (nuclide, pairs) => {
@@ -1939,8 +1973,41 @@ if (!SYSTEM || SYSTEM === '60') {
       }
       const farP = (l) => l.reduce((m, x) => Math.max(m, Math.abs(x - 1)), 0);
       check(`ICRP 60 vs the ICRP database, the airways' parts: after nine beta emitters the alveolar region within ${(1e5 * farP(beta.ai)).toFixed(0)}e-5, the basal cells of ET1 and ET2 within ${(1e5 * farP(beta.et)).toFixed(0)}e-5, the bronchioles within ${(100 * farP(beta.bb)).toFixed(2)} % and the bronchi within ${(100 * farP(beta.BB)).toFixed(2)} %; after eight alpha emitters of 2.2-6.1 MeV ET1 within ${(100 * farP(alpha.et1)).toFixed(2)} %, ET2 within ${(100 * farP(alpha.et2)).toFixed(2)} %, the bronchioles within ${(100 * farP(alpha.bb)).toFixed(2)} % and the bronchi within ${(100 * farP(alpha.BB)).toFixed(2)} %`,
-        farP(beta.ai) < 5e-4 && farP(beta.et) < 3e-4 && farP(beta.bb) < 0.0015 && farP(beta.BB) < 0.004
-        && farP(alpha.et1) < 0.001 && farP(alpha.et2) < 0.001 && farP(alpha.bb) < 0.002 && farP(alpha.BB) < 0.005, JSON.stringify({ beta, alpha }));
+        farP(beta.ai) < 5e-4 && farP(beta.et) < 3e-4 && farP(beta.bb) < 5e-4 && farP(beta.BB) < 0.0012
+        && farP(alpha.et1) < 0.001 && farP(alpha.et2) < 0.001 && farP(alpha.bb) < 3e-4 && farP(alpha.BB) < 5e-4, JSON.stringify({ beta, alpha }));
+    }
+    // The deposition of Publication 71's table (model60.js DEPOSITION_71):
+    // three alpha emitters breathed in as Type M or S at each of the six
+    // ages, the first day's dose to the bronchi (secretory cells), the
+    // bronchioles and the alveolar region -- each from its own region alone.
+    // Within 2.5e-4 (by the file's fractions the bronchi 0.3 % below the
+    // database for the adult and 0.5 % above at 5 years), the alveolar
+    // region within 5e-5 -- at 3 months too, with the newborn's alveolar
+    // mass of 0.05145 kg (see60.js AI_NEWBORN_60; 6e-4 above the database
+    // with the file's 0.0514, which dcal keeps).
+    {
+      const day1 = async (nuclide, type, age, spec = {}) => {
+        const c = cd.rows.find((x) => x.nuclide === nuclide && x.route === 'inhalation' && x.type === type && x.age === age);
+        await d60.prepare(nuclide);
+        const r = coefficients60(d60, { ...recipe60(d60.cases, 'inhalation', { nuclide, type }), ...spec }, [age], { outputs: [1] })[0];
+        const p = r.series.find((x) => Math.abs(x.t - 1) < 1e-6), n = r.system.comps.length;
+        return [['BBi-sec', 'Lung part 1'], ['bbe-sec', 'Lung part 3'], ['AI', 'Lung part 4']].map(([t, k]) => p.y[n + TARGETS_60_ALL.indexOf(t)] / c.H[k][0]);
+      };
+      const far = { BB: 0, bb: 0, AI: 0, infantAI: 0, fileBB: [] };
+      for (const age of AGES_60) for (const [n, type] of [['Po-210', 'M'], ['Am-241', 'M'], ['Cm-244', 'S']]) {
+        const [BB, bb, AI] = await day1(n, type, age);
+        far.BB = Math.max(far.BB, Math.abs(BB - 1)); far.bb = Math.max(far.bb, Math.abs(bb - 1));
+        if (age === 100) far.infantAI = Math.max(far.infantAI, Math.abs(AI - 1)); else far.AI = Math.max(far.AI, Math.abs(AI - 1));
+      }
+      for (const age of [1825, 7300]) far.fileBB.push((await day1('Am-241', 'M', age, { icrp72: false }))[0]);
+      // the newborn's alveolar mass: the page's phantom against the file's
+      const { phantom60, AI_NEWBORN_60 } = await import(path.join(JS, 'see60.js'));
+      const newborn = phantom60(d60.saf, 'A00'), em = d60.emissions('Am-241');
+      const seeAI = (opt) => newborn.see(em, 241, ['AI'], new Set(), ['AI'], opt)[0][0];
+      const massRatio = seeAI({ dcal: true }) / seeAI({}) * (1.6e-13 / 1.602176634e-13);
+      check(`ICRP 60 vs the ICRP database, the deposition of Publication 71: three alpha emitters at six ages, the first day's dose to the bronchi within ${(1e5 * far.BB).toFixed(0)}e-5, the bronchioles ${(1e5 * far.bb).toFixed(0)}e-5, the alveolar region ${(1e5 * far.AI).toFixed(0)}e-5 from 1 year on and ${(1e5 * far.infantAI).toFixed(0)}e-5 at 3 months (the newborn's alveolar region ${AI_NEWBORN_60} kg); by the file's fractions the bronchi ${far.fileBB.map((x) => x.toFixed(4)).join(' at 5 years and ')} for the adult`,
+        far.BB < 2e-4 && far.bb < 2.5e-4 && far.AI < 5e-5 && far.infantAI < 5e-5 && far.fileBB[0] > 1.004 && far.fileBB[1] < 0.9975
+        && AI_NEWBORN_60 === 0.05145 && Math.abs(massRatio - 0.05145 / 0.0514) < 1e-5 && d60.saf.phantoms.A00.masses.targets.AI === 0.0514, JSON.stringify({ ...far, massRatio }));
     }
     // The decay data as Publication 38 printed them (decay38.js). On the
     // first day after swallowing, twelve tissues of the adult: their median

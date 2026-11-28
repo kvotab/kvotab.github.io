@@ -87,6 +87,15 @@ export const MEV_DCAL = 1.602176634e-13;
    one that makes the 3-month-old's so, between it and the 1-year-old's by
    DCAL's weights. */
 export const BODY_TISSUES_60 = { A00: 3.5335, A01: 9.6155, A05: 19.4935, A10: 32.680, A15: 55.867, AM: 68.966 };
+/* The mass of the newborn's alveolar region, kg, with the fourth figure the
+   ICRP's database of dose coefficients shows: DCAL's file has 0.0514, with
+   which the alveolar region's dose on the first day after an intake at 3
+   months is 1.00059 of the database's at each of its ten particle sizes
+   (alpha emitters, where it is from the region alone), the other parts of
+   the airways 1.00000; 0.05145 makes it 1.00000. The other ages' masses,
+   and the newborn's of the bronchi and bronchioles, are the database's as
+   the file has them. */
+export const AI_NEWBORN_60 = 0.05145;
 /* The absorbed fractions of the airways as the ICRP's coefficients have
    them: by the algebraic functions that Annex H of Publication 66 gives
    beside its tables (Table H.7), with the fitted parameters of Table H.8 for
@@ -248,7 +257,12 @@ export function lerp(xs, ys, x) {
 export function phantom60(saf, phantom) {
   const P = saf.phantoms[phantom];
   const E = saf.photonEnergies;
-  const mT = P.masses.targets, mS = P.masses.sources;
+  const mS = P.masses.sources;
+  /* The targets' masses: the file's, with the newborn's alveolar region as
+     the database has it (AI_NEWBORN_60) unless dcal; set by see(). */
+  const fileTargets = P.masses.targets;
+  const ownTargets = phantom === 'A00' ? { ...fileTargets, AI: AI_NEWBORN_60 } : fileTargets;
+  let mT = ownTargets;
   /* The mass of the body's tissues: the database's (BODY_TISSUES_60), or with
      dcal the phantom file's own; set by see() for the SEE it computes. */
   const bodyTissues = (dcal) => (dcal ? mS.Body_Tis : BODY_TISSUES_60[phantom] ?? mS.Body_Tis);
@@ -358,6 +372,7 @@ export function phantom60(saf, phantom) {
    */
   function see(em, A, sources, explicit, targets = TARGETS_60, opt = {}) {
     MWB = bodyTissues(!!opt.dcal);
+    mT = opt.dcal ? fileTargets : ownTargets;
     tables = !!opt.dcal;
     const r = em.r || {};
     const photons = (r.p || []).filter(([e]) => e >= 0.01);

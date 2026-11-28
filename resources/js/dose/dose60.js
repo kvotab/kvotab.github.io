@@ -224,7 +224,8 @@ export function coefficients60(data, spec, ages = AGES_60, opt = {}) {
   const phantoms = PHANTOMS.map((p) => phantom60(data.saf, p));
   return ages.map((age0) => {
     const intakeAge = age0 === 7300 && spec.adultAge ? spec.adultAge : age0;
-    const sys = assemble60(data, { ...spec, intakeAge });
+    // dcal: the deposition fractions of DCAL's file at every particle size (model60.js DEPOSITION_71).
+    const sys = assemble60(data, { ...spec, intakeAge, dcal: !!opt.dcal });
     // Source regions of each member, and its SEE matrices per phantom.
     /* "Other". With shared kinetics every member has the parent's model and
        Other is the body tissues the parent's model does not name; with
