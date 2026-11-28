@@ -3294,3 +3294,179 @@ year of life).
 92.2 % round to the print; Publication 119's e 92.0 % swallowed and 84.5 %
 breathed in. Against the database (within 0.1, 0.2, 0.5, 1, 2 %): e 33.4
 52.1 77.2 90.0 96.2; soft tissues 68.2 85.4 92.7 95.1 96.8.
+
+## The airways and lungs part by part (2026-11-27, into the night)
+
+The database stores the three parts of ET and the five of the lungs, so the
+page's eight targets can be set beside them one by one (the private
+lungsurvey.mjs; adult, Type M, committed doses, page over database). Its
+"Lung part 1" is the bronchi's secretory cells and "part 2" the basal ones.
+
+**Beta spectra are taken in groups.** For every beta emitter the alveolar
+region, which absorbs all of an electron born in it, was 0.3-0.5 % below
+the database (63Ni 0.9954, 14C 0.9966, 45Ca 0.9956, 36Cl 0.9959, 32P 0.9971,
+90Y 0.9954), the lymph nodes the same, while alpha emitters (0.9998-1.0007),
+55Fe and 51Cr (Auger electrons and X-rays: 1.0001, 0.9998) and the whole
+body after the same beta emitters agreed. So in the airways the database
+gives a beta emitter 0.3-0.5 % more than its mean energy. The page summed
+N(E) E AF(E) over the tabulated spectrum by the trapezoidal rule, which
+gives the mean energy within 0.15 %. Other sums of the same table, over the
+mean energy of the decay data, beside what the database's alveolar doses
+ask for:
+
+    nuclide   database   trapezoid   groups at mid-interval   left ends   right ends
+    63Ni      1.0053     1.0007      1.0056                   1.0514      0.9500
+    14C       1.0035     1.0000      1.0035                   1.0385      0.9616
+    35S       1.0033     1.0000      1.0033                   1.0371      0.9629
+    45Ca      1.0052     1.0008      1.0051                   1.0485      0.9530
+    99Tc      1.0031     0.9992      1.0031                   1.0416      0.9567
+    147Pm     1.0056     1.0015      1.0058                   1.0487      0.9543
+    36Cl      1.0027     0.9986      1.0028                   1.0405      0.9567
+    89Sr      1.0025     0.9994      1.0028                   1.0377      0.9611
+    32P       1.0027     0.9998      1.0027                   1.0341      0.9654
+    90Y       1.0032     0.9986      1.0034                   1.0503      0.9469
+
+The spectrum is a set of groups, one for each interval of the table: as
+many electrons as the interval's width times the mean of N at its ends, all
+at the energy of its middle (and not normalised to one electron per decay:
+normalised, the fit is lost). see60.js spectrumAf does that now, with the
+absorbed fraction of the middle energy; the alveolar region and the lymph
+nodes of nine beta emitters are 1.0000-1.0003 and 0.9993-0.9997 of the
+database. `dcal` keeps the trapezoidal rule.
+
+**The absorbed fractions are Annex H's algebraic functions, not its
+tables.** The airways' other parts stood further off than the alveolar
+region. Two things were tried on the tables first. One entry of DCAL's
+AF_ELEC.LNG is a slip (the secretory cells from the slow mucus at 1 MeV,
+0.0247 between 0.0245 at 0.9 and 0.0133 at 1.5 MeV, where the fast mucus
+has 0.0214), and a second looks like one (the basal cells from the fast
+mucus at 1.5 MeV, 5.65E-3 beside the slow mucus's 6.11E-3). And an
+electron's E x AF taken linear in energy between the tabulated points, as
+the photons' E x SAF is, instead of AF itself: that halved the airways'
+excess over the whole database (lungs within 0.5 % for 72 % of the intakes
+by inhalation, from 62 %). But it left a pattern that no way of joining
+the tables' points makes: after beta emitters ET1 1-2 % low at high energy
+(90Y 0.98) and up to 13 % high at low (36Cl 1.009, 63Ni 1.129), and after
+alpha emitters, where nothing had changed, ET1 anywhere from a third to
+1.4 times the database (239Pu Type S 0.33, 244Cm 1.40) and the bronchial
+cells after 147Sm 1.9 and 2.4 times.
+
+Publication 66 itself has the answer. Annex H ends with "H.6 Algebraic
+approximations" (para H28): "the calculated values of AF(T<-S) are
+conveniently represented as functions of radiation energy by fitted
+algebraic expressions. Appropriate expressions, which were developed by
+A. Birchall and N. S. Jarvis (National Radiological Protection Board), are
+given in Table H.7", with the parameters in Tables H.8 (alpha particles),
+H.9 (electrons), H.10 and H.11 (beta spectra by their mean energy), and
+"the approximate values so obtained represent the calculated values of
+absorbed fraction to within about +-1 % relative error". NRPB's program
+calculated Publication 72. The three functions, with x the energy in MeV
+and logarithms to base 10 (the printed formulas do not say; with these the
+functions reproduce the tables):
+
+    1  AF = sum over k = 1, 4, 7, 10 of a[k] exp(a[k+1] (log(log x + a[k+2]))^2)
+    2  AF = (1 - exp(-(x/a10)^20)) a1 (1 + a2 e^(a3 x) + a4 e^(a5 x) + a6 e^(a7 x) + a8 e^(a9 x))
+    3  AF = G(a2, a3, a4) + G(a1 - a2, a5, a6) + a7 exp(-(a8 log(a9 x))^2),
+       G(A, w, c) = A below x = 1/c, A exp(-(w log(c x))^2) from there on
+
+Function 1 is for the sources on the surface, in the mucus and
+sequestered, 3 for the bound ones (a1 is the constant at low energy:
+0.1818, 0.25, 0.5, 0.4) and 2 for electrons from AI. The parameters were
+read off the user's copy of the Annals (the scan's own text layer is too
+garbled to use) and each row checked against the tables: at the tabulated
+energies the alpha functions are within 0.2 % of Table H.1 at the median
+and within 0.6 % for nine points in ten, the electrons' within 0.7 % and
+2.7 % of Table H.2 from 0.05 to 2 MeV. Above 2 MeV the electrons' fall 10-
+25 % below the table for the bronchi.
+
+One thing the tables hide: para H21. The Monte Carlo calculation is of a
+single airway in alveolar tissue, and the cross-fire to other airways "can
+be adequately approximated by adding the surrogate calculated value of
+AF(T<-AI) to each calculated value of the locally absorbed fraction";
+Table H.2's values for the bronchial and bronchiolar sources "therefore
+include the respective components". The functions are fitted to the local
+part for the bronchioles (without AI's they are 30-70 % below the table
+from 1 to 4 MeV), so AI's function is added for electrons from a source in
+the wall of the bronchi or bronchioles. For alpha particles nothing is
+added (adding the bronchioles' AI function there puts them 0.1-0.3 % too
+high).
+
+The page over the database, adults, committed doses (lungsurvey.mjs):
+
+                    as committed before (d3daf9f0)        functions
+                    ET1    ET2    BBsec  BBbas  bb        ET1     ET2     BBsec   BBbas   bb
+    63Ni  M         0.810  0.987  0.964  0.980  0.984     1.0000  1.0000  0.9974  0.9990  1.0005
+    14C   M         0.993  0.997  0.988  0.984  0.998     1.0000  1.0000  0.9971  0.9971  1.0004
+    36Cl  M         1.019  1.008  1.002  1.008  0.998     1.0000  1.0000  0.9981  0.9973  1.0000
+    89Sr  M         0.999  1.007  1.014  0.995  1.000     1.0000  1.0001  0.9987  0.9979  1.0002
+    90Y   M         0.995  1.003  1.018  0.984  0.999     1.0001  1.0000  0.9986  0.9980  1.0002
+    90Sr  S         1.012  1.009  0.995  0.992  0.994     1.0000  1.0001  1.0014  0.9996  1.0002
+    147Sm M  2.25   1.000  1.064  1.908  2.435  1.006     0.9999  0.9990  0.9943  0.9940  0.9998
+    234U  M  4.76   0.957  1.001  0.994  1.000  1.000     1.0008  1.0006  0.9978  0.9978  1.0011
+    239Pu M  5.15   0.810  0.995  0.994  1.002  1.000     0.9989  0.9999  0.9969  0.9980  1.0004
+    239Pu S  5.15   0.333  0.993  0.994  1.002  1.000     0.9972  1.0000  0.9968  0.9967  1.0003
+    210Po M  5.30   1.093  0.996  0.999  1.042  0.999     1.0007  1.0000  0.9971  0.9971  1.0005
+    244Cm M  5.80   1.401  1.000  0.996  1.040  1.000     0.9994  0.9998  0.9968  0.9970  1.0002
+    252Cf M  6.11   1.023  1.000  0.993  1.006  1.000     1.0004  1.0001  0.9970  0.9972  1.0006
+    207At F  5.76   1.480  1.189  0.994  1.141  1.000     1.0019  1.0049  0.9972  0.9981  1.0005
+
+(alpha emitters with their mean alpha energy in MeV; "before" is DCAL's
+way: the tables' points joined by straight lines, spectra by the
+trapezoidal rule). The database's
+alpha doses are not zero below the tables' cut-off energies, as the
+functions are not; and the functions run smoothly where a target comes
+within range, which is where chords through Table H.1's points go wrong.
+A beta spectrum is taken through the electrons' functions in its groups;
+Tables H.10 and H.11, by mean energy, are not what the database has (the
+bronchioles would not come out to four figures after emitters from 63Ni to
+90Y).
+
+see60.js AF66_ALPHA, AF66_ELECTRON, af66; `dcal` keeps the tables of DCAL's
+library, linear in energy. Fission fragments, which take the absorbed
+fractions of 2.5 MeV alpha particles, go through the same functions.
+
+**What is left in the airways.** The bronchi from their own sources are
+off by a factor that is the same for the basal and the secretory cells,
+for alpha and beta emitters, for Types F, M and S and from the first day
+to the committed dose, and that depends on the age: page over database
+1.0009 at 3 months and 1 year, 1.0047 at 5 years, 0.9976 at 10, 0.9994 at
+15 and 0.9971 for the adult; the bronchioles 0.9974, 0.9985, 1.0005,
+1.0011, 0.9979, 1.0004. It is not the target's mass: 5 to 10 years after
+90Sr Type S, when only AI is left as a source, the adult's basal cells are
+1.0000 of the database's (latebb.mjs). And not the deposit: the help
+file's fractions are DCAL's to their four figures. The cause is not found.
+Further: the secretory cells from AI's electrons 0.2 % high; ET1 after
+alpha emitters near 5.2-5.5 MeV 0.1-0.3 % low (239Pu Type S 0.9972), where
+the function rises by half per 0.2 MeV; photon emitters' alveolar region
+0.3-2.5 % high (54Mn Type M 1.025), which is not the airways' absorbed
+fractions; 144Ce Type S ET2 1.006; 224Ra Type M ET2 1.017 and its lymph
+nodes 0.954 (the chain).
+
+**The whole comparison** (2,999 cases, 14,617 values of e; the run before
+this section's changes, then now):
+
+                                                  before    now
+    e rounding to ICRP 72's two figures           86.8 %    89.4 %
+    organ doses rounding to the print             92.2 %    92.7 %
+    Publication 119, e swallowed                  92.0 %    92.0 %
+    Publication 119, e breathed in                84.5 %    88.2 %
+
+    the ICRP database, share within 0.1 / 0.2 / 0.5 / 1 / 2 %, and the median
+    e                 33.4  52.1  77.2  90.0  96.2  1.0014   43.3  63.3  82.9  91.6  96.5  1.0010
+    lungs and ET      36.1  50.0  67.0  83.1  93.4  1.0008   48.1  63.0  78.7  88.9  94.7  1.0003
+    remainder         46.6  60.7  71.6  84.5  93.1  1.0007   55.2  68.7  80.5  88.9  94.1  1.0004
+    by inhalation only (9,534 intakes and ages):
+    lungs             25.7  40.1  62.5  83.1  94.7  1.0017   37.8  55.5  75.0  88.9  95.9  1.0010
+    ET                17.0  28.8  49.8  74.0  90.9  1.0044   40.2  51.6  71.7  85.3  93.4  1.0012
+    e                 26.5  42.3  71.9  88.6  96.4  1.0020   41.0  58.8  80.4  91.0  96.7  1.0012
+
+Help's rows for Publication 119 are unchanged (99.6 / 99.8 / 100.0 % of
+4,534 swallowed and 99.3 / 99.7 / 99.9 % of 9,872 breathed in within 5,
+10 and 20 %); 207At Type F, whose ET was a quarter high and split the
+remainder at 15 years and in the adult, is no longer more than 10 % off
+at two ages and has left Help's table.
+
+Tests: test-engine.mjs has the three functions worked out on their own,
+the functions against DCAL's tables, the two kinds of line in the SEE with
+and without `dcal`, and against the database the airways' parts after nine
+beta and eight alpha emitters (328 checks).

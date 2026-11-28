@@ -1226,6 +1226,85 @@ if (!SYSTEM || SYSTEM === '103') {
     JSON.stringify({ as72: names(as72), asDcal: names(asDcal) }));
 }
 
+/* ---- beta spectra and the absorbed fractions of the airways (ICRP 60; see60.js spectrumAf, af66) */
+// A beta spectrum as groups: each interval of the table with the mean of N
+// at its ends, at the energy of its middle. Where the absorbed fraction is
+// one (the alveolar region from itself) that is 0.3-0.6 % more than the
+// decay data's mean energy; the trapezoidal rule (dcal) gives the mean.
+// And the absorbed fractions by Publication 66's algebraic functions
+// (Tables H.7-H.9), the tables of DCAL's library with dcal.
+{
+  const { spectrumAf, phantom60, TARGETS_60, MEV: MEV60, MEV_DCAL, AF66_ALPHA, AF66_ELECTRON, af66 } = await import(path.join(JS, 'see60.js'));
+  const over = {};
+  for (const n of ['Ni-63', 'C-14', 'Ca-45', 'P-32', 'Y-90']) {
+    await d60.prepare(n);
+    const em = d60.emissions(n), mean = em.r.b.reduce((u, [e, y]) => u + e * y, 0);
+    over[n] = [spectrumAf(em.bs, () => 1) / mean, spectrumAf(em.bs, () => 1, true) / mean];
+  }
+  const [es, ns] = d60.emissions('C-14').bs;
+  let byHand = 0;
+  for (let i = 1; i < es.length; i++) byHand += 0.5 * (ns[i] + ns[i - 1]) * (es[i] - es[i - 1]) * 0.5 * (es[i] + es[i - 1]) * (0.5 * (es[i] + es[i - 1]) > 0.05 ? 1 : 0);
+  const P = phantom60(d60.saf, 'AM'), mAI = d60.saf.phantoms.AM.masses.targets.AI;
+  const ai = (opt) => P.see(d60.emissions('C-14'), 14, ['AI'], new Set(), TARGETS_60, opt)[TARGETS_60.indexOf('AI')][0];
+  const mean14 = d60.emissions('C-14').r.b.reduce((u, [e, y]) => u + e * y, 0);
+  check(`ICRP 60: a beta spectrum in the airways as groups at the middle of each interval -- with an absorbed fraction of one ${Object.entries(over).map(([n, [g]]) => `${n} ${g.toFixed(4)}`).join(', ')} of the mean energy (the trapezoidal rule ${Object.values(over).map(([, t]) => t.toFixed(4)).join(', ')})`,
+    near(over['Ni-63'][0], 1.0056, 2e-4) && near(over['C-14'][0], 1.0035, 2e-4) && near(over['Ca-45'][0], 1.0051, 2e-4) && near(over['P-32'][0], 1.0027, 2e-4) && near(over['Y-90'][0], 1.0034, 2e-4)
+    && Object.values(over).every(([, t]) => Math.abs(t - 1) < 0.0016) && near(spectrumAf([es, ns], (e) => (e > 0.05 ? 1 : 0)), byHand, 1e-12)
+    && near(ai({}), MEV60 * mean14 * over['C-14'][0] / mAI, 1e-9) && near(ai({ dcal: true }), MEV_DCAL * mean14 * over['C-14'][1] / mAI, 1e-9), JSON.stringify(over));
+  // The three functions, each worked out here on its own from Table H.7.
+  const L = Math.log10;
+  const f1 = (a, x) => [0, 3, 6, 9].reduce((u, k) => u + a[k] * Math.exp(a[k + 1] * L(L(x) + a[k + 2]) ** 2), 0);
+  const eET1 = AF66_ELECTRON['ET1-bas<-ET1-sur'], aET1 = AF66_ALPHA['ET1-bas<-ET1-sur'], bnd = AF66_ELECTRON['BBi-bas<-BBi-bnd'], fromAI = AF66_ELECTRON['BBi-sec<-AI'];
+  const f2 = (a, x) => (1 - Math.exp(-((x / a[9]) ** 20))) * a[0] * (1 + a[1] * Math.exp(a[2] * x) + a[3] * Math.exp(a[4] * x) + a[5] * Math.exp(a[6] * x) + a[7] * Math.exp(a[8] * x));
+  const f3 = (a, x) => a[1] * Math.exp(-((a[2] * L(a[3] * x)) ** 2)) + (a[0] - a[1]) * Math.exp(-((a[4] * L(a[5] * x)) ** 2)) + a[6] * Math.exp(-((a[7] * L(a[8] * x)) ** 2));
+  const mAM = d60.saf.phantoms.AM.masses.targets;
+  check('ICRP 60: Publication 66\'s algebraic functions (Table H.7) -- the sum of four terms for the surface of ET1 (an electron of 1 MeV 0.00754, an alpha particle of 6 MeV 0.0162), the bound source\'s constant at low energy (0.25 of an electron of 10 keV in the bronchial basal cells), AI\'s electrons reaching the secretory cells from 0.29 MeV up and tending to the cells\' share of the lungs\' mass',
+    near(af66(eET1, 1), f1(eET1.slice(1), 1), 1e-12) && near(af66(eET1, 1), 0.00754, 5e-3) && near(af66(aET1, 6), f1(aET1.slice(1), 6), 1e-12) && near(af66(aET1, 6), 0.0162, 5e-3)
+    && af66(eET1, 0.005) === 0 && af66(aET1, 0) === 0 && af66(aET1, 3) < 1e-15
+    && near(af66(bnd, 0.01), 0.25, 1e-12) && near(af66(bnd, 0.5), f3(bnd.slice(1), 0.5), 1e-12) && af66(bnd, 0.5) < 0.03
+    && near(af66(fromAI, 1), f2(fromAI.slice(1), 1), 1e-12) && af66(fromAI, 0.2) < 1e-6 && near(af66(fromAI, 4), mAM['BBi-sec'] / mAM.AI, 0.04)
+    && Object.values(AF66_ALPHA).length === 17 && Object.values(AF66_ELECTRON).length === 19
+    && [...Object.values(AF66_ALPHA), ...Object.values(AF66_ELECTRON)].every((r) => r.length === (r[0] === 1 ? 13 : r[0] === 2 ? 11 : 10) && r.slice(1).every(Number.isFinite)),
+    JSON.stringify({ e1: af66(eET1, 1), a6: af66(aET1, 6), bnd: af66(bnd, 0.01), ai4: af66(fromAI, 4) }));
+  // Against the tables of DCAL's library (Tables H.1 and H.2 of Publication
+  // 66), which the functions were fitted to: the same pairs, and at the
+  // tabulated energies the same fractions within the fit -- electrons from
+  // the airways' walls with AI's fraction added, as Table H.2 has them.
+  {
+    const far = (rows, t, lo, hi, add) => {
+      const dev = [];
+      for (const pr of t.pairs) {
+        const k = `${pr.target}<-${pr.source}`, top = Math.max(...pr.af);
+        t.energies.forEach((e, n) => {
+          if (e < lo || e > hi || !(pr.af[n] > 0.02 * top)) return;
+          dev.push(Math.abs((af66(rows[k], e) + (add && /^(BBi|bbe)-/.test(pr.source) ? af66(rows[`${pr.target}<-AI`], e) : 0)) / pr.af[n] - 1));
+        });
+      }
+      dev.sort((a, b) => a - b);
+      return { n: dev.length, median: dev[dev.length >> 1], p90: dev[Math.floor(0.9 * dev.length)] };
+    };
+    const same = (rows, t) => JSON.stringify(t.pairs.map((x) => `${x.target}<-${x.source}`).sort()) === JSON.stringify(Object.keys(rows).sort());
+    const al = far(AF66_ALPHA, d60.saf.lungAF.alpha, 0, 99, false), el = far(AF66_ELECTRON, d60.saf.lungAF.electron, 0.05, 2, true), local = far(AF66_ELECTRON, d60.saf.lungAF.electron, 0.05, 2, false);
+    check(`ICRP 60: the functions against the tables they were fitted to -- alpha particles at ${al.n} tabulated points at the median ${(100 * al.median).toFixed(2)} % and nine in ten within ${(100 * al.p90).toFixed(2)} % of Table H.1; electrons of 0.05-2 MeV at ${el.n} points ${(100 * el.median).toFixed(2)} % and ${(100 * el.p90).toFixed(1)} % of Table H.2 with AI's fraction added for sources in the airways' walls (${(100 * local.p90).toFixed(1)} % without)`,
+      same(AF66_ALPHA, d60.saf.lungAF.alpha) && same(AF66_ELECTRON, d60.saf.lungAF.electron) && al.median < 0.003 && al.p90 < 0.008 && el.median < 0.01 && el.p90 < 0.035 && local.p90 > 1.5 * el.p90,
+      JSON.stringify({ al, el, local }));
+  }
+  // In the SEE: an electron of 1 MeV in the slow mucus of the bronchi and an
+  // alpha particle of 5.15 MeV on the surface of ET1; with dcal the tables.
+  const sec = TARGETS_60.indexOf('BBi-sec'), et1 = TARGETS_60.indexOf('ET1-bas');
+  const one = (em, src, opt) => P.see(em, 239, [src], new Set(), TARGETS_60, opt);
+  const eLine = { r: { e: [[1, 1]] } }, aLine = { r: { a: [[5.15, 1]] } };
+  const eTab = d60.saf.lungAF.electron, aTab = d60.saf.lungAF.alpha;
+  const eRow = eTab.pairs.find((x) => x.target === 'BBi-sec' && x.source === 'BBi-sol').af[eTab.energies.indexOf(1)];
+  const aRow = aTab.pairs.find((x) => x.target === 'ET1-bas' && x.source === 'ET1-sur').af[aTab.energies.indexOf(5.15)];
+  const wR = 20, eWant = af66(AF66_ELECTRON['BBi-sec<-BBi-sol'], 1) + af66(AF66_ELECTRON['BBi-sec<-AI'], 1), aWant = af66(aET1, 5.15);
+  check(`ICRP 60: in the SEE, an electron of 1 MeV from the slow mucus gives the bronchial secretory cells ${eWant.toFixed(5)} of its energy (its own function and AI's; the table's ${eRow} with dcal) and an alpha particle of 5.15 MeV on the surface of ET1 gives the basal cells ${aWant.toExponential(2)} (the table's ${aRow} with dcal)`,
+    near(one(eLine, 'BBi-sol', {})[sec][0], MEV60 * eWant / mAM['BBi-sec'], 1e-12) && near(one(eLine, 'BBi-sol', { dcal: true })[sec][0], MEV_DCAL * eRow / mAM['BBi-sec'], 1e-12)
+    && near(one(aLine, 'ET1-sur', {})[et1][0], wR * MEV60 * 5.15 * aWant / mAM['ET1-bas'], 1e-12) && near(one(aLine, 'ET1-sur', { dcal: true })[et1][0], wR * MEV_DCAL * 5.15 * aRow / mAM['ET1-bas'], 1e-12)
+    && aRow === 0 && aWant > 1e-6 && eRow === 0.0247 && near(eWant, 0.0214, 0.03),
+    JSON.stringify({ eWant, eRow, aWant, aRow, page: one(aLine, 'ET1-sur', {})[et1][0], dcal: one(aLine, 'ET1-sur', { dcal: true })[et1][0] }));
+}
+
 /* ---- iron's other soft tissues (ICRP 60; the FE_I72 model of gen-dose-icrp60.mjs) -------------- */
 // DCAL's Fe.DEF has them in BT-Soft, the body's tissues without the mineral
 // bone, which irradiate the liver, spleen and red marrow that the model
@@ -1722,6 +1801,37 @@ if (!SYSTEM || SYSTEM === '60') {
         for (const x of await over(nuclide, 3650, tissue)) fe.ten = Math.max(fe.ten, Math.abs(x - 1));
       }
       check(`ICRP 60 vs the ICRP database, iron: 55Fe and 59Fe, muscle, liver, spleen and red marrow at every time within ${(100 * fe.adult).toFixed(2)} % for the adult and ${(100 * fe.ten).toFixed(2)} % at 10 years`, fe.adult < 0.0015 && fe.ten < 0.003, JSON.stringify(fe));
+    }
+    // The airways' parts that the database stores, after intakes by
+    // inhalation as Type M by the adult. Beta emitters: the alveolar region
+    // (its fourth lung part) within 5e-4 (0.3-0.5 % below it with the
+    // trapezoidal rule), and with Publication 66's functions the basal cells
+    // of ET1 and ET2 within 2e-4 (63Ni's ET1 a fifth below it by straight
+    // lines through the tables), the bronchioles within 0.1 %, the bronchi
+    // within 0.35 %. Alpha emitters from 2.2 to 6.1 MeV: ET1 within 0.2 % (239Pu a
+    // fifth below it, 244Cm 40 % above by the tables), the bronchi within
+    // 0.7 % (147Sm 1.9 and 2.4 times it by the tables).
+    {
+      const part = async (nuclide, pairs) => {
+        const c = cd.rows.find((x) => x.nuclide === nuclide && x.route === 'inhalation' && x.type === 'M' && x.age === 7300);
+        await d60.prepare(nuclide);
+        const r = coefficients60(d60, recipe60(d60.cases, 'inhalation', { nuclide, type: 'M' }), [7300])[0];
+        return pairs.map(([target, key]) => { const v = c.H[key]; return r.Ht[target] / v[v.length - 1]; });
+      };
+      const PARTS = [['AI', 'Lung part 4'], ['ET1-bas', 'ET part 1'], ['ET2-bas', 'ET part 2'], ['bbe-sec', 'Lung part 3'], ['BBi-sec', 'Lung part 1'], ['BBi-bas', 'Lung part 2']];
+      const beta = { ai: [], et: [], bb: [], BB: [] }, alpha = { et1: [], et2: [], bb: [], BB: [] };
+      for (const n of ['Ni-63', 'C-14', 'S-35', 'Ca-45', 'Pm-147', 'Cl-36', 'Sr-89', 'P-32', 'Y-90']) {
+        const [ai, et1, et2, bb, sec, bas] = await part(n, PARTS);
+        beta.ai.push(ai); beta.et.push(et1, et2); beta.bb.push(bb); beta.BB.push(sec, bas);
+      }
+      for (const n of ['Sm-147', 'Gd-148', 'U-234', 'Pu-239', 'Po-210', 'Am-241', 'Cm-244', 'Cm-242']) {
+        const [, et1, et2, bb, sec, bas] = await part(n, PARTS);
+        alpha.et1.push(et1); alpha.et2.push(et2); alpha.bb.push(bb); alpha.BB.push(sec, bas);
+      }
+      const farP = (l) => l.reduce((m, x) => Math.max(m, Math.abs(x - 1)), 0);
+      check(`ICRP 60 vs the ICRP database, the airways' parts: after nine beta emitters the alveolar region within ${(1e5 * farP(beta.ai)).toFixed(0)}e-5, the basal cells of ET1 and ET2 within ${(1e5 * farP(beta.et)).toFixed(0)}e-5, the bronchioles within ${(100 * farP(beta.bb)).toFixed(2)} % and the bronchi within ${(100 * farP(beta.BB)).toFixed(2)} %; after eight alpha emitters of 2.2-6.1 MeV ET1 within ${(100 * farP(alpha.et1)).toFixed(2)} %, ET2 within ${(100 * farP(alpha.et2)).toFixed(2)} %, the bronchioles within ${(100 * farP(alpha.bb)).toFixed(2)} % and the bronchi within ${(100 * farP(alpha.BB)).toFixed(2)} %`,
+        farP(beta.ai) < 5e-4 && farP(beta.et) < 3e-4 && farP(beta.bb) < 0.0015 && farP(beta.BB) < 0.004
+        && farP(alpha.et1) < 0.003 && farP(alpha.et2) < 0.002 && farP(alpha.bb) < 0.002 && farP(alpha.BB) < 0.0075, JSON.stringify({ beta, alpha }));
     }
   }
 }

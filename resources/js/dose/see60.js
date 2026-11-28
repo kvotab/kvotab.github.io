@@ -25,7 +25,9 @@
     - in the contents of walled organs: the wall takes half the equilibrium
       dose of the contents, a hundredth of that for alphas, none for recoils;
     - in the respiratory tract, where the absorbed fractions of ICRP 66 Annex
-      H hold, against the beta spectrum for beta emitters;
+      H hold -- by its algebraic functions (af66), as the ICRP's coefficients
+      have them -- against the beta spectrum for beta emitters (spectrumAf:
+      the spectrum in groups, as the ICRP's coefficients have it);
     - from Body Tissues and Blood, which irradiate every target alike;
     - from Other, the body tissues not named in the biokinetic model: none to
       a named region and 1/M_Other to every other target, the bone surface
@@ -85,6 +87,98 @@ export const MEV_DCAL = 1.602176634e-13;
    one that makes the 3-month-old's so, between it and the 1-year-old's by
    DCAL's weights. */
 export const BODY_TISSUES_60 = { A00: 3.5335, A01: 9.6155, A05: 19.4935, A10: 32.680, A15: 55.867, AM: 68.966 };
+/* The absorbed fractions of the airways as the ICRP's coefficients have
+   them: by the algebraic functions that Annex H of Publication 66 gives
+   beside its tables (Table H.7), with the fitted parameters of Table H.8 for
+   alpha particles and Table H.9 for electrons. A. Birchall and N. S. Jarvis
+   of NRPB made them (para H28), and NRPB's code calculated Publication 72.
+   They follow Tables H.1 and H.2 "to within about 1 %" (at the tabulated
+   energies nine points in ten within 0.6 % for alphas and within 2.7 % for
+   electrons up to 2 MeV; test-engine.mjs) but they are not the tables: they
+   run smoothly through the energies at which a
+   target comes within an alpha particle's range, where straight lines
+   between the tables' points are far off. Measured on the parts of the
+   airways that the ICRP's database of dose coefficients stores, committed
+   doses of adults, this engine over the database (README):
+
+                             functions    tables, straight lines
+     63Ni  M   ET1           1.0000       0.810
+     90Y   M   BB sec        0.999        1.018
+     147Sm M   BB sec, bas   0.994        1.91, 2.43
+     239Pu S   ET1           0.997        0.33
+     244Cm M   ET1           0.999        1.40
+     210Po M   BB bas        0.997        1.042
+
+   A row: the function's number, then its parameters a1, a2, ... as printed.
+   "Fast" mucus is the gel and "slow" the sol; x is the energy in MeV and the
+   logarithms are to base 10 (so the functions reproduce the tables).
+
+     1  AF = sum over k = 1, 4, 7, 10 of a[k] exp(a[k+1] (log(log x + a[k+2]))^2)
+     2  AF = (1 - exp(-(x/a10)^20)) a1 (1 + a2 e^(a3 x) + a4 e^(a5 x) + a6 e^(a7 x) + a8 e^(a9 x))
+     3  AF = G(a2, a3, a4) + G(a1 - a2, a5, a6) + a7 exp(-(a8 log(a9 x))^2),
+        G(A, w, c) = A below x = 1/c and A exp(-(w log(c x))^2) from there on
+
+   Alpha particles from AI reach no bronchial target (no rows). */
+export const AF66_ALPHA = {
+  'ET1-bas<-ET1-sur': [1, 0.01796145, -3119.876, 0.1900499, 0.08115775, -332.282, -0.04370656, 0.0385861, -1773.797, 0.1467869, 0.05591718, -884.288, 0.08164135],
+  'ET2-bas<-ET2-sur': [1, 0.001987374, -5601.585, 0.1983734, 0.06499644, -917.1186, -0.03310157, 0.02179814, -2029.563, 0.140741, 0.02757517, -1792.149, 0.07648437],
+  'ET2-bas<-ET2-bnd': [3, 0.1818, 0.07177234, 2.16186, 0.4142823, 0.6751693, 0.9448594, 0.0116813, 7.590152, 0.1566737],
+  'ET2-bas<-ET2-seq': [1, 0.004805373, -432.9348, 0.2460405, 0.06266583, -48.09133, 0.2673597, 0.05482465, -26.64634, 0.2542903, 0.03330228, -304.8436, 0.3973314],
+  'BBi-bas<-BBi-gel': [1, 0.06983329, -1184.593, 0.08742065, 0.0240528, -2526.069, 0.1479149, 0.006534014, -12165.92, 0.2029002, 0.1142872, -416.8058, -0.03285549],
+  'BBi-bas<-BBi-sol': [1, 0.06992142, -1036.153, 0.09166263, 0.0319672, -2478.645, 0.1784789, 0.00769929, -4477.944, 0.2313976, 0.1134538, -376.5693, -0.03556158],
+  'BBi-bas<-BBi-bnd': [3, 0.25, 0.01563289, 6.835241, 0.3650127, 1.836431, 0.2704326, 0.03526641, 8.848307, 0.08170446],
+  'BBi-bas<-BBi-seq': [1, 0.02216691, -394.8869, 0.1127097, 0.1350273, -169.1389, 0.2650755, 0.00726001, -470.5375, 0.4806218, 0.07464973, -133.0544, -0.05250502],
+  'BBi-sec<-BBi-gel': [1, 0.1752043, -381.9491, 0.158163, 0.01589757, -1162.612, 0.3911134, 0.2871758, -111.7757, -0.0161215, 0.08175596, -528.7388, 0.2770516],
+  'BBi-sec<-BBi-sol': [1, 0.09272864, -318.2638, 0.1371357, -0.01108624, -1824.432, 0.1549195, 0.2892277, -29.22377, 0.009140343, 0.02527141, -353.2921, 0.387492],
+  'BBi-sec<-BBi-bnd': [3, 0.5, 0.2663222, 1.247913, 0.395056, 2.595532, 0.2349517, 0.09375073, 6.073588, 0.08536083],
+  'BBi-sec<-BBi-seq': [1, 0.09811496, -390.2333, 0.1676271, 0.01968822, -859.2531, 0.2946132, 0.1328864, -163.7452, -8.938576e-3, 0.03513111, -3222.807, -0.0542812],
+  'bbe-sec<-bbe-gel': [1, 0.04305129, -394.2624, 0.4336853, 0.07326854, -152.643, 0.3898331, 0.1704198, -44.87835, 0.2104057, 0.005133497, -741.4282, 0.2740834],
+  'bbe-sec<-bbe-sol': [1, 0.007152097, -1449.924, 0.3744433, 0.1897075, -30.60365, 0.329908, 0.05060541, -113.7795, 0.3189578, -4.889305e-3, -580.5995, 0.1890273],
+  'bbe-sec<-bbe-bnd': [3, 0.4, 0.2330375, 1.606937, 0.6944076, 1.617835, 0.2810387, -0.02880487, 7.887438, 0.240524],
+  'bbe-sec<-bbe-seq': [1, 0.06082015, -217.5413, 0.4092593, 0.09193827, -25.71987, 0.1000563, 0.0118824, -1568.605, 0.1839267, 0.02114782, -417.2795, 0.1039428],
+  'bbe-sec<-AI': [1, 9.583849e-5, -792.4591, 0.2191848, 9.621604e-4, -133.7145, -0.1589139, 3.212547e-4, -309.0881, 0.06662389, 1.811347e-5, -1487.62, 0.3003989],
+};
+export const AF66_ELECTRON = {
+  'ET1-bas<-ET1-sur': [1, 0.065053, -354.406, 2.014387, 0.036335, -991.429, 2.125458, 0.019842, -24.6374, 1.580302, 0.046065, -100.628, 1.835525],
+  'ET2-bas<-ET2-sur': [1, 0.009434, -18.2563, 1.521565, 0.010917, -1134.08, 2.108072, 0.030823, -80.0744, 1.78897, 0.039695, -234.006, 1.959684],
+  'ET2-bas<-ET2-bnd': [3, 0.1818, 0.012801, 0.790806, 13.45734, 1.162724, 53.70593, -0.00902, 11.51802, 10.27388],
+  'ET2-bas<-ET2-seq': [1, 0.036493, -17.099, 1.957065, 0.012268, -490.983, 2.372073, 0.013901, -80.9776, 1.766727, 0.121082, -89.8524, 2.286418],
+  'BBi-bas<-BBi-gel': [1, 0.022208, -23.543, 1.526898, 0.055161, -678.604, 2.076011, 0.052048, -89.4917, 1.772334, 0.077509, -288.868, 1.957359],
+  'BBi-bas<-BBi-sol': [1, 0.024444, -23.3706, 1.562825, 0.028798, -705.929, 2.123317, 0.057382, -87.789, 1.808263, 0.083806, -281.914, 1.99725],
+  'BBi-bas<-BBi-bnd': [3, 0.25, 0.023337, 0.867548, 14.66598, 1.381178, 33.94687, -0.0168, 8.056959, 11.69128],
+  'BBi-bas<-BBi-seq': [1, 0.084383, -43.1191, 1.918628, 0.117906, -169.24, 2.234064, 0.001411, -86.001, 1.263035, 0.009699, -16.5773, 1.414384],
+  'BBi-bas<-AI': [2, 0.000393, -400.456, -1.80563, 777.7234, -1.732, 3.733329, -10.2482, -379.908, -1.66248, 0.287203],
+  'BBi-sec<-BBi-gel': [1, 0.219072, -180.389, 2.123581, 0.072201, -21.9379, 1.724434, 0.010307, -1090.27, 2.323796, 0.165766, -67.5677, 1.939],
+  'BBi-sec<-BBi-sol': [1, 0.190302, -131.282, 2.113636, 0.061225, -18.8215, 1.792023, 0.049712, -394.019, 2.350691, 0.15794, -46.6822, 1.963819],
+  'BBi-sec<-BBi-bnd': [3, 0.5, 0.07042, 0.886749, 19.05802, 1.54244, 27.37533, -0.03274, 6.968345, 13.33513],
+  'BBi-sec<-BBi-seq': [1, -0.20809, -572.72, 2.174599, 0.278314, -476.006, 2.168483, 0.125274, -69.2237, 1.918443, 0.058332, -21.8086, 1.689866],
+  'BBi-sec<-AI': [2, 0.000786, -859.74, -1.61489, 1689.772, -1.57364, 124.4556, -25.1186, -832.213, -1.53368, 0.287178],
+  'bbe-sec<-bbe-gel': [1, 0.112968, -358.216, 2.393708, 0.131671, -170.786, 2.268427, 0.015445, -18.7936, 1.870242, 0.101948, -60.4808, 2.088622],
+  'bbe-sec<-bbe-sol': [1, 0.025629, -538.817, 2.535345, 0.175729, -48.4179, 2.257859, 0.018913, -16.7686, 2.055972, 0.071751, -189.165, 2.344306],
+  'bbe-sec<-bbe-bnd': [3, 0.4, 0.048063, 0.711481, 149.3354, 1.621245, 45.538, -0.03676, 6.960692, 22.59052],
+  'bbe-sec<-bbe-seq': [1, 0.059129, -139.756, 2.153796, 0.059699, -53.6711, 2.02631, 0.010356, -16.8711, 1.82904, 0.085985, -306.92, 2.369979],
+  'bbe-sec<-AI': [2, 0.001772, -2.64463, -16.7712, 1.116624, -2.11559, 3.291514, -46.8517, -1.27588, -2.11622, 0.04],
+};
+/** One of Table H.7's functions at the energy x (MeV): row = [function, a1, a2, ...]. */
+export function af66(row, x) {
+  if (!(x > 0)) return 0;
+  const a = row, L = Math.log10;
+  let af;
+  if (a[0] === 1) {
+    af = 0;
+    for (let k = 1; k <= 10; k += 3) {
+      const u = L(x) + a[k + 2];
+      if (u > 0) af += a[k] * Math.exp(a[k + 1] * L(u) ** 2); // below 10^-a[k+2] MeV the term has run out
+    }
+  } else if (a[0] === 2) {
+    af = (1 - Math.exp(-((x / a[10]) ** 20))) * a[1] * (1 + a[2] * Math.exp(a[3] * x) + a[4] * Math.exp(a[5] * x) + a[6] * Math.exp(a[7] * x) + a[8] * Math.exp(a[9] * x));
+  } else {
+    const g = (amp, w, c) => (x < 1 / c ? amp : amp * Math.exp(-((w * L(c * x)) ** 2)));
+    af = g(a[2], a[3], a[4]) + g(a[1] - a[2], a[5], a[6]) + a[7] * Math.exp(-((a[8] * L(a[9] * x)) ** 2));
+  }
+  return af > 0 ? af : 0;
+}
+
 export const TARGETS_60 = ['Adrenals', 'UB_Wall', 'Bone_Sur', 'Brain', 'Breasts', 'St_Wall', 'SI_Wall', 'ULI_Wall',
   'LLI_Wall', 'Kidneys', 'Liver', 'ET1-bas', 'ET2-bas', 'LN-ET', 'BBi-bas', 'BBi-sec', 'bbe-sec', 'AI', 'LN-Th',
   'Muscle', 'Ovaries', 'Pancreas', 'R_Marrow', 'Skin', 'Spleen', 'Testes', 'Thymus', 'Thyroid', 'GB_Wall',
@@ -159,6 +253,7 @@ export function phantom60(saf, phantom) {
      dcal the phantom file's own; set by see() for the SEE it computes. */
   const bodyTissues = (dcal) => (dcal ? mS.Body_Tis : BODY_TISSUES_60[phantom] ?? mS.Body_Tis);
   let MWB = bodyTissues(false);
+  // The airways' tables of DCAL's library, used with `dcal` only (lungAf).
   const lungE = indexLungAF(saf.lungAF.electron), lungA = indexLungAF(saf.lungAF.alpha);
 
   const photonSaf = (t, s) => {
@@ -197,13 +292,38 @@ export function phantom60(saf, phantom) {
     return t === s && mT[t] ? 1 / mT[t] : 0;
   }
 
-  /* Respiratory tract sources: ICRP 66 absorbed fractions, interpolated in
-     energy; ELALPHAF's constant fractions for the pairs it lists. */
+  /* Respiratory tract sources: ICRP 66's absorbed fractions by its algebraic
+     functions (AF66_ALPHA, AF66_ELECTRON), and ELALPHAF's constant fractions
+     for the pairs it lists.
+
+     Electrons from a source in the wall of the bronchi or the bronchioles
+     get the fraction from AI added. The calculation behind Annex H is of one
+     airway in alveolar tissue, and what its electrons do to the other
+     airways is "adequately approximated by adding the surrogate calculated
+     value of AF(T<-AI)" (para H21); Table H.2 has the sum, the functions the
+     one airway. Without it 90Y's bronchiolar dose is 0.934 of the ICRP's
+     database of dose coefficients and its bronchial 0.983; with it 1.0002
+     and 0.998-0.999.
+
+     With `tables` (set by see() for dcal) the tables of DCAL's library as
+     SEECAL takes them, straight lines between the tabulated energies. */
+  let tables = false;
+  const AIRWAY_WALL = /^(BBi|bbe)-/;
   function lungAf(t, s, energy, c, recoil) {
     if (recoil) return (t === s && (s === 'AI' || s === 'LN-Th' || s === 'LN-ET')) ? 1 : 0;
-    const table = c === ALPHA ? lungA : lungE;
-    const p = table.get(`${t}<-${s}`);
-    let af = p ? lerp(table.energies, p, energy) : 0;
+    let af = 0;
+    if (tables) {
+      const table = c === ALPHA ? lungA : lungE;
+      const p = table.get(`${t}<-${s}`);
+      if (p) af = lerp(table.energies, p, energy);
+    } else {
+      const rows = c === ALPHA ? AF66_ALPHA : AF66_ELECTRON;
+      const row = rows[`${t}<-${s}`];
+      if (row) {
+        af = af66(row, energy);
+        if (c !== ALPHA && AIRWAY_WALL.test(s)) af += af66(rows[`${t}<-AI`], energy);
+      }
+    }
     const fixed = P.af[c === ALPHA ? 'alpha' : 'electron'][`${t}<-${s}`];
     if (fixed !== undefined) af += fixed;
     return af;
@@ -229,13 +349,16 @@ export function phantom60(saf, phantom) {
    * @param {{Z?: number, dcal?: boolean, boneInOther?: boolean}} [opt]  the atomic number, for
    *   spontaneous fission; dcal: as DCAL's SEECAL has it, the photon SAF itself linear in
    *   energy (interpPhoton), the exact joules per MeV (MEV_DCAL) and the mass
-   *   of the body's tissues of its REGMASS file; boneInOther: the mineral bone
+   *   of the body's tissues of its REGMASS file, the airways' absorbed fractions
+   *   from its tables, linear in energy, and beta spectra by the trapezoidal
+   *   rule; boneInOther: the mineral bone
    *   stays in Other although the model names bone regions (tellurium:
    *   model60.js BONE_IN_OTHER_60)
    * @returns {Float64Array[]}  see[t][s], Sv per transformation
    */
   function see(em, A, sources, explicit, targets = TARGETS_60, opt = {}) {
     MWB = bodyTissues(!!opt.dcal);
+    tables = !!opt.dcal;
     const r = em.r || {};
     const photons = (r.p || []).filter(([e]) => e >= 0.01);
     const softPh = (r.p || []).filter(([e]) => e < 0.01).reduce((s, [e, y]) => s + e * y, 0);
@@ -260,7 +383,7 @@ export function phantom60(saf, phantom) {
     const lungNp = (t, s) => {
       let sum = 0;
       for (const [e, y] of elec) sum += y * e * lungAf(t, s, e, E_LO, false);
-      if (em.bs && betas.length) sum += spectrumAf(em.bs, (e) => lungAf(t, s, e, E_LO, false));
+      if (em.bs && betas.length) sum += spectrumAf(em.bs, (e) => lungAf(t, s, e, E_LO, false), !!opt.dcal);
       else for (const [e, y] of betas) sum += y * e * lungAf(t, s, e, E_LO, false);
       sum += softPh * lungAf(t, s, 0.005, E_LO, false);
       let a = 0;
@@ -384,11 +507,35 @@ function indexLungAF(t) {
   return m;
 }
 
-/* integral of N(E) E AF(E) dE over a beta spectrum tabulated at points, by
-   the trapezoidal rule on the tabulated grid. */
-export function spectrumAf(bs, af) {
+/* A beta spectrum, tabulated at points, against an absorbed fraction that
+   depends on the energy: MeV absorbed per transformation.
+
+   As the ICRP's coefficients have it, the spectrum is a set of groups, one
+   for each interval of the table: as many electrons as the interval's width
+   times the mean of N at its two ends, all of the energy of its middle,
+   with the absorbed fraction of that energy. Where the fraction is one that
+   comes to 1.0025-1.0058 times the mean energy of the decay data, since the
+   middle of an interval is not where its electrons' mean energy lies, and
+   that is what the ICRP's database of dose coefficients gives the alveolar
+   region and the lymph nodes of every beta emitter: 63Ni 1.0053, 14C
+   1.0035, 45Ca 1.0052, 147Pm 1.0056, 36Cl 1.0027, 32P 1.0027, 90Y 1.0032 of
+   the mean energy, and this sum 1.0056, 1.0035, 1.0051, 1.0058, 1.0028,
+   1.0027, 1.0034 (README). The whole body's and the organs' doses, which go
+   by the mean energy, show no such excess.
+
+   With `trapezoid` (for `dcal`), the integral of N(E) E AF(E) dE by the
+   trapezoidal rule on the tabulated grid, which gives the mean energy within
+   0.15 %. */
+export function spectrumAf(bs, af, trapezoid = false) {
   const [es, ns] = bs;
   let sum = 0;
+  if (!trapezoid) {
+    for (let i = 1; i < es.length; i++) {
+      const mid = 0.5 * (es[i - 1] + es[i]);
+      sum += 0.5 * (ns[i - 1] + ns[i]) * (es[i] - es[i - 1]) * mid * af(mid);
+    }
+    return sum;
+  }
   for (let i = 1; i < es.length; i++) {
     const a = ns[i - 1] * es[i - 1] * af(es[i - 1]);
     const b = ns[i] * es[i] * af(es[i]);
