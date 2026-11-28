@@ -4216,3 +4216,183 @@ Tools in ~/Downloads/icrp-dc/icrpcd/chain: parts.mjs and gparts.mjs (a
 dose by member and source region or compartment), var.mjs with
 variants.mjs (a case with the assembled system patched), elstat.mjs and
 nucdiff.mjs (run files by element and nuclide), limits.mjs.
+
+## Chains: whose kinetics, and where they end (2026-11-28, afternoon)
+
+The largest gaps left against the ICRP's database were single tissues of
+short-lived actinides and of 226Th, 2 to 77 times the database's dose. The
+page had put them down to "Publication 72 ends a few chains earlier". It
+does not. Three different things were behind them; two are in the engine
+now, the third is the database's own and is left alone.
+
+Publication 72 itself (read for this; the user's copy) says in paragraph
+19 only that lead, radium, tellurium, thorium and uranium have "separate
+biokinetics for systemic activity ... as described in Annexe C of ICRP
+Publication 71", and that otherwise decay products "adopt the absorption
+parameters of their parent if they are produced in the respiratory or
+gastrointestinal tract, and the biokinetics of their parent if they are
+produced after absorption to blood". Its errata (Supporting Guidance 3)
+are two footnotes. Of the errata to Publications 66, 69 and 71 in the same
+list three touch this page, and the page has all three as corrected:
+calcium's rate from trabecular surface to exchangeable volume in the adult
+(0.116 d-1, not 8e-4), iron's adult f1 (0.1) and the masses of the
+bronchial secretory cells and the bronchioles (0.00086 and 0.0019 kg).
+
+**1. Which chains have the parent's kinetics.** chain/kin.mjs runs every
+chain that DCAL's batch files give the progeny's own models both ways
+against the database (adult, swallowed; share of tissues within 1 % and
+the worst ratio):
+
+                 own models        parent's kinetics
+    226Th        14 %  26.5        100 %  0.999
+    237U        100 %  1.008       100 %  1.001
+    239U         33 %  0.43        100 %  1.001
+    240U         62 %  1.94        100 %  1.001
+    230U         14 %  0.77         14 %  0.75
+    227Th        90 %  0.98         19 %  3.0
+    232U         29 %  1.04         62 %  0.55
+    224Ra        48 %  1.05         10 %  0.19
+    210Pb       100 %  1.001         0 %  0.09
+    198Pb         0 %  4.0         100 %  1.002   (as the page had it)
+    132Te       100 %  1.001         0 %  0.03
+
+Uranium's three with neptunium and plutonium in the chain are the
+parent's: Publications 69 and 71 give no model for those two as uranium's
+decay products (DCAL has NpU.def and PuU.def). After 240U breathed in as
+Type M the bone surfaces were 12.5 times the database's dose and the liver
+7.6 times; now eight tissues of 239U and 240U swallowed are within 0.21 %
+at 3 months, 10 years and for the adult (240U breathed in at 15 years: the
+bone surfaces 1.02-1.03), and 237U's bone surfaces 1.047 -> 1.002.
+
+226Th is the parent's too, and that is read off the doses alone: its
+progeny (222Ra, 218Rn, 214Po, 210Pb, 210Bi, 210Po) all have models in
+thorium's chains. With them the muscle got 6-7 times the database's dose
+(222Ra formed in the gut absorbed as radium) and the spleen up to 77 times
+(210Pb absorbed as lead, its 210Po in the spleen). Nor is it only the gut:
+with the progeny's own models and none of that absorption the bone
+surfaces get a twentieth of the database's dose in the long run. The
+database's dose there grows for fifty years with the half-life of 210Pb,
+twenty times what lead's own kinetics leave on the surfaces, and its
+pattern over the tissues is thorium's (testes high, spleen flat). With
+thorium's kinetics for all: eight tissues within 0.12 % at every time, at
+3 months and for the adult, and after Type S.
+
+A rule that would have covered both -- a chain with a member outside the
+natural series takes the parent's kinetics -- fails on 230U, whose chain
+is 226Th's from the second member on: with uranium's kinetics its spleen
+is 0.72 and its liver 0.94 of the database after Type M (1.01 and 1.02
+with the progeny's own models). So 226Th stands as a case of its own
+(model60.js SHARED_72), uranium's by the two elements (NO_PROGENY_MODEL_72)
+and lead's as before (PB_NATURAL).
+
+**2. Where a chain ends.** The page drops a member that, with all that
+comes through it, has under a thousandth of the chain's energy in 100
+years, the alpha energy counted 20 times (DCAL's ACTACAL). At the end of
+an alpha chain that drops beta and gamma emitters which are most of the
+dose far from the alpha emitters. After 225Ac (adult, committed; page over
+database):
+
+                      without 209Tl, 209Pb    with
+    muscle            0.898                   1.0001
+    kidneys           0.892                   1.0001
+    uterus            0.860                   1.0000
+    upper large int.  0.971                   1.0012
+
+and so 207Tl after 227Ac (muscle 0.9956 -> 1.0010, lower large intestine
+0.983 -> 1.0014), 227Pa (upper large intestine 0.924 -> 1.0003) and 231Pa.
+But not with the progeny's own models: 207Tl after 223Ra puts the walls of
+the large intestine at 1.076 and 1.082 of the database (1.003 and 1.001
+without), after 227Th at 1.016 and 1.028, and 209Tl and 209Pb after 225Ra
+at 1.003 and 1.020 (0.996 and 1.000). So the database has the weighted cut
+for chains with element-specific models and keeps the members that carry a
+thousandth of the unweighted energy too in chains with the parent's
+kinetics: chain.js's 'either', which the ICRP 103 system has. 25 of 755
+chains differ between the two measures; with the rule fifteen change.
+
+**What the two do.** Tissue doses within 1 % of the database, committed:
+thorium's 60.7 -> 77.6 % (within 5 %: 87.2 -> 98.3 %), uranium's 75.4 ->
+87.8 % (88.4 -> 96.0 %), actinium's 89.2 -> 100 %, protactinium's 89.1 ->
+93.2 % (97.6 -> 100 %). Of all e values 96.8 % round to ICRP 72's two
+figures (96.6), of the organ doses 96.4 % (95.9); Publication 119's e
+swallowed 95.1 -> 95.5 %, breathed in 97.2 -> 97.4 %. Help's check rows:
+ingestion 99.7, 99.8, 100.0 %; inhalation 99.8, 99.8, 99.9 %.
+
+**3. The database stops early for children (not followed).** The factors
+of 2-12 at the bone surfaces of 238Np, 243Pu, 245Am and the like are in
+childhood only; the adult agrees to 0.1 % with the long-lived daughter in
+the chain. The database's own series say why. After 238Np swallowed, bone
+surface, Sv/Bq at the stored times:
+
+    adult      1.85e-11 3.25e-11 3.37e-11 4.95e-11 1.10e-10 ... 3.89e-10
+    15 years   2.28e-11 3.96e-11 4.12e-11 6.01e-11 1.14e-10 ... 3.47e-10
+    10 years   3.35e-11 5.90e-11 6.19e-11 6.92e-11   (no more values)
+    3 months   1.63e-10 3.64e-10 4.64e-10 1.05e-9    (no more values)
+
+For the child the dose stops growing although the 238Pu stays in the
+skeleton. The day at which this page's own dose reaches the database's
+last value (chain/stopday.mjs):
+
+    238Np swallowed    3 months 265.5   1 y 80.1   5 y 100.1   10 y 99.9   15 y never
+    245Am Type S       3 months 19.1    1 y 160.6  5 y 700.8   10 y 600.2  15 y never
+    243Pu Type M       3 months 18.8
+    246mAm Type S      1 y 783    5 y 1388    10 y 1336    15 y 3640.5 (25 years of age)
+
+Whole steps of the stepping scheme (9, 40, 50 and 180 d), and at 3 months
+the end of the first year (day 265). The calculation ends with the first
+step that adds less than a millionth to the transformations counted so
+far in the whole body (chain/stopq.mjs; the step at which it ends, and the
+one before):
+
+    238Np 10 y    step 2  9.99e-7                 245Am 10 y   step 12  9.92e-7   (11: 1.02e-6)
+    238Np 1 y     step 2  8.91e-7                 245Am 5 y    step 14  9.72e-7   (13: 1.00e-6)
+    238Np 3 mo    step 29 1.79e-6, goes on;       245Am 1 y    step 4   9.79e-7   (3: 1.05e-6)
+                  the 4 days to age 1 y end it    246mAm 10 y  step 27  9.72e-7   (26: 1.00e-6)
+
+A convergence test, harmless for one radionuclide and wrong where a
+short-lived parent leaves a long-lived alpha emitter. An adult is done in
+one step and never meets it.
+
+It is not in the engine, for two reasons. It cuts off dose that is there:
+the page's bone-surface doses for those intakes are up to 12 times the
+database's and Publication 72's, its effective doses up to 6 % higher,
+and Help now says so. And the test as read does not hold everywhere: put
+in (the patch is chain/stop-rule.patch), it brings neptunium's tissues
+within 1 % from 91.4 to 96.7 % and americium's from 91.4 to 95.1 %, and it
+ends nine chains where the database goes on -- 231Th and 231U (which the
+database stores to two figures), 232Pa and 232Np (to 232U,
+whose progeny grow in, so that the steps' share rises: 7.5e-7 at step 2,
+1.0e-6 at step 4), 233Pa, 249Cm (to 249Bk and 249Cf), 251Es, 242Am, and
+246Am, whose share is that of its isomer 246mAm step for step and which
+the database follows to the end where it stops 246mAm.
+
+**Seen on the way, not followed up.**
+
+- After 214Pb swallowed at 3 months every tissue but the wall of the small
+  intestine has the same 5.72e-10 Sv/Bq more in the database on the first
+  day, the muscle 2.4 times the page's dose (chain/diff1.mjs); the adult
+  5 %. It is what would come of 214Po (164 us) formed in the small
+  intestine being absorbed there as polonium (f1 1 at 3 months, 0.5 later)
+  against a decay rate of 3600 d-1 instead of its own: 14.1 % at 3 months,
+  0.17 % later, the same 3600 at the three ages. With no member of under a
+  second decaying faster than that (and not following its systemic model)
+  214Pb's soft tissues are within 0.6 % at the three ages, and 224Ra's at
+  3 months 0.967 -> 0.998. 223Ra's at 3 months only 0.80 -> 0.85, and
+  capping 219Rn (4 s) too puts the adult 12 % high. Not understood well
+  enough to put in.
+- 230U has such a uniform extra on the first day too, 1.26e-9 Sv/Bq in
+  every tissue, four times the page's dose to muscle; neither kinetics nor
+  that cap gives it.
+- The f1 the database stores for polonium at 3 months is 0.99: f1 = 1 is
+  taken as 0.99 there as here.
+- My statistics matched DCAL's second polonium case (in water, f1 0.1)
+  against the database's one row: the polonium lines in chain/worst.mjs
+  are that, not a gap (210Po swallowed is within 0.1 %).
+
+Tests: test-engine.mjs has the kinetics of thirteen chains with both
+readings, the members of five chains, and against the database 226Th's
+eight tissues at 3 months and for the adult, 239U's and 240U's at three
+ages, the ends of 225Ac's, 227Ac's, 227Pa's and 231Pa's chains and 223Ra's
+colon without 207Tl (355 checks). Tools in ~/Downloads/icrp-dc/icrpcd/chain:
+kin.mjs, ends.mjs, worst.mjs, stopday.mjs, stoprule.mjs, stopq.mjs,
+useq.mjs, diff1.mjs, limits2.mjs; run files r60-kin.json (this state),
+r60-stopA/B/C.json (the stopping test tried, without and with age nodes).

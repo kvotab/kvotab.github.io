@@ -1513,6 +1513,33 @@ if (!SYSTEM || SYSTEM === '103') {
     JSON.stringify({ radium: ra.gasRegions, lead: pb.gasRegions, dcal: raDcal.gasRegions }));
 }
 
+// ICRP 60: which chains have the parent's kinetics for every member in ICRP
+// 72's coefficients though DCAL runs them with the progeny's own models, and
+// where a chain with shared kinetics ends.
+{
+  const names = ['Th-226', 'U-237', 'U-239', 'U-240', 'U-230', 'U-232', 'U-238', 'Th-227', 'Th-230', 'Ra-223', 'Ac-225', 'Ac-227', 'Pa-227'];
+  for (const nuclide of names) await d60.prepare(nuclide);
+  const sysOf = (nuclide, spec = {}) => assemble60(d60, { ...recipe60(d60.cases, 'ingestion', { nuclide }), intakeAge: 7300, ...spec });
+  const kin = Object.fromEntries(names.map((n) => [n, sysOf(n).spec.kinetics]));
+  const dcal = Object.fromEntries(names.map((n) => [n, sysOf(n, { icrp72: false }).spec.kinetics]));
+  const u239 = sysOf('U-239'), th226 = sysOf('Th-226');
+  check('ICRP 60: 226Th and uranium\'s chains with neptunium and plutonium (237U, 239U, 240U) have the parent\'s kinetics for every member; 230U, 232U, 238U, 227Th, 230Th and 223Ra the progeny\'s own models, as all of them by DCAL\'s reading',
+    ['Th-226', 'U-237', 'U-239', 'U-240'].every((n) => kin[n] === 'S' && dcal[n] === 'I')
+    && ['U-230', 'U-232', 'U-238', 'Th-227', 'Th-230', 'Ra-223'].every((n) => kin[n] === 'I' && dcal[n] === 'I')
+    && u239.members.map((m) => m.name).join() === 'U-239,Np-239,Pu-239' && u239.members.every((m) => m.bio === 'U' && m.f1 === u239.members[0].f1)
+    && sysOf('U-239', { icrp72: false }).members.map((m) => m.bio).join() === 'U,NPU,PUU'
+    && th226.members.length === 7 && th226.members.every((m) => m.bio === 'TH') && th226.gasRegions.length === 0,
+    JSON.stringify({ kin, dcal }));
+  const members = (n, spec) => sysOf(n, spec).members.map((m) => m.name);
+  const ac225 = members('Ac-225'), ac227 = members('Ac-227'), pa227 = members('Pa-227'), ra223 = members('Ra-223'), th227 = members('Th-227');
+  check(`ICRP 60: a chain with shared kinetics keeps the beta and gamma emitters at the end of an alpha chain (225Ac: ${ac225.slice(-2).join(' and ')}; 227Ac and 227Pa: ${ac227[ac227.length - 1]}), one with the progeny's own models ends by the energy with the alpha weighting (223Ra and 227Th without 207Tl), as every chain by DCAL's reading`,
+    ac225.join() === 'Ac-225,Fr-221,At-217,Bi-213,Po-213,Tl-209,Pb-209' && ac227[ac227.length - 1] === 'Tl-207' && pa227[pa227.length - 1] === 'Tl-207'
+    && ra223.join() === 'Ra-223,Rn-219,Po-215,Pb-211,Bi-211' && !th227.includes('Tl-207')
+    && members('Ac-225', { icrp72: false }).join() === 'Ac-225,Fr-221,At-217,Bi-213,Po-213' && !members('Ac-227', { icrp72: false }).includes('Tl-207')
+    && members('U-238').join() === 'U-238,Th-234,Pa-234m' && members('Ra-226').length === 10,
+    JSON.stringify({ ac225, ac227, pa227, ra223, th227 }));
+}
+
 /* ---- the mass of the body's tissues (ICRP 60; see60.js BODY_TISSUES_60) ------------------------ */
 // What a source spread through the whole body is spread over: the database's
 // masses, DCAL's with dcal. 3H in the body tissues of the adult: every
@@ -2045,6 +2072,34 @@ if (!SYSTEM || SYSTEM === '60') {
       check(`ICRP 60 vs the ICRP database, chains: the adult's soft tissues after 224Ra within ${(100 * thoron).toFixed(2)} % at every time (the muscle ${thoronDcal.toFixed(2)} of it on the first day by DCAL's reading); 238U's testes and ovaries within ${(100 * u[100]).toFixed(2)} % at 3 months and ${(100 * u[3650]).toFixed(2)} % at 10 years with the shares by masses straight in age (the testes ${(100 * straight[100]).toFixed(0)} and ${(100 * straight[3650]).toFixed(0)} % off with the shares themselves straight); 227Th's muscle within ${(100 * th).toFixed(2)} %; 210Pb's testes the muscle's ratio within ${(1e5 * lead).toFixed(1)}e-5 after an intake at 10 years`,
         thoron < 0.011 && thoronDcal < 0.8 && u[100] < 0.0015 && u[3650] < 0.002 && straight[100] > 0.1 && straight[3650] > 0.08 && th < 0.005 && lead < 5e-5,
         JSON.stringify({ thoron, thoronDcal, u, straight, th, lead }));
+    }
+    // Chains with the parent's kinetics for every member. 226Th, eight
+    // tissues at every time within 0.2 % at 3 months and for the adult
+    // (with radium's, lead's and polonium's own models the spleen 17 and 27
+    // times the database's dose); 239U and 240U within 0.3 % at 3 months,
+    // 10 years and for the adult (the kidneys a third of it after 239U and
+    // the bone surfaces twice it after 240U with neptunium's and
+    // plutonium's own). And the ends of such chains: with 209Tl and 209Pb
+    // after 225Ac, and 207Tl after 227Ac, 227Pa and 231Pa, the muscle, the
+    // uterus, the kidneys and the walls of the large intestine are within
+    // 0.2 % (225Ac's uterus 0.86 and muscle 0.90 without them, 227Pa's
+    // upper large intestine 0.92).
+    {
+      const T8 = ['Muscle', 'Liver', 'Kidneys', 'Spleen', 'Red marrow', 'Bone surface', 'Testes', 'Upper large intestine'];
+      const worst = async (nuclide, age, tissues, spec) => { let w = 0; for (const t of tissues) for (const x of await over(nuclide, age, t, {}, spec)) w = Math.max(w, Math.abs(x - 1)); return w; };
+      const th = { 100: await worst('Th-226', 100, T8), 7300: await worst('Th-226', 7300, T8) };
+      const thOwn = Math.max(...await over('Th-226', 7300, 'Spleen', {}, { icrp72: false }));
+      const u = {};
+      for (const nuclide of ['U-239', 'U-240']) for (const age of [100, 3650, 7300]) u[`${nuclide} ${age}`] = await worst(nuclide, age, T8);
+      const uOwn = [(await over('U-239', 7300, 'Kidneys', {}, { icrp72: false })).slice(-1)[0], (await over('U-240', 7300, 'Bone surface', {}, { icrp72: false })).slice(-1)[0]];
+      check(`ICRP 60 vs the ICRP database, chains with the parent's kinetics: 226Th's eight tissues at every time within ${(100 * th[100]).toFixed(2)} % at 3 months and ${(100 * th[7300]).toFixed(2)} % for the adult (the spleen ${thOwn.toFixed(0)} times the database's dose with the progeny's own models); 239U's and 240U's within ${(100 * Math.max(...Object.values(u))).toFixed(2)} % at 3 months, 10 years and for the adult (239U's kidneys ${uOwn[0].toFixed(2)} and 240U's bone surfaces ${uOwn[1].toFixed(2)} of it with neptunium's and plutonium's own)`,
+        th[100] < 0.002 && th[7300] < 0.002 && thOwn > 20 && Object.values(u).every((v) => v < 0.003) && uOwn[0] < 0.5 && uOwn[1] > 1.8, JSON.stringify({ th, thOwn, u, uOwn }));
+      const G = ['Muscle', 'Uterus', 'Kidneys', 'Upper large intestine', 'Lower large intestine'];
+      const ends = {};
+      for (const nuclide of ['Ac-225', 'Ac-227', 'Pa-227', 'Pa-231']) ends[nuclide] = await worst(nuclide, 7300, G);
+      const ra = await worst('Ra-223', 7300, ['Upper large intestine', 'Lower large intestine']);
+      check(`ICRP 60 vs the ICRP database, where a chain ends: the adult's muscle, uterus, kidneys and walls of the large intestine at every time within ${Object.entries(ends).map(([n, v]) => `${(100 * v).toFixed(2)} % after ${n}`).join(', ')}; 223Ra's walls of the large intestine within ${(100 * ra).toFixed(2)} % without 207Tl`,
+        Object.values(ends).every((v) => v < 0.0025) && ra < 0.004, JSON.stringify({ ends, ra }));
     }
     // The airways' parts that the database stores, after intakes by
     // inhalation as Type M by the adult. Beta emitters: the alveolar region

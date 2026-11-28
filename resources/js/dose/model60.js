@@ -139,6 +139,32 @@ function rateAt(f, age) {
    independent kinetics. */
 const PB_NATURAL = new Set(['Pb-210', 'Pb-211', 'Pb-212', 'Pb-214']);
 
+/* Chains that DCAL's batch files run with the progeny's own models and ICRP
+   72's coefficients have with the parent's kinetics for every member, as
+   the ICRP's database of dose coefficients shows (beside lead's lighter
+   isotopes, above):
+
+   - uranium's chains with neptunium and plutonium, 237U, 239U and 240U.
+     Publications 69 and 71 give models for thorium, radium, lead and the
+     other members of the natural series as uranium's decay products, none
+     for neptunium and plutonium (DCAL has NpU.def and PuU.def). With those
+     the bone surfaces got 12 times the database's dose after 240U breathed
+     in as Type M and the liver 8 times, the kidneys a third of it after
+     239U swallowed; with uranium's kinetics every tissue is within 0.3 %
+     (240U in childhood 3 %).
+   - 226Th. Its progeny, 222Ra, 218Rn, 214Po and 210Pb with 210Bi and 210Po,
+     all have their models in thorium's chains, and yet the database's doses
+     are those of thorium's kinetics for all of them, within 0.13 % in every
+     tissue at every time: with their own the spleen got 77 times the
+     database's dose and the muscle 6 times (radium and lead formed in the
+     gut and absorbed as such), the bone surfaces a twentieth in the long
+     run (210Pb and 210Po left on them with the thorium). Read off the
+     database; 230U, whose chain is the same from 226Th on, has the
+     progeny's own models there (the spleen and the liver within 2 %, 0.72
+     and 0.94 of the database's dose with uranium's kinetics). */
+const NO_PROGENY_MODEL_72 = { U: new Set(['Np', 'Pu']) };
+const SHARED_72 = new Set(['Th-226']);
+
 /**
  * The ICRP 72 recipe for an intake: DCAL's batch case for it (its FGR-13
  * runs: chain length, kinetics of the progeny, special model and f1 files,
@@ -149,6 +175,7 @@ const PB_NATURAL = new Set(['Pb-210', 'Pb-211', 'Pb-212', 'Pb-214']);
  *     coefficients for 195mPb ... 209Pb are those of shared kinetics (198Pb:
  *     0.79-0.87 of them independently, 1.00-1.06 shared), those of
  *     210Pb ... 214Pb those of independent kinetics.
+ *     (assemble60 has two more such: SHARED_72, NO_PROGENY_MODEL_72.)
  *   - Actinium and protactinium take ICRP 30's models with shared kinetics
  *     (assemble60 does this when it meets the _I30 models).
  *
@@ -183,7 +210,7 @@ export function recipe60(cases, route, pick) {
 export function assemble60(data, spec) {
   const { index, models } = data;
   const route = spec.route;
-  const chain = buildChain(index, spec.nuclide, { last: spec.last || null });
+  let chain = buildChain(index, spec.nuclide, { last: spec.last || null });
   const parentEl = elementOf(spec.nuclide);
   const notes = [];
 
@@ -203,7 +230,27 @@ export function assemble60(data, spec) {
   // ICRP 72's actinium and protactinium are ICRP 30's, with ICRP 30's shared
   // kinetics for their progeny; DCAL's batch files run them independently
   // with FGR 13's updated models.
-  const kinetics = spec.kinetics === 'I' && !(spec.icrp72 !== false && /_I30$/.test(parentBio)) ? 'I' : 'S';
+  // And 226Th, and uranium's chains with neptunium and plutonium (SHARED_72,
+  // NO_PROGENY_MODEL_72).
+  const without = NO_PROGENY_MODEL_72[parentEl];
+  const sharedAs72 = /_I30$/.test(parentBio) || SHARED_72.has(spec.nuclide) || (!!without && chain.members.slice(1).some((m) => without.has(elementOf(m.name))));
+  const kinetics = spec.kinetics === 'I' && !(spec.icrp72 !== false && sharedAs72) ? 'I' : 'S';
+  /* Where a chain ends: a member is followed if it, or what comes through
+     it, emits a thousandth of the chain's energy in 100 years, the alpha
+     energy counted 20 times (chain.js; DCAL's ACTACAL). That is how ICRP
+     72's coefficients have the chains with independent kinetics: without
+     207Tl after 223Ra and 227Th (0.0009 of the energy so counted), with
+     which the walls of the large intestine would get 1.08 and 1.03 of the
+     dose of the ICRP's database of dose coefficients. Its chains with shared
+     kinetics have the members that carry a thousandth of the energy without
+     that weighting too ('either'): the beta and gamma emitters at the end
+     of an alpha chain, which give the tissues far from the alpha emitters
+     much of their dose. Without 209Tl and 209Pb after 225Ac the muscle got
+     0.90 and the uterus 0.86 of the database's dose and the wall of the
+     upper large intestine 0.97; without 207Tl after 227Ac and 227Pa the
+     walls of the large intestine 0.98 and 0.92; with them all are within
+     0.2 %. */
+  if (kinetics === 'S' && spec.icrp72 !== false && !spec.last) chain = buildChain(index, spec.nuclide, { measure: 'either' });
 
   /* ICRP 72 took the actinium and protactinium models from ICRP 30 (see
      gen-dose-icrp60.mjs); DCAL's FGR-13 library has updated ones. */
