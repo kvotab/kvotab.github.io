@@ -464,7 +464,8 @@
               weak ones: the radiations fall in three categories – gamma rays, X-rays and annihilation photons;
               beta particles, conversion and Auger electrons; alpha particles and their recoil nuclei – and one
               that gives less than 0.1 % of the energy of its category is left out. K X-rays count line by line,
-              L X-rays by series (Lα, Lβ, Lγ, Lη, Lℓ). A table ends with the energy of what it lists and of what it
+              L X-rays by series (Lα, Lβ, Lγ, Lη, Lℓ) and Auger electrons by group (KLL, KLX, KXY, LMM, LMX, LXY),
+              a series or a group being one radiation with one yield and a mean energy. A table ends with the energy of what it lists and of what it
               leaves out, and the database has the omitted energy with the listed radiations of the same category,
               each that much stronger. So every dose after <sup>7</sup>Be is 0.39 % lower than the file’s lines
               give (0.103 gamma rays per decay for 0.1034). And <sup>54</sup>Mn, whose table has one gamma ray of
@@ -477,11 +478,11 @@
               <sup>152</sup>Eu, and <sup>54</sup>Mn’s bone surfaces are in the end within 0.1 % of it; by the
               file’s lines the medians are up to 0.4 % off and the bone surfaces 11 %. The beta spectra are the
               file’s, since the tables have none.
-              In one respect the tables are not followed: they give the Auger electrons in groups (KLL, KLX and so
-              on) with one yield each, and here each line is rounded by itself, which changes the energy of a
-              nuclide that emits little else by up to 0.1 % (<sup>55</sup>Fe’s doses are 0.07 % above the
-              database’s, <sup>59</sup>Ni’s 0.09 % below). DCAL calculates from the whole file, and decay data
-              made from ENSDF are taken as they are.</li>
+              Five nuclides that emit nothing but X-rays and Auger electrons show how closely the tables are met:
+              on the first day after <sup>55</sup>Fe, <sup>59</sup>Ni, <sup>53</sup>Mn, <sup>49</sup>V or
+              <sup>41</sup>Ca is breathed in, the alveolar region’s dose, nearly all of it absorbed where it is
+              emitted, is the database’s to its six figures, where the file’s lines give up to 0.05 % less.
+              DCAL calculates from the whole file, and decay data made from ENSDF are taken as they are.</li>
             <li><b>Dosimetry</b>: specific effective energies from the Cristy–Eckerman phantoms (newborn, 1, 5, 10 and
               15 years, adult), the ICRP 30 bone and walled-organ absorbed fractions, and the ICRP 66 absorbed fractions
               of the airways, interpolated in age between the phantoms with the weights DCAL gives them. Between the
@@ -531,10 +532,7 @@
               Type S, and the cells of the bronchi about twice as much after <sup>147</sup>Sm. The bronchi are the part
               furthest off: 0.3 % below the database’s for adults and up to
               0.5 % above for children, by the same factor for every emitter, absorption type and time, for a
-              reason not found. The alveolar region is 0.2–0.3 % below the database’s after beta emitters with
-              many weak conversion and Auger electron lines (<sup>141</sup>Ce, <sup>125</sup>Sb,
-              <sup>192</sup>Ir), where the grouping of the Auger electrons in Publication 38’s tables decides
-              how much of their energy is listed (“Decay data” above).</li>
+              reason not found.</li>
             <li><b>Spontaneous fission</b>, as SEECAL 8.4 (DCAL’s program for the specific effective energies) counts
               it: per fission two fragments of 0.0698 Z<sup>2</sup>/A<sup>1/3</sup> − 10.988 MeV each, absorbed as alpha
               particles are and weighted 20; ν̄ neutrons of 0.75 + 0.65 √(1 + ν̄) MeV, weighted 10 and spread through
@@ -1351,7 +1349,7 @@
           <h3 id="help-data">Data and where they come from</h3>
           <div class="dc-table-wrap"><table class="dc-ref">
             <tbody>
-              <tr><th>ICRP 60 system</th><td>The biokinetic models, specific absorbed fractions (Cristy–Eckerman phantoms), absorbed fractions, ICRP 38 decay data and batch files of DCAL (Eckerman and Leggett, ORNL/TM-2001/190), distributed by Oak Ridge National Laboratory; read by <code>scripts/gen-dose-icrp60.mjs</code>. The airways’ absorbed fractions for alpha particles and electrons are the algebraic functions of ICRP Publication 66, Annex H (Tables H.7 to H.9). The form of Publication 38’s printed tables – the figures, the three categories, the 0.1 % and the 32 and 175 radiations – as Endo, Tamura and Yamaguchi describe it (JAERI-Data/Code 99-035, 1999, Appendix A); the page makes the tables’ lines from the file’s.</td></tr>
+              <tr><th>ICRP 60 system</th><td>The biokinetic models, specific absorbed fractions (Cristy–Eckerman phantoms), absorbed fractions, ICRP 38 decay data and batch files of DCAL (Eckerman and Leggett, ORNL/TM-2001/190), distributed by Oak Ridge National Laboratory; read by <code>scripts/gen-dose-icrp60.mjs</code>. The airways’ absorbed fractions for alpha particles and electrons are the algebraic functions of ICRP Publication 66, Annex H (Tables H.7 to H.9). The form of Publication 38’s printed tables – the figures, the three categories, the 0.1 % and the 32 and 175 radiations, the series and groups – as Endo, Tamura and Yamaguchi describe it (JAERI-Data/Code 99-035, 1999, Appendix A); the page makes the tables’ lines from the file’s.</td></tr>
               <tr><th>ICRP 103 decay data</th><td>ICRP Publication 107 (Endo and Eckerman): the data files of its <a href="https://www.icrp.org/publication.asp?id=ICRP%20Publication%20107" target="_blank" rel="noopener">supplementary data</a> on the ICRP’s site, with the index file as corrected in the corrigenda of Publication 107 (2021; only atomic masses changed, which the page does not use). Copyright © 2008 A. Endo and K.F. Eckerman, used for non-profit purposes under their licence, whose notices accompany the data (<code>LICENSE.TXT</code> and <code>LICENSE_DECDATA.TXT</code> in <code>resources/data/dose/icrp103/decay/</code>).</td></tr>
               <tr><th>Decay data from ENSDF</th><td>Made by <code>scripts/gen-dose-ensdf.mjs</code> from the release of ENSDF named in the Decay data setting, kept by the National Nuclear Data Center for the Nuclear Structure and Decay Data network (<a href="https://www.nndc.bnl.gov/ensdf/" target="_blank" rel="noopener">nndc.bnl.gov/ensdf</a>), into <code>resources/data/dose/ensdf/</code>; with the atomic relaxation data of ENDF/B-VIII.0 (EPICS2017; <code>resources/data/dose/atomic/</code>), conversion coefficients fitted to those EDISTR04 printed in the supplementary data of Publication 107 (<code>resources/data/dose/icc/</code>, under the licence of the ICRP-07 data files, whose notice goes with them) and capture fractions fitted to the release’s own (<code>capture.json</code>).</td></tr>
               <tr><th>Specific absorbed fractions</th><td>The supplementary data of ICRP Publications 133 and 155 (© ICRP), for the twelve reference individuals; Publication 155’s adult files revise Publication 133’s for electrons and alphas.</td></tr>

@@ -115,6 +115,7 @@ function readRad38(lines, rec) {
     if (!key) throw new Error(`${rec.name}: radiation code ${code}`);
     if (key === 'sf') rad.sf.push([y, e]);
     else if (code === 2) rad[key].push([e, y, XRAY]);
+    else if (code === 7) rad[key].push([e, y, AUGER]);
     else rad[key].push([e, y]);
   }
   return rad;
@@ -147,7 +148,7 @@ function readRad38(lines, rec) {
    L-alpha2 is the line whose yield is to L-alpha1's as the atom's two
    transition probabilities.
    -------------------------------------------------------------------------- */
-const XRAY = 'x';
+const XRAY = 'x', AUGER = 'A';
 const SERIES = {
   L3: (j) => (j === 'M1' ? 'l' : j === 'M4' || j === 'M5' ? 'a' : j === 'M2' || j === 'M3' ? 't' : 'b'),
   L2: (j) => (j === 'M1' ? 'h' : j[0] === 'M' ? 'b' : 'g'),
@@ -211,6 +212,102 @@ export function labelLSeries(nucs, atom, zOf) {
     if (any) nuclides++;
   }
   return { lines, nuclides };
+}
+
+/* --------------------------------------------------------------------------
+   The groups of the Auger electrons.
+
+   Publication 38's tables give the Auger electrons in groups, "Auger-KLL",
+   "KLX", "KXY", "LMM", "LMX", "LXY", "MXY", each "a composite of several
+   Auger transitions of similar energy" with one yield and a mean energy. The
+   file has the lines the groups are made of: for a K vacancy six KLL lines
+   (the two new vacancies in L1L1, L1L2, L1L3, L2L2, L2L3, L3L3), three KLX
+   (one in L1, L2 or L3, one further out) and one KXY; for each L subshell
+   one line LMM, one LMX and one LXY; and one line or two of the M shell and
+   beyond. A line of a group of several gets the group and the atom as its
+   third item: [E, y, "KLL52"].
+
+   K lines: the nearest of the atom's ten, within 1 %, where
+     KLiLj  B(K) - B(Li) - [B(Lj) + B'(Lj)] / 2   (B' of the next element:
+            the second vacancy is made in an atom that has one already)
+     KLiX   B(K) - B(Li) - m,   KXY  B(K) - 2 m,   m the mean of B(M2), B(M3)
+   reproduce the file's lines within 0.7 % from manganese to mercury.
+
+   L lines: the file's three lines of a kind lie below the three L binding
+   energies by one and the same energy (tellurium: LMM 1.392, LMX 0.627, LXY
+   0.095 keV below L3, L2 and L1 alike), so three lines, or two where the
+   third is missing, that do so within 0.15 % of B(L3) + 2 eV are a group:
+   LMM when that energy is over 1.7 B(M5), LXY under 0.6 B(M5), else LMX.
+   Lines that find no partner stay single.
+   -------------------------------------------------------------------------- */
+/**
+ * Mark the Auger electrons of ICRP 38 nuclides with their groups (see above).
+ * @param {object[]} nucs    icrp38Nuclides()
+ * @param {(Z: number) => object|null} atom  the element's table of resources/data/dose/atomic/
+ * @param {(symbol: string) => number} zOf
+ * @returns {{lines: number, nuclides: number, single: number}}  lines marked, nuclides with any, Auger lines left single
+ */
+export function labelAugerGroups(nucs, atom, zOf) {
+  const cache = new Map();
+  const binding = (Z) => {
+    if (!cache.has(Z)) { const t = atom(Z); cache.set(Z, t ? Object.fromEntries(t.shells.map((s, i) => [s, t.E[i] / 1e6])) : null); }
+    return cache.get(Z);
+  };
+  const L = ['L1', 'L2', 'L3'];
+  let lines = 0, nuclides = 0, single = 0;
+  for (const n of nucs) {
+    const A = n.rad.e.filter((l) => l[2] === AUGER);
+    if (!A.length) continue;
+    const atoms = xrayAtoms(zOf(n.el), n.mode).filter((Z) => Z >= 3 && binding(Z));
+    // K lines.
+    const K = [];
+    for (const Z of atoms) {
+      const B = binding(Z), B1 = binding(Z + 1) || B;
+      if (!(B.K > 0) || !L.every((i) => B[i] > 0)) continue;
+      const m = ((B.M2 ?? B.M1 ?? 0) + (B.M3 ?? B.M2 ?? B.M1 ?? 0)) / 2;
+      L.forEach((i, a) => L.slice(a).forEach((j) => K.push({ E: B.K - B[i] - (B[j] + (B1[j] ?? B[j])) / 2, g: `KLL${Z}` })));
+      for (const i of L) K.push({ E: B.K - B[i] - m, g: `KLX${Z}` });
+      K.push({ E: B.K - 2 * m, g: null }); // KXY is one line
+    }
+    const top = Math.max(0, ...atoms.map((Z) => binding(Z).L1 || 0));
+    for (const l of A) {
+      if (!(l[0] > 1.02 * top)) continue;
+      let best = null, d = Infinity;
+      for (const c of K) { const dd = Math.abs(c.E - l[0]); if (dd < d) { d = dd; best = c; } }
+      if (best && d <= 0.01 * l[0]) l.g = best.g;
+    }
+    // L lines.
+    for (const Z of atoms) {
+      const B = binding(Z);
+      if (!L.every((i) => B[i] > 0)) continue;
+      const m5 = B.M5 ?? B.M4 ?? B.M3 ?? B.M1 ?? 0, tol = 0.0015 * B.L3 + 2e-6;
+      const free = () => A.filter((l) => l.g === undefined && l[0] <= B.L1 + tol && l[0] > 0.3 * B.L3);
+      const kind = (h) => (h > 1.7 * m5 ? 'LMM' : h < 0.6 * m5 ? 'LXY' : 'LMX');
+      // three lines first, then two
+      for (const need of [3, 2]) {
+        for (const a of free()) {
+          if (a.g !== undefined) continue;
+          for (const i of L) {
+            const h = B[i] - a[0];
+            if (h < -tol) continue;
+            const group = [a];
+            for (const j of L) {
+              if (j === i) continue;
+              const b = free().find((l) => !group.includes(l) && Math.abs(B[j] - l[0] - h) <= tol);
+              if (b) group.push(b);
+            }
+            if (group.length >= need) { for (const l of group) l.g = `${kind(Math.max(h, 0))}${Z}`; break; }
+          }
+        }
+      }
+    }
+    let any = false;
+    for (const l of A) {
+      if (typeof l.g === 'string') { l[2] = l.g; lines++; any = true; } else { single++; }
+    }
+    if (any) nuclides++;
+  }
+  return { lines, nuclides, single };
 }
 
 /* The fixed energy grid of the beta spectra, shared by both generations: read
@@ -362,8 +459,9 @@ export function icrp107Nuclides(dir, ndxFile = fileIn(dir, 'ICRP-07.NDX')) {
    elements of the chain it needs.
    -------------------------------------------------------------------------- */
 export const sig = (v, n = 6) => (v === 0 ? 0 : Number(v.toPrecision(n)));
-// A line is [energy, yield], an L X-ray of ICRP 38 also its series (labelLSeries).
-const lines = (arr) => arr.map(([e, y, g]) => (typeof g === 'string' && g !== XRAY ? [sig(e), sig(y), g] : [sig(e), sig(y)])).sort((p, q) => p[0] - q[0]);
+// A line is [energy, yield]; an L X-ray of ICRP 38 also has its series and
+// an Auger electron its group (labelLSeries, labelAugerGroups).
+const lines = (arr) => arr.map(([e, y, g]) => (typeof g === 'string' && g !== XRAY && g !== AUGER ? [sig(e), sig(y), g] : [sig(e), sig(y)])).sort((p, q) => p[0] - q[0]);
 
 export function compactRad(rad) {
   const out = {};

@@ -20,7 +20,8 @@
       decay/<El>.json    the radiations of each element's nuclides: lines and
                          beta spectra, read only when a chain needs them;
                          a line is [energy, yield], an L X-ray also its
-                         series and atom ("a52": lib/dose-decay.mjs)
+                         series and atom ("a52"), an Auger electron its
+                         group and atom ("KLL52": lib/dose-decay.mjs)
       saf.json           specific absorbed fractions for photons in the
                          Cristy-Eckerman phantoms (newborn, 1, 5, 10, 15 y,
                          adult male, adult female), region masses, the
@@ -38,13 +39,14 @@
                          strong fissioners they leave out (addLeftOut)
 
   The numbers are the files' own; nothing is fitted or rounded beyond the six
-  significant figures the files carry. The series of the L X-rays is the one
-  thing added, from the binding energies of resources/data/dose/atomic/.
+  significant figures the files carry. The series of the L X-rays and the
+  groups of the Auger electrons are the one thing added, from the binding
+  energies of resources/data/dose/atomic/.
 */
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { icrp38Nuclides, labelLSeries, compactRad, compactSpectrum, sig } from './lib/dose-decay.mjs';
+import { icrp38Nuclides, labelLSeries, labelAugerGroups, compactRad, compactSpectrum, sig } from './lib/dose-decay.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = path.join(ROOT, 'resources/data/dose/icrp60');
@@ -90,8 +92,12 @@ function buildDecay() {
   // The series of the L X-rays, from the binding energies of the page's atomic tables.
   const ATOMIC = path.join(ROOT, 'resources/data/dose/atomic');
   const symbols = JSON.parse(fs.readFileSync(path.join(ATOMIC, 'index.json'), 'utf8')).elements;
-  const marked = labelLSeries(nucs, (Z) => (symbols[Z - 1] ? JSON.parse(fs.readFileSync(path.join(ATOMIC, `${symbols[Z - 1]}.json`), 'utf8')) : null), (el) => symbols.indexOf(el) + 1);
+  const atomTable = (Z) => (symbols[Z - 1] ? JSON.parse(fs.readFileSync(path.join(ATOMIC, `${symbols[Z - 1]}.json`), 'utf8')) : null);
+  const zOf = (el) => symbols.indexOf(el) + 1;
+  const marked = labelLSeries(nucs, atomTable, zOf);
   console.log(`decay: ${marked.lines} L X-rays of ${marked.nuclides} nuclides marked with their series`);
+  const grouped = labelAugerGroups(nucs, atomTable, zOf);
+  console.log(`decay: ${grouped.lines} Auger electron lines of ${grouped.nuclides} nuclides marked with their groups, ${grouped.single} single`);
   const index = {};
   const byEl = {};
   for (const n of nucs) {

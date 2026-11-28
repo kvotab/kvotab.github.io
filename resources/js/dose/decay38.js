@@ -6,7 +6,7 @@
   Publication 38 itself printed an abridged table for each nuclide, and the
   ICRP's database of dose coefficients shows that Publications 67-72 were
   calculated from those tables, not from the file. A table differs from the
-  file in four ways (the format is described in JAERI-Data/Code 99-035,
+  file in five ways (the format is described in JAERI-Data/Code 99-035,
   Appendix A, which follows Publication 38):
 
   - A yield has three figures and an energy four ("y(i) 1.03E-01, E(i)
@@ -36,6 +36,17 @@
     item in the data, "a52" an L-alpha line of tellurium
     (scripts/lib/dose-decay.mjs writes it).
 
+  - The Auger electrons are listed in groups, "a composite of several Auger
+    transitions of similar energy": KLL (six lines of the file), KLX
+    (three), KXY, and LMM, LMX and LXY (a line for each L subshell), again
+    one radiation each with the group's yield and mean energy. The group is
+    the line's third item too, "KLL52". 141Ce's nine K Auger lines carry
+    0.02-0.07 % of its electron energy each, its KLL group 0.17 %. 55Fe's
+    sixteen Auger lines make six radiations (0.495 KLL electrons of
+    5.145 keV, 0.112 KLX of 5.806 keV, ...), and with them the energy the
+    alveolar region gets from 55Fe, 59Ni, 53Mn, 49V and 41Ca is the
+    database's to its six figures.
+
   - What a table leaves out it still counts: its last lines give the energy
     of the listed and of the omitted radiations of each category. The
     database has the omitted energy with the listed radiations of the same
@@ -45,11 +56,6 @@
     0.17 and the yield of 1.00 for 0.99976), and the source's own, which the
     X-rays would have reached and the gamma ray mostly leaves, gets less --
     the bone surfaces a tenth less, the alveoli 2.4 % (tests' README).
-
-  Not done: the tables give the Auger electrons in groups too (KLL, KLX,
-  KXY, LMM, LMX, LXY, MXY), one yield of three figures each; here they are
-  rounded line by line, which moves the energy of a nuclide that emits
-  little else by up to 0.1 %.
 
   The beta spectra are the file's (the tables have none), and so are the
   radiations of spontaneous fission.
@@ -78,7 +84,7 @@ const cache = new WeakMap();
  * this file), made from the unabridged lines.
  *
  * @param {object} em  {r: {p, e, b, a, sf}, bs} of the ICRP 38 decay data; an
- *   L X-ray is [E, y, series]
+ *   L X-ray is [E, y, series], an Auger electron of a group [E, y, group]
  * @param {number} A   mass number (the recoil nuclei are radiations of the
  *   alpha category)
  * @returns {object}  as `em`, with the lines of the table, and
@@ -95,14 +101,16 @@ export function printed38(em, A) {
   const CAT = { p: 0, e: 1, b: 1, a: 2 };
   const recoil = A > 4 ? 4.0026 / (A - 4) : 0;
 
-  // The radiations of the table: a line each, the L X-rays of a series together.
-  const rads = [], series = new Map();
+  // The radiations of the table: a line each, the L X-rays of a series and
+  // the Auger electrons of a group together.
+  const rads = [], groups = new Map();
   for (const k of ['p', 'e', 'b', 'a']) {
     src[k].forEach((l, i) => {
       const en = l[0] * l[1];
-      if (k === 'p' && typeof l[2] === 'string') {
-        let g = series.get(l[2]);
-        if (!g) { g = { k, cat: 0, lines: [], en: 0 }; series.set(l[2], g); rads.push(g); }
+      if (typeof l[2] === 'string') {
+        const key = k + l[2];
+        let g = groups.get(key);
+        if (!g) { g = { k, cat: CAT[k], lines: [], en: 0, group: true }; groups.set(key, g); rads.push(g); }
         g.lines.push(i); g.en += en;
       } else rads.push({ k, cat: CAT[k], lines: [i], en });
     });
@@ -129,9 +137,9 @@ export function printed38(em, A) {
   const out = { p: [], e: [], b: [], a: [] };
   for (const x of listed) {
     const f = back[x.cat];
-    if (x.lines.length > 1 || (x.k === 'p' && typeof src.p[x.lines[0]][2] === 'string')) {
-      const Y = x.lines.reduce((s, i) => s + src.p[i][1], 0);
-      out.p.push([figures38(x.en / Y, PRINTED_38.energy), figures38(Y, PRINTED_38.yield) * f]);
+    if (x.group) {
+      const Y = x.lines.reduce((s, i) => s + src[x.k][i][1], 0);
+      out[x.k].push([figures38(x.en / Y, PRINTED_38.energy), figures38(Y, PRINTED_38.yield) * f]);
     } else {
       const [e, y] = src[x.k][x.lines[0]];
       out[x.k].push([figures38(e, PRINTED_38.energy), figures38(y, PRINTED_38.yield) * f]);

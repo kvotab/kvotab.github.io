@@ -5,7 +5,8 @@
 
     ICRP 60   icrp60/decay/  ICRP 38 decay data, as distributed with DCAL:
                              the unabridged file, each L X-ray marked with
-                             its series (the dose engine calculates from
+                             its series and each Auger electron with its
+                             group (the dose engine calculates from
                              Publication 38's printed tables, which
                              decay38.js makes from these lines)
               icrp60/saf.json, models.json, cases.json

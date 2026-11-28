@@ -3690,3 +3690,127 @@ marks in the data; 7Be's and 54Mn's doses by the tables against the file's
 lines, `dcal` untouched; and against the database twelve nuclides on the
 first day, 54Mn's seventeen tissues and bone surfaces, the alveolar region
 after 54Mn, 65Zn and 58Co (341 checks).
+
+## The Auger electrons in the tables' groups (2026-11-28, later)
+
+The last section rounded the Auger electrons line by line and said what
+that left: 55Fe 0.07 % high and 59Ni 0.09 % low, the alveolar region
+0.2-0.3 % low after beta emitters with many weak electron lines. The
+tables give the Auger electrons in groups, and with the groups all of it
+goes.
+
+**The file's lines.** An atom's Auger electrons are, in the file, 21 lines
+from the middle of the periodic table on (16 for iron, 11 for calcium):
+one line or two of the M shell and beyond; nine of the L shell, a line
+LMM, a line LMX and a line LXY for each of L3, L2 and L1; and for the K
+shell six KLL lines, three KLX and one KXY. The tables' "Auger-KLL",
+"Auger-KLX", "Auger-LMM", "Auger-LMX" and "Auger-LXY" are these, "a
+composite of several Auger transitions of similar energy" each (Table 4
+of the JAERI report, from Publication 38). 125I's (tellurium):
+
+    LMM   2.9555  3.2261  3.5533      = L3, L2, L1 less 1.392 keV
+    LMX   3.7197  3.9903  4.3175      = L3, L2, L1 less 0.627
+    LXY   4.2520  4.5226  4.8498      = L3, L2, L1 less 0.095
+    KLL  21.813  22.148  22.408  22.444  22.722  22.998
+    KLX  26.014  26.341  26.612       = K less L1, L2, L3 less 0.861
+    KXY  30.1345
+
+The L lines of a kind lie below the three L binding energies by one and
+the same energy, to an electron volt: that tells LXY of L3 (4.2520) from
+LMX of L1 (4.3175), which the energies alone would not.
+
+**Marking them** (scripts/lib/dose-decay.mjs, labelAugerGroups; the
+generator knows an Auger electron from a conversion electron by the file's
+radiation code). A K line takes the group of the nearest of the atom's ten
+expected lines, within 1 %: KLiLj at B(K) - B(Li) - [B(Lj) + B'(Lj)] / 2
+with B' the next element's, KLiX at B(K) - B(Li) - m and KXY at
+B(K) - 2 m, m the mean of B(M2) and B(M3); these meet the file's lines
+within 0.7 % from manganese to mercury, and tell samarium's from
+gadolinium's where 152Eu has both. Three L lines (or two where the third
+is missing, as for iron) that lie below L3, L2 and L1 by the same energy
+within 0.15 % of B(L3) + 2 eV are a group: LMM when that energy is over
+1.7 B(M5), LXY under 0.6 B(M5), else LMX. 14,842 lines of 793 nuclides
+are marked ("KLL52" as the line's third item); 2,913 Auger lines stay
+single (the M lines, KXY, a few without partners). decay38.js then treats
+a group as it treats a series of L X-rays: one radiation, judged against
+the 0.1 % as a whole, listed with the group's yield to three figures and
+its mean energy to four.
+
+55Fe's table comes out as: Auger-MXY 3.00 of 0.02093 keV, LMM 1.39 of
+0.6045, LMX 0.0628 of 0.6393, KLL 0.495 of 5.145, KLX 0.112 of 5.806, KXY
+0.00951 of 6.438; and the K X-rays line by line, 0.0836 and 0.166 of
+5.888 and 5.899 keV, 0.0113 and 0.0222 of 6.490.
+
+**Against the database.** Five nuclides emit nothing but X-rays and Auger
+electrons, so that the alveolar region's dose on the first day after
+breathing one in (Type M, adult) is the energy of its table and little
+else. Page over database:
+
+              the file's    line by line    the tables'
+              yields        (last section)  groups
+    55Fe      0.999976      1.00065         1.000001
+    59Ni      0.999669      0.99916         1.000000
+    53Mn      0.999560      1.00077         0.999999
+    49V       0.999687      1.00021         1.000000
+    41Ca      0.999528      1.00019         0.999997
+
+(the middle column from the energies; no grouping tried in the last
+section did this, since none had the L lines right: iron's L1 line of
+0.730 keV belongs with LMM, not on its own).
+
+The alveolar region after beta emitters with many weak conversion and
+Auger lines, where the beta particles go by the spectrum and so carry none
+of the energy a table puts back (adult, Type M, committed; page over
+database):
+
+              the file    line by line    groups
+    141Ce     1.0026      0.9974          1.0001
+    125Sb     1.0066      0.9983          1.0001
+    48V       1.0025      0.9983          1.0000
+    192Ir     1.0130      0.9981          0.9995
+
+141Ce's table omits 0.52 % of the electron energy line by line and 0.19 %
+by groups (KLL 0.17 %, LMM 0.23 % and LMX 0.17 % are listed as groups,
+none of their lines alone but two).
+
+Also gone with the groups: 113Sn Type M's ET1 (1.006 -> 1.0000) and 109Cd's
+bronchioles, 125I's thyroid on the first day after swallowing (0.9992 ->
+0.99995), 59Ni's muscle (within 0.09 % -> 0.014 % at every age and time).
+
+**Left in the airways** (adult, committed): the bronchi's factor by age,
+0.997-0.998 for the adult after every emitter; the bronchioles 1.0002-
+1.0006; 110mAg's bronchioles and alveolar region 1.0015 and its ET1
+1.0008; 192Ir's alveolar region 0.9995. ET1, ET2 and the alveolar region are
+otherwise within 0.0002 of the database for the two dozen emitters of the
+survey, but for 55Fe (1.0004 in the committed dose and 1.0000 on the first
+day: iron's model, not its radiations).
+
+**The whole comparison** (2,999 cases, 14,617 values of e; the last
+section's run, then now):
+
+                                                  before    now
+    e rounding to ICRP 72's two figures           96.0 %    96.3 %
+    organ doses rounding to the print             95.5 %    95.6 %
+    Publication 119, e swallowed                  95.0 %    95.0 %
+    Publication 119, e breathed in                96.5 %    96.8 %
+
+    the ICRP database, share within 0.1 / 0.2 / 0.5 / 1 / 2 %, and the median
+    e                 78.3  90.1  95.0  96.3  97.9  1.0002   81.4  91.8  95.1  96.3  97.9  1.0001
+    soft tissues      85.0  90.8  93.2  95.2  96.8  1.0000   85.1  90.8  93.2  95.2  96.8  1.0000
+    large intestine   72.7  88.8  94.0  95.9  97.4  1.0003   73.1  88.8  94.0  95.9  97.4  1.0003
+    bone surface      73.5  86.6  91.0  93.7  95.6  1.0000   78.0  90.4  93.3  95.0  96.1  1.0001
+    lungs and ET      77.8  87.4  93.9  96.2  97.5  1.0000   82.0  90.6  94.7  96.2  97.6  1.0000
+    remainder         85.0  91.0  94.4  96.1  97.5  1.0001   87.6  92.8  94.7  96.2  97.5  1.0000
+    by inhalation only (9,534 intakes and ages):
+    lungs             63.5  82.8  95.2  98.1  99.0  0.9998   69.1  88.4  96.8  98.0  99.0  0.9998
+    ET                85.8  91.5  96.3  97.7  98.9  1.0001   92.5  95.3  97.0  98.0  98.9  1.0000
+    e                 80.0  90.8  96.4  97.5  98.7  1.0001   84.5  93.2  96.5  97.5  98.7  1.0001
+
+Help's rows for Publication 119 are unchanged.
+
+Tests: test-engine.mjs has a made-up nuclide whose six KLL lines are
+listed as a group and whose three KLX lines are not; 55Fe's table (six
+electron radiations, 1.000025 of the file's energy); the marks on 125I's
+and 152Eu's Auger electrons; and against the database the alveolar region
+on the first day after the five X-ray emitters (within 5e-6) and after
+141Ce, 125Sb and 48V (343 checks).
