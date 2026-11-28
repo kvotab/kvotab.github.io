@@ -3,7 +3,11 @@
   or in Node (the tests): `io` reads a path under resources/data/dose/ as JSON
   or as an ArrayBuffer.
 
-    ICRP 60   icrp60/decay/  ICRP 38 decay data, as distributed with DCAL
+    ICRP 60   icrp60/decay/  ICRP 38 decay data, as distributed with DCAL:
+                             the unabridged file, each L X-ray marked with
+                             its series (the dose engine calculates from
+                             Publication 38's printed tables, which
+                             decay38.js makes from these lines)
               icrp60/saf.json, models.json, cases.json
     ICRP 103  icrp103/decay/ ICRP 107 decay data
               icrp103/saf/   ICRP 133/155 specific absorbed fractions

@@ -114,9 +114,103 @@ function readRad38(lines, rec) {
     const key = CODE38[code];
     if (!key) throw new Error(`${rec.name}: radiation code ${code}`);
     if (key === 'sf') rad.sf.push([y, e]);
+    else if (code === 2) rad[key].push([e, y, XRAY]);
     else rad[key].push([e, y]);
   }
   return rad;
+}
+
+/* --------------------------------------------------------------------------
+   The series of the L X-rays.
+
+   Publication 38's tables list the K X-rays line by line and the L X-rays by
+   series, L-alpha, L-beta, L-gamma, L-eta and L-l, one line each with the
+   series' yield and mean energy (the unabridged file has every line). The
+   page needs the series to make the tables' lines from the file's
+   (resources/js/dose/decay38.js), so each L X-ray gets its series and the
+   atomic number of its atom as a third item: [E, y, "a52"] is an L-alpha
+   line of tellurium.
+
+   A line is the transition of the daughter atom whose energy, the difference
+   of two binding energies of resources/data/dose/atomic/, lies nearest, if
+   within 1 % or 10 eV. The series by Siegbahn's names:
+
+     L3 from M1          l  (L-l)       L2 from M1            h  (L-eta)
+     L3 from M4, M5      a  (alpha2,1)  L2 from M2 ... M5     b  (beta1, 17)
+     L3 from M2, M3      t  (Lt, Ls)    L2 from N, O, P       g  (gamma1, 5, 6, 8)
+     L3 from N, O, P     b  (beta6, 2, 15, 7, 5)
+     L1 from M           b  (beta4, 3, 10, 9)
+     L1 from N, O, P     g  (gamma2, 3, 4)
+
+   L-alpha2 (L3 from M4) and L-eta (L2 from M1) lie within a few eV of each
+   other around europium, nearer than the two sets of energies agree; there
+   L-alpha2 is the line whose yield is to L-alpha1's as the atom's two
+   transition probabilities.
+   -------------------------------------------------------------------------- */
+const XRAY = 'x';
+const SERIES = {
+  L3: (j) => (j === 'M1' ? 'l' : j === 'M4' || j === 'M5' ? 'a' : j === 'M2' || j === 'M3' ? 't' : 'b'),
+  L2: (j) => (j === 'M1' ? 'h' : j[0] === 'M' ? 'b' : 'g'),
+  L1: (j) => (j[0] === 'M' ? 'b' : 'g'),
+};
+/* Which atoms a nuclide's X-rays come from, by its decay modes. */
+function xrayAtoms(Z, mode) {
+  const out = new Set();
+  if (/EC|B\+/.test(mode)) out.add(Z - 1);
+  if (/B-/.test(mode)) out.add(Z + 1);
+  if (/A/.test(mode)) out.add(Z - 2);
+  if (/IT/.test(mode)) out.add(Z);
+  return out.size ? [...out] : [Z - 2, Z - 1, Z, Z + 1];
+}
+
+/**
+ * Mark the L X-rays of ICRP 38 nuclides with their series (see above).
+ * @param {object[]} nucs    icrp38Nuclides()
+ * @param {(Z: number) => object|null} atom  the element's table of resources/data/dose/atomic/
+ * @param {(symbol: string) => number} zOf
+ * @returns {{lines: number, nuclides: number}}  how many were marked
+ */
+export function labelLSeries(nucs, atom, zOf) {
+  const cache = new Map();
+  const transitions = (Z) => {
+    if (cache.has(Z)) return cache.get(Z);
+    const t = atom(Z), list = [];
+    if (t) {
+      const B = Object.fromEntries(t.shells.map((s, i) => [s, t.E[i]]));
+      const prob = (i, j) => { const x = t.x[t.shells.indexOf(i)] || []; for (let k = 0; k < x.length; k += 2) if (t.shells[x[k]] === j) return x[k + 1]; return 0; };
+      for (const i of ['L1', 'L2', 'L3']) {
+        if (!(B[i] > 0)) continue;
+        for (const [j, b] of Object.entries(B)) if (/^[MNOP]/.test(j) && b < B[i]) list.push({ E: (B[i] - b) / 1e6, i, j, g: SERIES[i](j) + Z, Z });
+      }
+      list.alpha2 = prob('L3', 'M5') > 0 ? prob('L3', 'M4') / prob('L3', 'M5') : null;
+    }
+    cache.set(Z, list);
+    return list;
+  };
+  let lines = 0, nuclides = 0;
+  for (const n of nucs) {
+    const X = n.rad.p.filter((l) => l[2] === XRAY);
+    if (!X.length) continue;
+    const cands = xrayAtoms(zOf(n.el), n.mode).filter((Z) => Z >= 3).flatMap(transitions);
+    let any = false;
+    for (const l of X) {
+      let best = null, d = Infinity;
+      for (const c of cands) { const dd = Math.abs(c.E - l[0]); if (dd < d) { d = dd; best = c; } }
+      if (best && d <= Math.max(0.01 * l[0], 10e-6)) { l[2] = best.g; l.tr = best; lines++; any = true; }
+    }
+    // L-alpha2 or L-eta, where the two are nearer than the energies tell.
+    for (const Z of new Set(X.filter((l) => l.tr).map((l) => l.tr.Z))) {
+      const ratio = transitions(Z).alpha2;
+      const a1 = X.find((l) => l.tr?.Z === Z && l.tr.i === 'L3' && l.tr.j === 'M5');
+      const pair = X.filter((l) => l.tr?.Z === Z && ((l.tr.i === 'L3' && l.tr.j === 'M4') || (l.tr.i === 'L2' && l.tr.j === 'M1')));
+      if (!a1 || ratio === null || pair.length !== 2 || Math.abs(pair[0][0] - pair[1][0]) > 0.004 * a1[0]) continue;
+      const off = (l) => Math.abs(l[1] / a1[1] - ratio);
+      const a2 = off(pair[0]) <= off(pair[1]) ? pair[0] : pair[1], eta = a2 === pair[0] ? pair[1] : pair[0];
+      a2[2] = 'a' + Z; eta[2] = 'h' + Z;
+    }
+    if (any) nuclides++;
+  }
+  return { lines, nuclides };
 }
 
 /* The fixed energy grid of the beta spectra, shared by both generations: read
@@ -268,7 +362,8 @@ export function icrp107Nuclides(dir, ndxFile = fileIn(dir, 'ICRP-07.NDX')) {
    elements of the chain it needs.
    -------------------------------------------------------------------------- */
 export const sig = (v, n = 6) => (v === 0 ? 0 : Number(v.toPrecision(n)));
-const lines = (arr) => arr.map(([e, y]) => [sig(e), sig(y)]).sort((p, q) => p[0] - q[0]);
+// A line is [energy, yield], an L X-ray of ICRP 38 also its series (labelLSeries).
+const lines = (arr) => arr.map(([e, y, g]) => (typeof g === 'string' && g !== XRAY ? [sig(e), sig(y), g] : [sig(e), sig(y)])).sort((p, q) => p[0] - q[0]);
 
 export function compactRad(rad) {
   const out = {};

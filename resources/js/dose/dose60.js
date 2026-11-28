@@ -41,6 +41,7 @@ import { assemble60, BONE_IN_OTHER_60 } from './model60.js';
 import { phantom60, TARGETS_60 } from './see60.js';
 import { integrate } from './solve.js';
 import { Z as ATOMIC } from './catalog.js';
+import { printed38 } from './decay38.js';
 
 export const AGES_60 = [100, 365, 1825, 3650, 5475, 7300];
 export const AGE_LABELS = { 100: '3 months', 365: '1 year', 1825: '5 years', 3650: '10 years', 5475: '15 years', 7300: 'Adult', 9125: 'Adult' };
@@ -238,8 +239,12 @@ export function coefficients60(data, spec, ages = AGES_60, opt = {}) {
       return [...new Set([...own, ...extra])];
     });
     const seeOf = sys.members.map((m, j) => {
-      const em = data.emissions(m.name);
       const A = Number(/-(\d+)/.exec(m.name)[1]);
+      // Publication 38's radiations as its tables printed them (decay38.js),
+      // which is what Publication 72's coefficients were calculated from;
+      // with dcal the whole file, as DCAL has it. Other decay data are taken
+      // as they are.
+      const em = !opt.dcal && data.decaySource?.own ? printed38(data.emissions(m.name), A) : data.emissions(m.name);
       // The atomic number, for spontaneous fission (see60.js); dcal for the
       // SEE as DCAL's SEECAL has them (its photon SAFs and joules per MeV).
       const Z = ATOMIC[/^([A-Z][a-z]?)-/.exec(m.name)[1]];

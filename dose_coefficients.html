@@ -455,6 +455,33 @@
               which holds every dose integrated to ten times after the intake, with seven figures. DCAL lets the rates
               and energies follow the age continuously, which gives a child 0.2 to 1.2 % less dose from a nuclide that
               stays in the body for weeks or longer.</li>
+            <li><b>Decay data</b>: the radiations of Publication 38 as its tables print them. The data file that
+              comes with DCAL has every line of the evaluation, with yields to six figures; the publication printed
+              an abridged table for each nuclide, and the ICRP’s database of dose coefficients shows that
+              Publication 72’s coefficients were calculated from the tables. In a table a yield has three figures
+              and an energy four, and a yield that lies on the half is the lower figure (0.5075 of
+              <sup>65</sup>Zn’s gamma ray is 0.507). A nuclide of more than 32 radiations is listed without the
+              weak ones: the radiations fall in three categories – gamma rays, X-rays and annihilation photons;
+              beta particles, conversion and Auger electrons; alpha particles and their recoil nuclei – and one
+              that gives less than 0.1 % of the energy of its category is left out. K X-rays count line by line,
+              L X-rays by series (Lα, Lβ, Lγ, Lη, Lℓ). A table ends with the energy of what it lists and of what it
+              leaves out, and the database has the omitted energy with the listed radiations of the same category,
+              each that much stronger. So every dose after <sup>7</sup>Be is 0.39 % lower than the file’s lines
+              give (0.103 gamma rays per decay for 0.1034). And <sup>54</sup>Mn, whose table has one gamma ray of
+              0.835 MeV and none of the chromium X-rays of 5.4 keV that follow its electron capture, gives the
+              tissues far from it 0.19 % more than by the file and the tissue it lies in less, since the X-rays
+              would have stayed there and the gamma ray mostly leaves: the bone surfaces a tenth less after
+              swallowing it, the alveolar region 2.4 % less after breathing it in. On the first day after an
+              adult swallows a nuclide, when the models of the body matter least, the median of twelve tissues’
+              doses is within 0.015 % of the database’s for each of a dozen nuclides from <sup>7</sup>Be to
+              <sup>152</sup>Eu, and <sup>54</sup>Mn’s bone surfaces are in the end within 0.1 % of it; by the
+              file’s lines the medians are up to 0.4 % off and the bone surfaces 11 %. The beta spectra are the
+              file’s, since the tables have none.
+              In one respect the tables are not followed: they give the Auger electrons in groups (KLL, KLX and so
+              on) with one yield each, and here each line is rounded by itself, which changes the energy of a
+              nuclide that emits little else by up to 0.1 % (<sup>55</sup>Fe’s doses are 0.07 % above the
+              database’s, <sup>59</sup>Ni’s 0.09 % below). DCAL calculates from the whole file, and decay data
+              made from ENSDF are taken as they are.</li>
             <li><b>Dosimetry</b>: specific effective energies from the Cristy–Eckerman phantoms (newborn, 1, 5, 10 and
               15 years, adult), the ICRP 30 bone and walled-organ absorbed fractions, and the ICRP 66 absorbed fractions
               of the airways, interpolated in age between the phantoms with the weights DCAL gives them. Between the
@@ -498,14 +525,16 @@
               nine beta emitters from <sup>63</sup>Ni to <sup>90</sup>Y breathed in as Type M the basal cells of
               ET<sub>1</sub> and ET<sub>2</sub> and the alveolar region are within 0.02 % of it and the bronchioles
               within 0.05 %; after eight alpha emitters from <sup>147</sup>Sm (2.2 MeV) to <sup>242</sup>Cm
-              (6.1 MeV) ET<sub>1</sub> is within 0.2 % and ET<sub>2</sub> and the bronchioles within 0.12 %. By
+              (6.1 MeV) ET<sub>1</sub>, ET<sub>2</sub> and the bronchioles are within 0.05 %. By
               straight lines through the tables ET<sub>1</sub> would get a fifth less than the database’s dose
               after <sup>63</sup>Ni, 40 % more after <sup>244</sup>Cm and a third of it after <sup>239</sup>Pu
               Type S, and the cells of the bronchi about twice as much after <sup>147</sup>Sm. The bronchi are the part
-              furthest off: 0.3 % below the database’s for adults (0.6 % after <sup>147</sup>Sm) and up to
+              furthest off: 0.3 % below the database’s for adults and up to
               0.5 % above for children, by the same factor for every emitter, absorption type and time, for a
-              reason not found. The alveolar region after photon emitters is up to 2.5 % above the database’s
-              (<sup>54</sup>Mn Type M), also unexplained.</li>
+              reason not found. The alveolar region is 0.2–0.3 % below the database’s after beta emitters with
+              many weak conversion and Auger electron lines (<sup>141</sup>Ce, <sup>125</sup>Sb,
+              <sup>192</sup>Ir), where the grouping of the Auger electrons in Publication 38’s tables decides
+              how much of their energy is listed (“Decay data” above).</li>
             <li><b>Spontaneous fission</b>, as SEECAL 8.4 (DCAL’s program for the specific effective energies) counts
               it: per fission two fragments of 0.0698 Z<sup>2</sup>/A<sup>1/3</sup> − 10.988 MeV each, absorbed as alpha
               particles are and weighted 20; ν̄ neutrons of 0.75 + 0.65 √(1 + ν̄) MeV, weighted 10 and spread through
@@ -667,7 +696,9 @@
           <p>A dose coefficient rests on decay data: each nuclide’s half-life, the daughters it decays to and the
             radiations it emits per decay, the energies and yields of its alpha particles, beta spectra, gamma and X-rays,
             conversion and Auger electrons. Each system has its own, and the ICRP’s coefficients are calculated with
-            them: Publication 38 (1983) in the ICRP 60 system, Publication 107 (2008) in the ICRP 103 system. The
+            them: Publication 38 (1983) in the ICRP 60 system, Publication 107 (2008) in the ICRP 103 system. (Of
+            Publication 38 the ICRP 60 system takes the radiations as the publication’s tables print them, which is
+            not quite what its data file holds: “Decay data” under the ICRP 60 system above.) The
             <b>Decay data</b> setting, and the same choice on the Batch and Radon at home tabs, puts in their place decay
             data made on this site from a release of ENSDF, the Evaluated Nuclear Structure Data File of the National
             Nuclear Data Center (the release the Chart of Nuclides shows). The models of the body stay those of the
@@ -1133,7 +1164,7 @@
             the annex gives more digits.</p>
             <div class="dc-table-wrap"><table class="dc-ref"><thead><tr><th>Committed effective dose</th><th>values</th><th>within 5 %</th><th>within 10 %</th><th>within 20 %</th></tr></thead><tbody>
             <tr><td>ICRP 60, ingestion, against Publication 119 Table F.1</td><td class="num">4534</td><td class="num">99.6 %</td><td class="num">99.8 %</td><td class="num">100.0 %</td></tr>
-            <tr><td>ICRP 60, inhalation (Types F, M, S), against Table G.1</td><td class="num">9872</td><td class="num">99.3 %</td><td class="num">99.7 %</td><td class="num">99.9 %</td></tr>
+            <tr><td>ICRP 60, inhalation (Types F, M, S), against Table G.1</td><td class="num">9872</td><td class="num">99.7 %</td><td class="num">99.8 %</td><td class="num">99.9 %</td></tr>
             <tr><td>ICRP 103, ingestion, against Publication 158 and the Part 2 draft</td><td class="num">744</td><td class="num">100.0 %</td><td class="num">100.0 %</td><td class="num">100.0 %</td></tr>
             <tr><td>ICRP 103, inhalation, against Publication 158 and the Part 2 draft</td><td class="num">2214</td><td class="num">100.0 %</td><td class="num">100.0 %</td><td class="num">100.0 %</td></tr>
             <tr><td>ICRP 103, ingestion, against the Part 3 draft</td><td class="num">342</td><td class="num">100.0 %</td><td class="num">100.0 %</td><td class="num">100.0 %</td></tr>
@@ -1170,9 +1201,9 @@
             <div class="dc-table-wrap"><table class="dc-ref dc-ratios"><thead><tr><th rowspan="2">Intake</th><th colspan="6" class="group">Ratio, this page / Publication 119</th><th rowspan="2">Why</th></tr>
             <tr><th class="age">3 months</th><th class="age">1 year</th><th class="age">5 years</th><th class="age">10 years</th><th class="age">15 years</th><th class="age">Adult</th></tr></thead><tbody>
             <tr><td>Pu-246 ingestion (f1 0.0005)</td><td class="num">–</td><td class="num">0.85</td><td class="num">0.83</td><td class="num">0.85</td><td class="num">0.86</td><td class="num">0.86</td><td>ICRP 72 lets Pu-246 decay to Am-246 (39 min) instead of Am-246m (25 min), which its ICRP 38 file, DCAL and later data give and this page uses: with Am-246 the page comes within 4 % of ICRP 72 at every age and route</td></tr>
-            <tr><td>Pu-246 inhalation (Type F)</td><td class="num">0.89</td><td class="num">0.86</td><td class="num">0.85</td><td class="num">0.87</td><td class="num">0.87</td><td class="num">0.92</td><td>ICRP 72 lets Pu-246 decay to Am-246 (39 min) instead of Am-246m (25 min), which its ICRP 38 file, DCAL and later data give and this page uses: with Am-246 the page comes within 4 % of ICRP 72 at every age and route</td></tr>
-            <tr><td>Pu-246 inhalation (Type M)</td><td class="num">0.69</td><td class="num">0.67</td><td class="num">0.65</td><td class="num">0.61</td><td class="num">0.60</td><td class="num">0.61</td><td>ICRP 72 lets Pu-246 decay to Am-246 (39 min) instead of Am-246m (25 min), which its ICRP 38 file, DCAL and later data give and this page uses: with Am-246 the page comes within 4 % of ICRP 72 at every age and route</td></tr>
-            <tr><td>Pu-246 inhalation (Type S)</td><td class="num">0.66</td><td class="num">–</td><td class="num">–</td><td class="num">–</td><td class="num">–</td><td class="num">0.59</td><td>ICRP 72 lets Pu-246 decay to Am-246 (39 min) instead of Am-246m (25 min), which its ICRP 38 file, DCAL and later data give and this page uses: with Am-246 the page comes within 4 % of ICRP 72 at every age and route</td></tr>
+            <tr><td>Pu-246 inhalation (Type F)</td><td class="num">0.89</td><td class="num">0.86</td><td class="num">0.85</td><td class="num">0.87</td><td class="num">0.87</td><td class="num">0.91</td><td>ICRP 72 lets Pu-246 decay to Am-246 (39 min) instead of Am-246m (25 min), which its ICRP 38 file, DCAL and later data give and this page uses: with Am-246 the page comes within 4 % of ICRP 72 at every age and route</td></tr>
+            <tr><td>Pu-246 inhalation (Type M)</td><td class="num">0.68</td><td class="num">0.66</td><td class="num">0.64</td><td class="num">0.60</td><td class="num">0.59</td><td class="num">0.60</td><td>ICRP 72 lets Pu-246 decay to Am-246 (39 min) instead of Am-246m (25 min), which its ICRP 38 file, DCAL and later data give and this page uses: with Am-246 the page comes within 4 % of ICRP 72 at every age and route</td></tr>
+            <tr><td>Pu-246 inhalation (Type S)</td><td class="num">0.65</td><td class="num">–</td><td class="num">–</td><td class="num">–</td><td class="num">–</td><td class="num">0.58</td><td>ICRP 72 lets Pu-246 decay to Am-246 (39 min) instead of Am-246m (25 min), which its ICRP 38 file, DCAL and later data give and this page uses: with Am-246 the page comes within 4 % of ICRP 72 at every age and route</td></tr>
             </tbody></table></div><p>In the ICRP 103 system single radionuclides, and chains whose members are isotopes of one element or short-lived,
             agree within the rounding of the tables, and no coefficient differs from the ICRP’s by more than 10 % at any age.</p>
           </div>
@@ -1320,7 +1351,7 @@
           <h3 id="help-data">Data and where they come from</h3>
           <div class="dc-table-wrap"><table class="dc-ref">
             <tbody>
-              <tr><th>ICRP 60 system</th><td>The biokinetic models, specific absorbed fractions (Cristy–Eckerman phantoms), absorbed fractions, ICRP 38 decay data and batch files of DCAL (Eckerman and Leggett, ORNL/TM-2001/190), distributed by Oak Ridge National Laboratory; read by <code>scripts/gen-dose-icrp60.mjs</code>. The airways’ absorbed fractions for alpha particles and electrons are the algebraic functions of ICRP Publication 66, Annex H (Tables H.7 to H.9).</td></tr>
+              <tr><th>ICRP 60 system</th><td>The biokinetic models, specific absorbed fractions (Cristy–Eckerman phantoms), absorbed fractions, ICRP 38 decay data and batch files of DCAL (Eckerman and Leggett, ORNL/TM-2001/190), distributed by Oak Ridge National Laboratory; read by <code>scripts/gen-dose-icrp60.mjs</code>. The airways’ absorbed fractions for alpha particles and electrons are the algebraic functions of ICRP Publication 66, Annex H (Tables H.7 to H.9). The form of Publication 38’s printed tables – the figures, the three categories, the 0.1 % and the 32 and 175 radiations – as Endo, Tamura and Yamaguchi describe it (JAERI-Data/Code 99-035, 1999, Appendix A); the page makes the tables’ lines from the file’s.</td></tr>
               <tr><th>ICRP 103 decay data</th><td>ICRP Publication 107 (Endo and Eckerman): the data files of its <a href="https://www.icrp.org/publication.asp?id=ICRP%20Publication%20107" target="_blank" rel="noopener">supplementary data</a> on the ICRP’s site, with the index file as corrected in the corrigenda of Publication 107 (2021; only atomic masses changed, which the page does not use). Copyright © 2008 A. Endo and K.F. Eckerman, used for non-profit purposes under their licence, whose notices accompany the data (<code>LICENSE.TXT</code> and <code>LICENSE_DECDATA.TXT</code> in <code>resources/data/dose/icrp103/decay/</code>).</td></tr>
               <tr><th>Decay data from ENSDF</th><td>Made by <code>scripts/gen-dose-ensdf.mjs</code> from the release of ENSDF named in the Decay data setting, kept by the National Nuclear Data Center for the Nuclear Structure and Decay Data network (<a href="https://www.nndc.bnl.gov/ensdf/" target="_blank" rel="noopener">nndc.bnl.gov/ensdf</a>), into <code>resources/data/dose/ensdf/</code>; with the atomic relaxation data of ENDF/B-VIII.0 (EPICS2017; <code>resources/data/dose/atomic/</code>), conversion coefficients fitted to those EDISTR04 printed in the supplementary data of Publication 107 (<code>resources/data/dose/icc/</code>, under the licence of the ICRP-07 data files, whose notice goes with them) and capture fractions fitted to the release’s own (<code>capture.json</code>).</td></tr>
               <tr><th>Specific absorbed fractions</th><td>The supplementary data of ICRP Publications 133 and 155 (© ICRP), for the twelve reference individuals; Publication 155’s adult files revise Publication 133’s for electrons and alphas.</td></tr>
@@ -1363,6 +1394,7 @@
               <tr><td>ORNL/TM-2001/190</td><td>Eckerman KF, Leggett RW et al. User’s guide to the DCAL system (2006).</td></tr>
               <tr><td>ORNL/TM-8381, ORNL/TM-12351</td><td>Cristy M, Eckerman KF. Specific absorbed fractions of energy at various ages from internal photon sources (1987); SEECAL (1993).</td></tr>
               <tr><td>Fell, Phipps and Smith 2007</td><td>The internal dosimetry code PLEIADES. Radiat. Prot. Dosim. 124(4), 327–338.</td></tr>
+              <tr><td>JAERI-Data/Code 99-035</td><td>Endo A, Tamura T, Yamaguchi Y. Compilation of nuclear decay data used for dose calculations: data for radionuclides not listed in ICRP Publication 38 (1999); its Appendix A describes the form of Publication 38’s tables.</td></tr>
               <tr><td>ICRP database</td><td>The ICRP Database of Dose Coefficients: Workers and Members of the Public (ICRP CD 1), with the coefficients of Publications 68 and 72 for each tissue and ten integration times; used here only to check the results.</td></tr>
               <tr><td>Fritsch and Carlson 1980</td><td>Monotone piecewise cubic interpolation. SIAM J. Numer. Anal. 17, 238–246.</td></tr>
             </tbody>

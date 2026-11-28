@@ -18,7 +18,9 @@
       decay/index.json   every ICRP 38 nuclide: half-life, decay mode,
                          daughters and branching, emitted energy by kind
       decay/<El>.json    the radiations of each element's nuclides: lines and
-                         beta spectra, read only when a chain needs them
+                         beta spectra, read only when a chain needs them;
+                         a line is [energy, yield], an L X-ray also its
+                         series and atom ("a52": lib/dose-decay.mjs)
       saf.json           specific absorbed fractions for photons in the
                          Cristy-Eckerman phantoms (newborn, 1, 5, 10, 15 y,
                          adult male, adult female), region masses, the
@@ -36,12 +38,13 @@
                          strong fissioners they leave out (addLeftOut)
 
   The numbers are the files' own; nothing is fitted or rounded beyond the six
-  significant figures the files carry.
+  significant figures the files carry. The series of the L X-rays is the one
+  thing added, from the binding energies of resources/data/dose/atomic/.
 */
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { icrp38Nuclides, compactRad, compactSpectrum, sig } from './lib/dose-decay.mjs';
+import { icrp38Nuclides, labelLSeries, compactRad, compactSpectrum, sig } from './lib/dose-decay.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = path.join(ROOT, 'resources/data/dose/icrp60');
@@ -84,6 +87,11 @@ const rename38 = (n) => RENAME_38[n] || n;
 
 function buildDecay() {
   const nucs = icrp38Nuclides(path.join(DAT, 'nuc'), path.join(icrp07Dir, 'icrp-07.bet'));
+  // The series of the L X-rays, from the binding energies of the page's atomic tables.
+  const ATOMIC = path.join(ROOT, 'resources/data/dose/atomic');
+  const symbols = JSON.parse(fs.readFileSync(path.join(ATOMIC, 'index.json'), 'utf8')).elements;
+  const marked = labelLSeries(nucs, (Z) => (symbols[Z - 1] ? JSON.parse(fs.readFileSync(path.join(ATOMIC, `${symbols[Z - 1]}.json`), 'utf8')) : null), (el) => symbols.indexOf(el) + 1);
+  console.log(`decay: ${marked.lines} L X-rays of ${marked.nuclides} nuclides marked with their series`);
   const index = {};
   const byEl = {};
   for (const n of nucs) {

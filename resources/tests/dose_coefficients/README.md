@@ -3470,3 +3470,223 @@ Tests: test-engine.mjs has the three functions worked out on their own,
 the functions against DCAL's tables, the two kinds of line in the SEE with
 and without `dcal`, and against the database the airways' parts after nine
 beta and eight alpha emitters (328 checks).
+
+## The decay data as Publication 38 printed them (2026-11-28)
+
+The last section left the alveolar region after photon emitters up to
+2.5 % above the ICRP's database (54Mn Type M). It is not the airways: the
+database holds none of 54Mn's X-ray energy where the manganese lies. Its
+decay data are not the file that comes with DCAL (ICRP38.RAD, "an
+unabridged tabulation of data from Publication 38") but the abridged
+tables the publication printed, and that reaches every nuclide.
+
+**How it showed.** The alveolar region gets, beside the photons that all
+of the lungs get, what is absorbed where it is emitted. Its dose less the
+bronchioles', on the first day after 54Mn Type M: database 5.07e-12 Sv/Bq,
+this page 6.87e-12, 1.355 times it, and so at every time. 54Mn emits
+4.22 keV of Auger electrons and 1.40 keV of chromium K X-rays (5.4 keV)
+per decay: the database has the electrons alone (the page's 5.62 keV over
+4.22 is 1.33). Yet 55Fe, the same kind of emitter with no gamma ray, was
+exact. The difference is the gamma ray: against 0.835 MeV the X-ray lines
+are 0.049 %, 0.097 % and less of the photon energy each.
+
+After swallowing 54Mn the same thing in every tissue (page over database,
+adult; the first day and the committed dose):
+
+                        the file's lines        lines under 0.1 % out,    + three-figure
+                                                their energy put back     yields
+    liver               1.00014  1.00683        0.99979  0.99989          1.00000  1.00012
+    kidneys             0.99831  0.99905        0.99979  0.99984          1.00000  1.00005
+    muscle              0.99841  0.99945        0.99979  0.99982          1.00000  1.00003
+    brain               1.00211  1.00041        0.99979  0.99985          1.00001  1.00006
+    red marrow          0.99902  1.00838        0.99979  0.99989          1.00000  1.00012
+    bone surface        1.01655  1.11396        0.99988  1.00042          1.00012  1.00084
+    stomach             1.00743  1.00274        0.99979  0.99981          1.00002  1.00003
+    lower large int.    1.02695  1.02712        0.99988  0.99979          1.00014  1.00005
+    testes              0.99857  0.99995        0.99978  0.99977          1.00000  0.99998
+    lungs               0.99909  0.99967        0.99979  0.99986          1.00000  1.00008
+
+With the X-rays out and nothing put back every tissue is 0.99813 of the
+database's: it has 0.187 % more of the gamma ray than the file, which is
+the X-rays' 0.167 % and a yield of 1.00 for 0.99976.
+
+**The tables.** Publication 38's format as JAERI-Data/Code 99-035
+describes it (Endo, Tamura and Yamaguchi 1999, Appendix A; the report
+gives further nuclides "in the Publ. 38 format"), each point then checked
+on the database:
+
+- y(i) has three figures, E(i) four ("1.38E-02  5.453E-02"). 7Be: one
+  gamma ray, 0.1034 per decay in the file, 0.103 in a table; every tissue
+  at every time was 1.0039 of the database's and is 1.0000.
+- A yield on the half is the lower figure. Eight nuclides have a main line
+  there, and all eight say so (median of twelve tissues on the first day
+  after swallowing, page over database):
+
+                    yield     half down    half up
+      65Zn          0.5075    1.00001      1.00186
+      95Zr          0.4455    1.00000      1.00097
+      88Y           0.9935    1.00000      1.00067
+      133Ba         0.6215    1.00000      1.00086
+      101Rh         0.6305    1.00002      1.00073
+      175Yb         0.03055   1.00000      1.00072
+      194mTl        0.9625    1.00005      1.00023
+      115mCd        0.005985  1.00000      1.00011
+
+- "If the number of radiations is <= 32, the cutoff percentage is set to
+  0.0. If the number of radiations is > 32, then the cutoff percentage is
+  initially set at 0.1 for each category", raised by 0.1 at a time until
+  no more than 175 radiations are over it; the categories are "(1) gamma
+  rays, X rays, and annihilation photons; (2) beta particles, internal
+  conversion electrons, and Auger electrons; and (3) alpha particles and
+  recoil nuclei", and each table ends "Each omitted transition contributes
+  < 0.100 % to sum y(i) x E(i) in its category". The 32 are counted on the
+  file's lines: 54Mn has 34 and loses its X-rays, 55Fe has 29 and keeps
+  everything. (No nuclide of 32 lines or fewer has a weak line that would
+  show in a dose, so the database cannot confirm that half of the rule.)
+- What a table omits: read off the database nuclide by nuclide
+  (npread.mjs below), the share of the page's photons under 10 keV that
+  the database holds locally is 0.00 for 54Mn (all K lines under 0.1 %),
+  0.87 for 65Zn (K-alpha listed, K-beta not: 0.869), 0.56 for 58Co
+  (K-alpha1 listed alone), 1.00 for 57Co and 51Cr (all listed).
+- The L X-rays count by series, not by line: 139Ce 0.90, 93Mo 0.90, 131Cs
+  0.98, 125I 0.95, 153Gd 0.94 of the L X-ray energy is held, where the
+  series over 0.1 % make 0.90, 0.95, 0.98, 0.91 and 0.98 and the single
+  lines over 0.1 % 0.38, 0.84, 0.76, 0.76 and 0.77 (air/kept.mjs). The
+  report's tables list "L-alpha X-ray", "L-beta X-ray", "L-gamma X-ray"
+  with averaged energies.
+- The omitted energy is not lost: a table's last lines give the energy of
+  the listed and of the omitted radiations of each category, and the
+  database has the omitted with the listed of its category, each stronger
+  by (listed + omitted) / listed. 54Mn above; 52Mn, whose weak gamma lines
+  come to 0.39 % of its photon energy, is 1.0000 in every tissue with the
+  energy put back and 0.996 without; 131I's thyroid, where nearly all is
+  electrons and 1 % of their energy is in lines under 0.1 %, 1.00003.
+
+**In the page.** resources/js/dose/decay38.js makes a nuclide's table from
+the file's lines (printed38: the count, the cutoff, the series, the
+factors, figures38 for the rounding); dose60.js takes it for the ICRP 60
+system, the file's lines with `dcal` (DCAL calculates from the file) and
+other decay data as they are. The series of an L X-ray has to be known:
+scripts/lib/dose-decay.mjs (labelLSeries) gives each X-ray of the file the
+transition of the daughter atom that lies nearest, by the binding energies
+of resources/data/dose/atomic/, and writes series and atomic number as the
+line's third item ("a52"); 10,938 lines of 786 nuclides, in 88 of the
+decay files. L-alpha2 and L-eta, which lie within a few eV of each other
+around europium, are told apart by yield. The generator reproduces the
+other files byte for byte.
+
+Fifteen tissues on the first day after swallowing (adult; lowest, median
+and highest of page over database), before and now:
+
+                the file's lines                 the tables
+    7Be         1.00389  1.00389  1.00390       1.00000  1.00000  1.00001
+    22Na        0.99967  0.99972  1.00003       0.99994  0.99997  1.00017
+    46Sc        0.99934  0.99969  1.00027       1.00000  1.00000  1.00052
+    54Mn        0.99816  1.00094  1.02695       0.99999  1.00000  1.00014
+    58Co        0.99954  1.00004  1.00840       0.99996  1.00004  1.00049
+    65Zn        1.00014  1.00160  1.01017       0.99998  1.00001  1.00031
+    75Se        0.99990  1.00140  1.00390       0.99971  1.00000  1.00044
+    85Sr        0.99925  1.00043  1.00395       0.99996  0.99999  1.00035
+    88Y         0.99842  0.99918  1.00767       1.00000  1.00000  1.00007
+    95Zr        1.00029  1.00051  1.00100       0.99999  1.00000  1.00080
+    103Ru       0.99917  0.99988  1.00131       0.99998  1.00000  1.00089
+    125Sb       1.00088  1.00125  1.00313       1.00000  1.00002  1.00094
+    131I        1.00041  1.00068  1.00193       1.00003  1.00013  1.00067
+    133Ba       0.99865  1.00052  1.00828       0.99997  1.00000  1.00107
+    137Cs       1.00003  1.00037  1.00170       1.00000  1.00000  1.00036
+    139Ce       0.99906  0.99956  1.00117       1.00000  1.00000  1.00097
+    141Ce       0.99860  0.99873  1.00214       0.99999  1.00001  1.00115
+    152Eu       0.99462  0.99806  1.00445       1.00011  1.00012  1.00092
+    153Gd       0.99949  1.00017  1.00162       1.00000  1.00002  1.00098
+    192Ir       0.99848  1.00017  1.00684       1.00004  1.00007  1.00100
+
+(the highest is a wall of the gut or the bone surfaces nearly every time).
+
+In the airways (adult, committed, page over database; the last section's
+"now" and this one's):
+
+                       ET1     ET2     bb      AI      lungs
+    54Mn  M   before   0.9984  0.9982  0.9982  1.0249  1.0075
+              now      1.0000  1.0000  1.0000  1.0000  1.0000
+    65Zn  M   before   1.0001  1.0003  1.0002  1.0090  1.0031
+              now      1.0000  1.0000  1.0000  1.0000  0.9998
+    58Co  M   before   1.0002  0.9995  1.0001  1.0078  1.0010
+              now      1.0000  1.0000  1.0001  0.9998  0.9991
+    88Y   M   before   1.0187  1.0222  1.0202  1.0198  1.0200
+              now      1.0000  1.0000  1.0000  1.0000  1.0000
+    85Sr  M   before   1.0051  1.0114  1.0095  1.0090  1.0091
+              now      1.0002  1.0000  1.0000  0.9999  0.9999
+    7Be   M   before   1.0038  1.0038  1.0036  1.0036  1.0036
+              now      1.0000  1.0000  0.9997  0.9997  0.9997
+    239Pu S   before   0.9972  1.0000  1.0003  0.9999  0.9996
+              now      0.9999  1.0000  1.0004  1.0000  0.9997
+    241Am M   before   0.9983  0.9997  1.0003  0.9998  0.9991
+              now      0.9999  0.9999  1.0004  1.0000  0.9993
+
+ET1 after the alpha emitters of 5.2-5.5 MeV, 0.1-0.3 % low in the last
+section, was the yields too: after the eight alpha emitters of the airways
+check ET1 is now within 0.03 % and ET2 within 0.01 %.
+
+**What the tables do that is not followed.** They list the Auger electrons
+in groups (KLL, KLX, KXY, LMM, LMX, LXY, MXY), each a radiation with one
+yield of three figures; the page judges and rounds them line by line. For
+the organs it makes no difference which electron lines are listed, since
+their energy is put back. It shows in two places. A nuclide that emits
+little but X-rays and Auger electrons has its energy moved by the rounding
+of a dozen yields instead of a few: the alveolar region's dose, page over
+database, for 55Fe 1.0007 (1.0001 by the file's lines), 59Ni 0.9992
+(0.9997), 53Mn, 49V and 41Ca within 0.1 %; no grouping tried puts
+all five within 0.02 % (air/augersearch.mjs: K Auger electrons in the
+three groups come nearest, 0.04 %). And the alveolar region after beta
+emitters with many weak conversion and Auger lines is 0.2-0.3 % low (141Ce
+0.9974, 125Sb 0.9983, 48V 0.9983, 192Ir 0.9981; they were 0.3-1.3 % high):
+there the beta particles go by the spectrum, which carries none of the
+energy put back, so how much is omitted counts, and line by line more is
+(141Ce 0.52 % of the electron energy; in groups about 0.2 %).
+
+**Left.** The bronchi's factor by age, as before. 59Ni's and 55Fe's 0.1 %.
+The alveolar region above. 113Sn Type M (ET1 1.006, bronchi 1.003), 109Cd
+(bronchioles 1.002). And the nuclide-specific rests of the first-day
+panel: 201Tl's kidneys 0.9993, 125I's thyroid 0.9992.
+
+**The whole comparison** (2,999 cases, 14,617 values of e; the last
+section's run, then now):
+
+                                                  before    now
+    e rounding to ICRP 72's two figures           89.4 %    96.0 %
+    organ doses rounding to the print             92.7 %    95.5 %
+    Publication 119, e swallowed                  92.0 %    95.0 %
+    Publication 119, e breathed in                88.2 %    96.5 %
+
+    the ICRP database, share within 0.1 / 0.2 / 0.5 / 1 / 2 %, and the median
+    e                 43.3  63.3  82.9  91.6  96.5  1.0010   78.3  90.1  95.0  96.3  97.9  1.0002
+    soft tissues      68.2  85.4  92.7  95.1  96.8  1.0000   85.0  90.8  93.2  95.2  96.8  1.0000
+    large intestine   47.3  70.9  88.0  93.7  96.8  1.0008   72.7  88.8  94.0  95.9  97.4  1.0003
+    bone surface      41.4  63.1  82.6  91.3  95.5  1.0007   73.5  86.6  91.0  93.7  95.6  1.0000
+    lungs and ET      48.1  63.0  78.7  88.9  94.7  1.0003   77.8  87.4  93.9  96.2  97.5  1.0000
+    remainder         55.2  68.7  80.5  88.9  94.1  1.0004   85.0  91.0  94.4  96.1  97.5  1.0001
+    by inhalation only (9,534 intakes and ages):
+    lungs             37.8  55.5  75.0  88.9  95.9  1.0010   63.5  82.8  95.2  98.1  99.0  0.9998
+    ET                40.2  51.6  71.7  85.3  93.4  1.0012   85.8  91.5  96.3  97.7  98.9  1.0001
+    e                 41.0  58.8  80.4  91.0  96.7  1.0012   80.0  90.8  96.4  97.5  98.7  1.0001
+
+Help's rows for Publication 119: swallowed unchanged (99.6 / 99.8 /
+100.0 % of 4,534 within 5, 10 and 20 %), breathed in 99.3 / 99.7 / 99.9 %
+-> 99.7 / 99.8 / 99.9 % of 9,872, with 17 values more than 10 % off
+instead of 28. Pu-246's rows moved by 0.01.
+
+How the database's own energies were read (private tools, beside the
+local copy of the database): the doses of some twenty tissues on the first
+day after swallowing are, for each tissue, a part from what is absorbed
+where it is emitted (electrons, photons under 10 keV) and a part from the
+photons; with the page's two parts as the columns, least squares over the
+tissues gives the database's two factors for a nuclide, and the first one
+tells how much of the soft photons' energy it holds.
+
+Tests: test-engine.mjs has the rounding with its halves; made-up nuclides
+for the 32, the 0.1 %, the energy put back, the series, the 175 and the
+alpha category; 54Mn, 55Fe, 7Be, 65Zn and 125I from the file; the series
+marks in the data; 7Be's and 54Mn's doses by the tables against the file's
+lines, `dcal` untouched; and against the database twelve nuclides on the
+first day, 54Mn's seventeen tissues and bone surfaces, the alveolar region
+after 54Mn, 65Zn and 58Co (341 checks).

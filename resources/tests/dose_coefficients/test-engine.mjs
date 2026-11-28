@@ -1226,6 +1226,95 @@ if (!SYSTEM || SYSTEM === '103') {
     JSON.stringify({ as72: names(as72), asDcal: names(asDcal) }));
 }
 
+/* ---- the decay data as Publication 38 printed them (ICRP 60; decay38.js) ------------ */
+// What the publication's tables do to the file's lines: three figures of a
+// yield and four of an energy, a half going down; a nuclide of more than 32
+// radiations without those that give under 0.1 % of the energy of their
+// category, whose energy the listed ones carry; the L X-rays by series. The
+// ICRP 60 system calculates from the tables, with dcal and with other decay
+// data from the lines as they are.
+{
+  const { printed38, figures38: f, PRINTED_38 } = await import(path.join(JS, 'decay38.js'));
+  check('Publication 38 as printed: three figures of a yield, four of an energy, a half going down (0.1034 -> 0.103, 0.99976 -> 1, 0.4455 -> 0.445, 0.44551 -> 0.446)',
+    f(0.1034, 3) === 0.103 && f(0.99976, 3) === 1 && f(0.4455, 3) === 0.445 && f(0.5075, 3) === 0.507 && f(0.9935, 3) === 0.993 && f(0.6215, 3) === 0.621
+    && f(0.44551, 3) === 0.446 && f(0.4465, 3) === 0.446 && f(12.35, 3) === 12.3 && f(3.00478, 3) === 3 && f(0.834827, 4) === 0.8348 && f(1.83604, 4) === 1.836
+    && f(1.11552, 4) === 1.116 && f(0.0000557695, 4) === 0.00005577 && f(0, 3) === 0
+    && PRINTED_38.yield === 3 && PRINTED_38.energy === 4 && PRINTED_38.full === 32 && PRINTED_38.cutoff === 0.001 && PRINTED_38.most === 175,
+    [f(0.1034, 3), f(0.99976, 3), f(0.4455, 3), f(0.5075, 3), f(0.9935, 3), f(0.6215, 3), f(0.44551, 3), f(12.35, 3), f(1.11552, 4)].join(' '));
+  const sum = (L) => L.reduce((a, [e, y]) => a + e * y, 0);
+  const near = (a, b, tol = 1e-12) => Math.abs(a - b) <= tol * Math.max(1, Math.abs(b));
+  const fill = Array.from({ length: 30 }, (_, i) => [0.05 + 0.001 * i, 0.01]); // thirty electron lines, each well over the cutoff
+  // 32 radiations or fewer: every line, rounded.
+  const few = printed38({ r: { p: [[0.001, 0.5], [0.5, 0.123456], [1, 0.000001]], e: [[0.01, 0.2]] }, bs: null }, 60);
+  check('Publication 38 as printed: a nuclide of 32 radiations or fewer keeps every line, however weak',
+    few.printed.lines === 4 && few.printed.cutoff === 0 && few.r.p.length === 3 && few.r.p[1][1] === 0.123 && few.r.p[2][1] === 0.000001 && few.printed.back.every((x) => x === 1) && few.bs === null,
+    JSON.stringify(few.r));
+  // More than 32: one gamma ray and forty X-rays of 5 keV that carry 0.002 % of
+  // the photon energy between them, an electron line of 0.02 % of its category.
+  const weak = { r: { p: [[1, 0.9], ...Array.from({ length: 40 }, () => [0.005, 0.0001])], e: [[0.1, 0.5], [0.01, 0.001]] }, bs: [[0, 1], [1, 0]] };
+  const cut = printed38(weak, 60);
+  check(`Publication 38 as printed: over 32 radiations, those under 0.1 % of their category's energy are left out and their energy is with the listed (${cut.r.p.length} photon line, yield ${cut.r.p[0][1].toFixed(5)})`,
+    cut.printed.lines === 43 && cut.printed.cutoff === 0.001 && cut.printed.listed === 2 && cut.r.p.length === 1 && cut.r.e.length === 1
+    && near(sum(cut.r.p), sum(weak.r.p)) && near(sum(cut.r.e), sum(weak.r.e)) && near(cut.r.p[0][1], 0.90002) && near(cut.r.e[0][1], 0.5001)
+    && cut.bs === weak.bs && printed38(weak, 60) === cut, JSON.stringify(cut.r));
+  // The L X-rays by series: two L-alpha lines of 0.08 % and 0.04 % of the
+  // photon energy are one radiation of 0.12 % and listed, with the series'
+  // yield and mean energy; L-beta (0.045 %) and L-gamma are not.
+  const L = { r: { p: [[0.004, 0.2, 'a50'], [0.0041, 0.1, 'a50'], [0.0045, 0.1, 'b50'], [0.0048, 0.01, 'g50'], [1, 1]], e: fill } };
+  const ser = printed38(L, 120);
+  const byLine = printed38({ r: { p: L.r.p.map(([e, y]) => [e, y]), e: fill } }, 120);
+  check(`Publication 38 as printed: the L X-rays are judged and listed by series (L-alpha as one line of ${ser.r.p[0][0]} MeV, ${ser.r.p.length} photon lines; line by line ${byLine.r.p.length})`,
+    ser.r.p.length === 2 && ser.r.p[0][0] === 0.004033 && near(ser.r.p[0][1], 0.3 * ser.printed.back[0]) && ser.r.p[0].length === 2
+    && near(ser.printed.back[0], sum(L.r.p) / (1 + 0.00121)) && near(sum(ser.r.p), sum(L.r.p), 1e-6) && byLine.r.p.length === 1, JSON.stringify(ser.r.p));
+  // Were more than 175 left, the cutoff rises by 0.1 at a time: 200 lines of
+  // 0.25 % each and five of 10 % leave the five, at 0.3 %.
+  const many = printed38({ r: { p: [...Array.from({ length: 200 }, (_, i) => [1 + 1e-4 * i, 0.0025]), ...Array.from({ length: 5 }, () => [2, 0.05])] } }, 60);
+  check(`Publication 38 as printed: no more than 175 radiations are listed (cutoff ${(100 * many.printed.cutoff).toFixed(1)} % for 200 lines of 0.25 % and five of 10 %)`,
+    near(many.printed.cutoff, 0.003) && many.r.p.length === 5 && many.printed.listed === 5 && Math.abs(many.printed.back[0] - 2) < 0.03, JSON.stringify(many.printed));
+  // Alpha particles and their recoil nuclei are a category of their own; a
+  // listed line's recoil is a radiation too when it is over the cutoff.
+  const al = printed38({ r: { a: [[4.5, 0.0005], [4.9, 0.0995], [5, 0.9]], e: fill } }, 240);
+  check('Publication 38 as printed: alpha particles and recoil nuclei, a category of their own',
+    al.r.a.length === 2 && al.printed.listed === 34 && near(sum(al.r.a), 4.5 * 0.0005 + 4.9 * 0.0995 + 5 * 0.9) && al.r.e.length === 30 && al.printed.back[1] === 1, JSON.stringify(al.r.a));
+
+  // The file's nuclides.
+  const table = async (n) => { await d60.prepare(n); return printed38(d60.emissions(n), Number(/-(\d+)/.exec(n)[1])); };
+  const mn = await table('Mn-54'), fe = await table('Fe-55'), zn = await table('Zn-65'), i125 = await table('I-125'), be = await table('Be-7');
+  check(`Publication 38 as printed, 54Mn: 34 lines, its X-rays of 5.4 keV under 0.1 % each -- one photon line of ${mn.r.p[0][0]} MeV with ${sum(mn.r.p).toFixed(6)} MeV (0.8348 + the X-rays' 0.001396), ${mn.r.e.length} electron lines`,
+    mn.printed.lines === 34 && mn.printed.cutoff === 0.001 && mn.r.p.length === 1 && mn.r.p[0][0] === 0.8348 && Math.abs(sum(mn.r.p) - 0.836196) < 2e-6 && mn.r.e.length === 18
+    && d60.emissions('Mn-54').r.p.length === 14, JSON.stringify(mn.r.p));
+  check('Publication 38 as printed, 55Fe: 29 lines, none left out (six K X-rays, the L X-rays by series, sixteen electron lines); 7Be: 0.103 gamma rays of 0.4776 MeV',
+    fe.printed.lines === 29 && fe.printed.cutoff === 0 && fe.r.p.filter(([e]) => e > 0.005).length === 6 && fe.r.e.length === 16 && Math.abs((sum(fe.r.p) + sum(fe.r.e)) / 0.005891652 - 1) < 1e-3
+    && be.r.p.some(([e, y]) => e === 0.4776 && y === 0.103) && d60.emissions('Be-7').r.p.some(([e, y]) => e === 0.477605 && y === 0.1034), JSON.stringify(be.r.p));
+  const znE = zn.r.p.map(([e]) => e), iE = i125.r.p.map(([e]) => e);
+  check(`Publication 38 as printed, 65Zn: K-alpha listed, K-beta not, 0.507 of the gamma ray; 125I: L-alpha and L-beta as two lines, no L-gamma (${iE.join(', ')})`,
+    znE.includes(0.008028) && znE.includes(0.008048) && !znE.some((e) => e > 0.0085 && e < 0.01) && near(zn.r.p.find(([e]) => e === 1.116)[1], 0.507 * zn.printed.back[0])
+    && iE.length === 9 && iE[0] === 0.003768 && iE[1] === 0.004092 && iE[2] > 0.027, JSON.stringify({ znE, iE }));
+  // The series in the data: every L X-ray of 125I, L-alpha2 and L-eta of
+  // europium told apart by yield, no mark on a K X-ray or a gamma ray.
+  await d60.prepare('Gd-153'); await d60.prepare('Eu-152');
+  const marks = (n) => d60.emissions(n).r.p.filter((l) => l.length > 2).map((l) => l[2]);
+  const gd = d60.emissions('Gd-153').r.p;
+  check(`ICRP 38 decay data: the L X-rays carry their series (125I ${marks('I-125').join(' ')})`,
+    marks('I-125').join(' ') === 'l52 h52 a52 a52 b52 b52 b52 b52 b52 g52 g52 g52'
+    && gd.find(([e]) => Math.abs(e - 0.00581629) < 1e-9)[2] === 'a63' && gd.find(([e]) => Math.abs(e - 0.0058171) < 1e-9)[2] === 'h63'
+    && d60.emissions('Mn-54').r.p.filter(([e]) => e > 0.005).every((l) => l.length === 2)
+    && new Set(marks('Eu-152').map((m) => m.slice(1))).size === 2 && d60.emissions('I-125').r.e.every((l) => l.length === 2), JSON.stringify(gd.filter((l) => l.length > 2)));
+
+  // In the doses: 7Be's are 0.103 / 0.1034 of what the file's lines give, in
+  // every tissue; 54Mn's bone surfaces get a tenth less without the X-rays
+  // and its muscle a little more (the gamma ray's 0.19 % less the X-rays of
+  // the manganese in it); dcal and other decay data take the file.
+  const asFile = Object.create(d60); asFile.decaySource = { ...d60.decaySource, own: false };
+  const H = async (data, n, opt = {}) => { await d60.prepare(n); return coefficients60(data, recipe60(d60.cases, 'ingestion', { nuclide: n }), [7300], opt)[0].H; };
+  const [beT, beF] = [await H(d60, 'Be-7'), await H(asFile, 'Be-7')];
+  const [mnT, mnF, mnD, mnDF] = [await H(d60, 'Mn-54'), await H(asFile, 'Mn-54'), await H(d60, 'Mn-54', { dcal: true }), await H(asFile, 'Mn-54', { dcal: true })];
+  const beR = Object.keys(beT).map((t) => beT[t] / beF[t]);
+  check(`ICRP 60 from the printed tables: 7Be's doses ${(Math.min(...beR)).toFixed(5)}-${(Math.max(...beR)).toFixed(5)} of the file's (0.103 / 0.1034 = 0.99613); 54Mn's bone surfaces ${(mnT['Bone surface'] / mnF['Bone surface']).toFixed(3)} and muscle ${(mnT.Muscle / mnF.Muscle).toFixed(4)} of it; dcal takes the file`,
+    beR.every((x) => Math.abs(x - 0.103 / 0.1034) < 2e-5) && mnT['Bone surface'] / mnF['Bone surface'] < 0.91 && mnT.Muscle / mnF.Muscle > 1.0002 && mnT.Muscle / mnF.Muscle < 1.002
+    && Object.keys(mnD).every((t) => mnD[t] === mnDF[t]), JSON.stringify({ bs: mnT['Bone surface'] / mnF['Bone surface'], muscle: mnT.Muscle / mnF.Muscle }));
+}
+
 /* ---- beta spectra and the absorbed fractions of the airways (ICRP 60; see60.js spectrumAf, af66) */
 // A beta spectrum as groups: each interval of the table with the mean of N
 // at its ends, at the energy of its middle. Where the absorbed fraction is
@@ -1779,7 +1868,9 @@ if (!SYSTEM || SYSTEM === '60') {
     // Nickel: 63Ni's muscle at every age and every time within 1.5e-4 (0.9927
     // to 0.9938 from a month on with Ni.DEF's whole body), its kidneys
     // within 0.15 % (0.92 to 0.96 for intakes in childhood); 59Ni, whose
-    // X-rays and electrons give 0.03 % less here in every tissue, 0.05 %.
+    // X-rays and Auger electrons give 0.09 % less here in every tissue
+    // (0.03 % by the file's yields; the tables round the Auger electrons by
+    // group, decay38.js line by line), 0.1 %.
     {
       let farM = 0, farK = 0, far59 = 0;
       for (const age of AGES_60) {
@@ -1787,7 +1878,7 @@ if (!SYSTEM || SYSTEM === '60') {
         for (const x of await over('Ni-63', age, 'Kidneys')) farK = Math.max(farK, Math.abs(x - 1));
         for (const x of await over('Ni-59', age, 'Muscle')) far59 = Math.max(far59, Math.abs(x - 1));
       }
-      check(`ICRP 60 vs the ICRP database, nickel at every age and time: 63Ni's muscle within ${(1e5 * farM).toFixed(0)}e-5 and kidneys within ${(100 * farK).toFixed(2)} %, 59Ni's muscle within ${(1e5 * far59).toFixed(0)}e-5`, farM < 1.5e-4 && farK < 0.0015 && far59 < 5e-4, JSON.stringify({ farM, farK, far59 }));
+      check(`ICRP 60 vs the ICRP database, nickel at every age and time: 63Ni's muscle within ${(1e5 * farM).toFixed(0)}e-5 and kidneys within ${(100 * farK).toFixed(2)} %, 59Ni's muscle within ${(1e5 * far59).toFixed(0)}e-5`, farM < 1.5e-4 && farK < 0.0015 && far59 < 1e-3, JSON.stringify({ farM, farK, far59 }));
     }
     // Iron: with its other soft tissues in the rest of the body the muscle,
     // liver, spleen and red marrow of the adult follow the database at every
@@ -1808,9 +1899,11 @@ if (!SYSTEM || SYSTEM === '60') {
     // trapezoidal rule), and with Publication 66's functions the basal cells
     // of ET1 and ET2 within 2e-4 (63Ni's ET1 a fifth below it by straight
     // lines through the tables), the bronchioles within 0.1 %, the bronchi
-    // within 0.35 %. Alpha emitters from 2.2 to 6.1 MeV: ET1 within 0.2 % (239Pu a
-    // fifth below it, 244Cm 40 % above by the tables), the bronchi within
-    // 0.7 % (147Sm 1.9 and 2.4 times it by the tables).
+    // within 0.35 %. Alpha emitters from 2.2 to 6.1 MeV: ET1 and ET2 within
+    // 0.05 % (239Pu a fifth below it, 244Cm 40 % above by the tables; within
+    // 0.2 % with the file's yields instead of Publication 38's three
+    // figures), the bronchi within 0.35 % (147Sm 1.9 and 2.4 times it by the
+    // tables).
     {
       const part = async (nuclide, pairs) => {
         const c = cd.rows.find((x) => x.nuclide === nuclide && x.route === 'inhalation' && x.type === 'M' && x.age === 7300);
@@ -1831,7 +1924,51 @@ if (!SYSTEM || SYSTEM === '60') {
       const farP = (l) => l.reduce((m, x) => Math.max(m, Math.abs(x - 1)), 0);
       check(`ICRP 60 vs the ICRP database, the airways' parts: after nine beta emitters the alveolar region within ${(1e5 * farP(beta.ai)).toFixed(0)}e-5, the basal cells of ET1 and ET2 within ${(1e5 * farP(beta.et)).toFixed(0)}e-5, the bronchioles within ${(100 * farP(beta.bb)).toFixed(2)} % and the bronchi within ${(100 * farP(beta.BB)).toFixed(2)} %; after eight alpha emitters of 2.2-6.1 MeV ET1 within ${(100 * farP(alpha.et1)).toFixed(2)} %, ET2 within ${(100 * farP(alpha.et2)).toFixed(2)} %, the bronchioles within ${(100 * farP(alpha.bb)).toFixed(2)} % and the bronchi within ${(100 * farP(alpha.BB)).toFixed(2)} %`,
         farP(beta.ai) < 5e-4 && farP(beta.et) < 3e-4 && farP(beta.bb) < 0.0015 && farP(beta.BB) < 0.004
-        && farP(alpha.et1) < 0.003 && farP(alpha.et2) < 0.002 && farP(alpha.bb) < 0.002 && farP(alpha.BB) < 0.0075, JSON.stringify({ beta, alpha }));
+        && farP(alpha.et1) < 0.001 && farP(alpha.et2) < 0.001 && farP(alpha.bb) < 0.002 && farP(alpha.BB) < 0.005, JSON.stringify({ beta, alpha }));
+    }
+    // The decay data as Publication 38 printed them (decay38.js). On the
+    // first day after swallowing, twelve tissues of the adult: their median
+    // within 1.5e-4 of the database for twelve nuclides whose tables differ
+    // from the file each in its own way -- 7Be's yield of three figures
+    // (0.39 % above the database by the file), the X-rays that 54Mn's and
+    // 65Zn's tables leave out, the halves of 65Zn, 95Zr, 88Y and 133Ba, the
+    // many weak lines of 152Eu and 125Sb. 54Mn in seventeen tissues within
+    // 2.5e-4, its bone surfaces in the end within 0.15 % (11 % above by the
+    // file). Breathed in as Type M, the alveolar region after 54Mn, 65Zn and
+    // 58Co within 0.05 % (2.5 %, 0.9 % and 0.8 % above by the file).
+    {
+      const T12 = ['Liver', 'Kidneys', 'Muscle', 'Brain', 'Thyroid', 'Red marrow', 'Testes', 'Ovaries', 'Lung', 'Spleen', 'Pancreas', 'Adrenals'];
+      const GUT = ['Bone surface', 'Stomach', 'Small intestine', 'Upper large intestine', 'Lower large intestine'];
+      const asFile = Object.create(d60); asFile.decaySource = { ...d60.decaySource, own: false };
+      const swallowed = async (data, nuclide, tissues) => {
+        const c = cd.rows.find((x) => x.nuclide === nuclide && x.route === 'ingestion' && x.age === 7300);
+        await d60.prepare(nuclide);
+        const r = coefficients60(data, recipe60(d60.cases, 'ingestion', { nuclide }), [7300], { outputs: [1] })[0];
+        const n = r.system.comps.length, p = r.series.find((x) => Math.abs(x.t - 1) < 1e-6);
+        return { day: tissues.map((t) => TISSUES_60[t].reduce((u, [g, w]) => u + w * p.y[n + TARGETS_60_ALL.indexOf(g)], 0) / c.H[t][0]), end: (t) => r.H[t] / c.H[t][c.H[t].length - 1] };
+      };
+      const alveoli = async (data, nuclide) => {
+        const c = cd.rows.find((x) => x.nuclide === nuclide && x.route === 'inhalation' && x.type === 'M' && x.age === 7300);
+        await d60.prepare(nuclide);
+        const v = c.H['Lung part 4'];
+        return coefficients60(data, recipe60(d60.cases, 'inhalation', { nuclide, type: 'M' }), [7300])[0].Ht.AI / v[v.length - 1];
+      };
+      const median = (l) => [...l].sort((a, b) => a - b)[l.length >> 1];
+      const off = {}, offFile = {};
+      for (const n of ['Be-7', 'Mn-54', 'Sc-46', 'Zn-65', 'Sr-85', 'Y-88', 'Zr-95', 'Ba-133', 'Ce-141', 'Sb-125', 'Eu-152', 'Cs-137']) {
+        off[n] = Math.abs(median((await swallowed(d60, n, T12)).day) - 1);
+        offFile[n] = Math.abs(median((await swallowed(asFile, n, T12)).day) - 1);
+      }
+      const worst = (o) => Math.max(...Object.values(o));
+      check(`ICRP 60 vs the ICRP database, the decay data as printed: twelve nuclides swallowed, the median of twelve tissues on the first day within ${(1e5 * worst(off)).toFixed(0)}e-5 (by the file's lines up to ${(100 * worst(offFile)).toFixed(2)} %, ${Object.values(offFile).filter((x) => x > 3e-4).length} of them more than 3e-4)`,
+        worst(off) < 1.5e-4 && worst(offFile) > 0.003 && Object.values(offFile).filter((x) => x > 3e-4).length >= 8, JSON.stringify({ off, offFile }));
+      const mn = await swallowed(d60, 'Mn-54', [...T12, ...GUT]), mnFile = await swallowed(asFile, 'Mn-54', [...T12, ...GUT]);
+      const far = (l) => l.reduce((m, x) => Math.max(m, Math.abs(x - 1)), 0);
+      const ai = {}, aiFile = {};
+      for (const n of ['Mn-54', 'Zn-65', 'Co-58']) { ai[n] = await alveoli(d60, n); aiFile[n] = await alveoli(asFile, n); }
+      check(`ICRP 60 vs the ICRP database, the decay data as printed: 54Mn swallowed, seventeen tissues on the first day within ${(1e5 * far(mn.day)).toFixed(0)}e-5 (${(100 * far(mnFile.day)).toFixed(1)} % by the file), the bone surfaces in the end ${mn.end('Bone surface').toFixed(4)} of the database's (${mnFile.end('Bone surface').toFixed(3)}); breathed in, the alveolar region after 54Mn, 65Zn and 58Co ${Object.values(ai).map((x) => x.toFixed(4)).join(', ')} (${Object.values(aiFile).map((x) => x.toFixed(4)).join(', ')})`,
+        far(mn.day) < 2.5e-4 && far(mnFile.day) > 0.02 && Math.abs(mn.end('Bone surface') - 1) < 0.0015 && mnFile.end('Bone surface') > 1.1
+        && far(Object.values(ai)) < 5e-4 && aiFile['Mn-54'] > 1.02 && aiFile['Zn-65'] > 1.007 && aiFile['Co-58'] > 1.006, JSON.stringify({ day: mn.day, ai, aiFile }));
     }
   }
 }
